@@ -31,6 +31,11 @@ def normalize_status(full_status: dict) -> dict:
         "file": data.get("filename") or data.get("file"),
         "layers": {"current": data.get("layer"), "total": data.get("total_layer")},
         "time": {"remaining": data.get("remain_time")},
+    return {
+        "state": data.get("status_name") or data.get("status") or "unknown",
+        "sub_state": data.get("sub_status_name") or data.get("sub_status"),
+        "progress": data.get("progress", 0),
+        "file": data.get("filename") or data.get("file"),
         "temps": {
             "nozzle": {"actual": temp.get("nozzle"), "target": temp.get("target_nozzle")},
             "bed": {"actual": temp.get("bed"), "target": temp.get("target_bed")},

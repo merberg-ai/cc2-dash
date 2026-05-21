@@ -12,3 +12,17 @@ $('save').onclick=async()=>{const payload={id:($('name').value||'cc2').toLowerCa
 async function post(path,body={}){if(!printer)return log('No printer configured','WARN');const r=await fetch(`/api/printers/${printer.id}${path}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});log(`${path} -> ${await r.text()}`)}
 $('pause').onclick=()=>post('/print/pause');$('resume').onclick=()=>post('/print/resume');$('cancel').onclick=()=>confirm('Cancel print?')&&post('/print/cancel');$('set-temp').onclick=()=>post('/temperature',{nozzle:Number($('nozzle').value)||null,bed:Number($('bed').value)||null});$('set-fan').onclick=()=>post('/fans',{fan:Number($('fan').value)||0});$('cam-start').onclick=startCamera;$('cam-stop').onclick=()=>{$('camera').src='';};$('save-prefs').onclick=()=>{prefs.theme=$('theme').value;prefs.startup='dashboard';localStorage.setItem('cc2_dash_v10_prefs',JSON.stringify(prefs));document.body.dataset.theme=prefs.theme;};
 load();
+const out = document.getElementById('out');
+const statusEl = document.getElementById('status');
+
+document.getElementById('scan').addEventListener('click', async () => {
+  statusEl.textContent = 'Scanning...';
+  const r = await fetch('/api/discover?timeout=3');
+  const j = await r.json();
+  out.textContent = JSON.stringify(j, null, 2);
+  statusEl.textContent = `Found ${j.count} printer(s)`;
+});
+
+fetch('/api/printers').then(r => r.json()).then(p => {
+  statusEl.textContent = p.length ? `Configured: ${p[0].name}` : 'No printer configured';
+});

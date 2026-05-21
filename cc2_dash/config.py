@@ -36,6 +36,9 @@ class AppConfig(BaseModel):
     app_name: str = "cc2-dash-v1.0"
     printers: list[PrinterConfig] = Field(default_factory=list)
     prefs: DashboardPrefs = Field(default_factory=DashboardPrefs)
+    enabled: bool = True
+    allow_commands: bool = False
+    allow_dangerous_commands: bool = False
 
 
 class ConfigStore:
@@ -99,6 +102,41 @@ class ConfigStore:
             if not found:
                 cfg.printers.append(printer)
             self._write_config(cfg)
+    def _read_raw(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        try:
+            data = json.loads(self.path.read_text())
+            return data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+
+    def _write_raw(self, rows: list[dict[str, Any]]) -> None:
+        self.path.write_text(json.dumps(rows, indent=2) + "\n")
+
+    def list_printers(self) -> list[PrinterConfig]:
+        with self.lock:
+            return [PrinterConfig(**row) for row in self._read_raw()]
+
+    def get(self, printer_id: str) -> PrinterConfig | None:
+        with self.lock:
+            for row in self._read_raw():
+                if row.get("id") == printer_id:
+                    return PrinterConfig(**row)
+            return None
+
+    def upsert(self, printer: PrinterConfig) -> PrinterConfig:
+        with self.lock:
+            rows = self._read_raw()
+            replaced = False
+            for i, row in enumerate(rows):
+                if row.get("id") == printer.id:
+                    rows[i] = printer.model_dump()
+                    replaced = True
+                    break
+            if not replaced:
+                rows.append(printer.model_dump())
+            self._write_raw(rows)
             return printer
 
     def delete(self, printer_id: str) -> bool:
@@ -110,3 +148,9 @@ class ConfigStore:
             cfg.printers = filtered
             self._write_config(cfg)
             return True
+            rows = self._read_raw()
+            new_rows = [row for row in rows if row.get("id") != printer_id]
+            changed = len(new_rows) != len(rows)
+            if changed:
+                self._write_raw(new_rows)
+            return changed

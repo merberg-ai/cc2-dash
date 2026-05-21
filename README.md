@@ -11,6 +11,12 @@ Mobile-first LAN dashboard for Elegoo Centauri Carbon 2 (CC2).
 - Safety gating for printer methods.
 
 ## Install
+# cc2-dash
+
+Local, mobile-first dashboard for the Elegoo Centauri Carbon 2.
+
+## Quick start
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -45,3 +51,10 @@ Order:
 ## Notes
 - Keep `config/printers.json` private (contains access code).
 - App keeps portal compatibility route intact.
+Open: `http://<server-ip>:8088/`
+
+## Notes
+
+- Discovery uses UDP method 7000 on port 52700.
+- Control and status use MQTT (`elegoo` / printer access code).
+- Camera stream is direct MJPEG on `http://<printer-ip>:8080/`.
