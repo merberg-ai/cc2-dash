@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>cc2-dash-v1.0</title><link rel='stylesheet' href='/static/style.css'><link rel='stylesheet' href='/static/mobile.css'></head>
+<body data-theme='dark-glass'>
+<header><h1>cc2-dash-v1.0</h1><div id='conn'>loading...</div></header>
+<nav id='tabs'></nav>
+<main>
+<section id='setup' class='tab'><h2>Setup</h2><button id='scan'>Scan</button><pre id='scan-results'></pre><input id='name' placeholder='Printer name'><input id='host' placeholder='IP'><input id='serial' placeholder='Serial'><input id='pin' placeholder='PIN'><button id='save'>Save</button></section>
+<section id='dashboard' class='tab'><h2>Dashboard</h2><div id='status'></div><img id='camera'><div><button id='cam-start'>Start Camera</button><button id='cam-stop'>Stop Camera</button><a id='portal-link' href='/portal-fullscreen' target='_blank'>Open stock portal</a></div></section>
+<section id='controls' class='tab'><h2>Controls</h2><button id='pause'>Pause</button><button id='resume'>Resume</button><button id='cancel'>Cancel</button><input id='nozzle' type='number' placeholder='Nozzle'><input id='bed' type='number' placeholder='Bed'><button id='set-temp'>Apply Temps</button><input id='fan' type='number' placeholder='Fan %'><button id='set-fan'>Set Fan</button></section>
+<section id='console-tab' class='tab'><h2>Console</h2><pre id='console'></pre></section>
+<section id='settings' class='tab'><h2>Settings</h2><select id='theme'><option value='dark-glass'>Dark Glass</option><option value='blue'>Mainsail-ish Blue</option><option value='amber'>Amber Terminal</option><option value='contrast'>High Contrast</option></select><button id='save-prefs'>Save Prefs</button></section>
+</main>
+<script src='/static/app.js'></script></body></html>
