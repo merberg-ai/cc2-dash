@@ -10,6 +10,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from cc2_dash.cc2.commands import camera_enable_params, fan_params, light_params, method_allowed, start_print_params, temperature_params
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from cc2_dash.cc2.commands import fan_percent_to_pwm, method_allowed, temperature_params
 from cc2_dash.cc2.discovery import discover
 from cc2_dash.cc2.manager import PrinterManager
 from cc2_dash.config import ConfigStore, PrinterConfig
@@ -163,6 +168,15 @@ def cancel(printer_id: str) -> dict:
 @app.post("/api/printers/{printer_id}/files/start")
 def files_start(printer_id: str, body: dict) -> dict:
     return _send(printer_id, 1020, start_print_params(body["filename"], body.get("storage_media", "local")))
+@app.post("/api/printers/{printer_id}/command")
+def command(printer_id: str, body: CommandBody) -> dict:
+    printer = config_store.get(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+    if not method_allowed(body.method, printer.allow_commands, printer.allow_dangerous_commands):
+        raise HTTPException(status_code=403, detail="Method blocked by safety policy")
+    client = manager.ensure_client(printer_id)
+    return client.send_command(method=body.method, params=body.params, wait=body.wait, timeout=body.timeout)
 
 
 @app.get("/api/printers/{printer_id}/camera/url")
@@ -214,3 +228,6 @@ def oe_js() -> PlainTextResponse:
 @app.get("/oe-relay-static/elegoo-os-relay.css")
 def oe_css() -> PlainTextResponse:
     return PlainTextResponse("/* relay shim */", media_type="text/css")
+        return
+
+    return StreamingResponse(iterator(), headers={"Cache-Control": "no-store, no-cache"})

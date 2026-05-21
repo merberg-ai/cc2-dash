@@ -52,6 +52,11 @@ cc2-dash/
 ```
 
 ## Install / run
+# cc2-dash
+
+Local, mobile-first dashboard for the Elegoo Centauri Carbon 2.
+
+## Quick start
 
 ```bash
 python3 -m venv .venv
@@ -111,3 +116,10 @@ Frontend direct-first camera order:
 - Discovery is subnet dependent and may be blocked by AP isolation/VLANs.
 - Stock Elegoo portal assets in this repo are placeholders.
 - Access code is stored plaintext in local JSON (LAN-only convenience).
+Open: `http://<server-ip>:8088/`
+
+## Notes
+
+- Discovery uses UDP method 7000 on port 52700.
+- Control and status use MQTT (`elegoo` / printer access code).
+- Camera stream is direct MJPEG on `http://<printer-ip>:8080/`.
