@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cc2-dash</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/mobile.css" />
+</head>
+<body>
+  <header class="topbar"><h1>cc2-dash v1.0</h1><span id="conn"></span></header>
+  <main class="grid">
+    <section class="card" id="setup">
+      <h2>Setup</h2>
+      <button id="scan">Scan Printer</button>
+      <div id="scan-results"></div>
+      <div class="form">
+        <input id="name" placeholder="Printer name" />
+        <input id="host" placeholder="Printer IP" />
+        <input id="serial" placeholder="Serial" />
+        <input id="pin" placeholder="Access code" />
+        <button id="save">Save Printer</button>
+      </div>
+    </section>
+    <section class="card" id="status-card">
+      <h2>Status</h2>
+      <pre id="status-json">No status yet.</pre>
+    </section>
+    <section class="card">
+      <h2>Camera</h2>
+      <div class="row"><button id="cam-start">Start Camera</button><button id="cam-stop">Stop</button></div>
+      <img id="camera" alt="camera stream" />
+    </section>
+    <section class="card">
+      <h2>Controls</h2>
+      <div class="row"><button id="pause">Pause</button><button id="resume">Resume</button><button id="cancel">Cancel</button></div>
+      <div class="row"><input id="nozzle" placeholder="Nozzle °C"/><input id="bed" placeholder="Bed °C"/><button id="set-temp">Set Temps</button></div>
+      <div class="row"><input id="fan" placeholder="Fan %"/><button id="set-fan">Set Fan</button></div>
+    </section>
+    <section class="card">
+      <h2>Console</h2>
+      <pre id="console"></pre>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

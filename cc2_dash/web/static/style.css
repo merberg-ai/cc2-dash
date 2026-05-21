@@ -1,0 +1,11 @@
+:root { --bg: #0f1117; --card: #1a1f2b; --text: #e7edf6; --accent: #3e8dff; }
+body { margin: 0; font-family: system-ui; background: var(--bg); color: var(--text); }
+.topbar { display:flex; justify-content:space-between; padding: 12px 16px; background: #0b0e14; position: sticky; top: 0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; padding:12px; }
+.card { background:var(--card); border-radius:14px; padding:12px; box-shadow: 0 10px 25px rgba(0,0,0,.2); }
+.row { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+input,button { border-radius:10px; border:1px solid #2e3648; background:#121726; color:var(--text); padding:8px; }
+button { background: var(--accent); border: 0; cursor:pointer; }
+pre { white-space: pre-wrap; font-size: 12px; }
+#camera { width: 100%; max-height: 320px; object-fit: contain; background: #000; border-radius: 10px; }
+.form { display:grid; gap:8px; }
