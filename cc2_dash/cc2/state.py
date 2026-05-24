@@ -119,8 +119,22 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
         "file": get_path(full_status, "print_status.filename"),
         "uuid": get_path(full_status, "print_status.uuid"),
         "layers": {
-            "current": get_path(full_status, "print_status.current_layer"),
-            "total": get_path(full_status, "print_status.total_layer"),
+            "current": get_path(
+                full_status,
+                "print_status.current_layer",
+                "print_status.info.current_layer",
+                "print_stats.info.current_layer",
+                "print_stats.current_layer",
+                "print_status.current_layers",
+            ),
+            "total": get_path(
+                full_status,
+                "print_status.total_layer",
+                "print_status.info.total_layer",
+                "print_stats.info.total_layer",
+                "print_stats.total_layer",
+                "print_status.total_layers",
+            ),
         },
         "time": {
             "elapsed_sec": get_path(full_status, "print_status.print_duration"),

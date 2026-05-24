@@ -263,138 +263,163 @@
       </section>
 
       <section class="page" id="page-settings" data-title="Settings">
-        <div class="split-grid">
-          <article class="card fade-card">
-            <h2>Appearance</h2>
-            <div class="settings-list">
-              <label>Theme<select id="themeSelect"><option value="carbon">Carbon dark glass</option><option value="mainsail">Mainsail blue</option><option value="amber">Amber terminal</option><option value="acid">Alien acid</option><option value="midnight">Midnight purple</option></select></label>
-              <label>Refresh interval<select id="refreshSelect"><option value="1500">1.5 seconds</option><option value="2500">2.5 seconds</option><option value="5000">5 seconds</option><option value="10000">10 seconds</option></select></label>
-              <label>Default tab<select id="defaultTabSelect"><option value="dashboard">Dashboard</option><option value="camera">Camera</option><option value="temperatures">Temperatures</option><option value="fans">Fans</option><option value="controls">Controls</option><option value="files">Files</option><option value="timelapse">Timelapse</option><option value="console">Console</option><option value="settings">Settings</option></select></label>
-              <label class="switch-row"><span>Glass cards</span><input id="glassToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Fade animations</span><input id="animToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Developer mode</span><input id="developerModeToggle" type="checkbox"></label>
-            </div>
-          </article>
-          <article class="card fade-card">
-            <h2>Mobile behavior</h2>
-            <p>Runtime browser detection adds mobile/touch classes automatically. These settings steer how aggressive the mobile UI gets.</p>
-            <div class="settings-list">
-              <label class="switch-row"><span>Force mobile layout</span><input id="forceMobileToggle" type="checkbox"></label>
-              <label class="switch-row"><span>Bottom navigation</span><input id="bottomNavToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Large touch controls</span><input id="largeTouchToggle" type="checkbox" checked></label>
-            </div>
-          </article>
-        </div>
+        <div class="settings-container">
+          <nav class="settings-subnav" id="settingsSubNav">
+            <button class="settings-subnav-btn active" type="button" data-settings-tab="general">⚙ General</button>
+            <button class="settings-subnav-btn" type="button" data-settings-tab="safety">🛡 Safety</button>
+            <button class="settings-subnav-btn" type="button" data-settings-tab="users">👤 Users</button>
+            <button class="settings-subnav-btn" type="button" data-settings-tab="printer">🖨 Printer</button>
+          </nav>
+          
+          <div class="settings-content">
+            <!-- GENERAL SECTION -->
+            <div class="settings-section active" id="settings-sect-general">
+              <div class="split-grid">
+                <article class="card fade-card">
+                  <h2>Appearance</h2>
+                  <div class="settings-list">
+                    <label>Theme<select id="themeSelect"><option value="carbon">Carbon dark glass</option><option value="mainsail">Mainsail blue</option><option value="amber">Amber terminal</option><option value="acid">Alien acid</option><option value="midnight">Midnight purple</option></select></label>
+                    <label>Refresh interval<select id="refreshSelect"><option value="1500">1.5 seconds</option><option value="2500">2.5 seconds</option><option value="5000">5 seconds</option><option value="10000">10 seconds</option></select></label>
+                    <label>Default tab<select id="defaultTabSelect"><option value="dashboard">Dashboard</option><option value="camera">Camera</option><option value="temperatures">Temperatures</option><option value="fans">Fans</option><option value="controls">Controls</option><option value="files">Files</option><option value="timelapse">Timelapse</option><option value="console">Console</option><option value="settings">Settings</option></select></label>
+                    <label class="switch-row"><span>Glass cards</span><input id="glassToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Fade animations</span><input id="animToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Developer mode</span><input id="developerModeToggle" type="checkbox"></label>
+                  </div>
+                </article>
+                <article class="card fade-card">
+                  <h2>Mobile behavior</h2>
+                  <p>Runtime browser detection adds mobile/touch classes automatically. These settings steer how aggressive the mobile UI gets.</p>
+                  <div class="settings-list">
+                    <label class="switch-row"><span>Force mobile layout</span><input id="forceMobileToggle" type="checkbox"></label>
+                    <label class="switch-row"><span>Bottom navigation</span><input id="bottomNavToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Large touch controls</span><input id="largeTouchToggle" type="checkbox" checked></label>
+                  </div>
+                </article>
+              </div>
 
-        <div class="split-grid">
-          <article class="card fade-card">
-            <h2>Safety</h2>
-            <p>LAN-only still means real printer commands. Keep destructive controls locked unless you actually need them.</p>
-            <div class="settings-list">
-              <label class="switch-row"><span>Enable printer controls</span><input id="allowCommandsToggle" type="checkbox"></label>
-              <label class="switch-row"><span>Enable destructive controls</span><input id="allowDangerToggle" type="checkbox"></label>
-              <label class="switch-row"><span>Confirm cancel print</span><input id="confirmCancelToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Confirm start print</span><input id="confirmStartToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Confirm delete file</span><input id="confirmDeleteToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Confirm temperature changes</span><input id="confirmTempToggle" type="checkbox"></label>
+              <div class="split-grid">
+                <article class="card fade-card">
+                  <h2>Camera</h2>
+                  <p>Camera is direct at printer-ip:8080, with the cc2-dash proxy as a fallback when the browser is being a goblin.</p>
+                  <div class="settings-list">
+                    <label class="switch-row"><span>Auto-load camera on dashboard</span><input id="autoCameraToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Prefer direct stream</span><input id="preferDirectCameraToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Proxy fallback</span><input id="proxyFallbackToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Auto wake camera before proxy</span><input id="autoWakeCameraToggle" type="checkbox" checked></label>
+                  </div>
+                </article>
+                <article class="card fade-card">
+                  <h2>System</h2>
+                  <p>App settings live in <code>config/app.json</code>. Printer pairing lives separately in <code>config/printers.json</code>.</p>
+                  <div class="button-row two">
+                    <button id="exportSettingsBtn" class="btn ghost" type="button">Export settings</button>
+                    <button id="resetAppSettingsBtn" class="btn danger" type="button">Reset app settings</button>
+                  </div>
+                </article>
+              </div>
             </div>
-          </article>
-          <article class="card fade-card">
-            <h2>Safety limits</h2>
-            <p>Frontend and backend both clamp to these limits before sending commands.</p>
-            <div class="form-grid compact">
-              <label>Max nozzle °C<input id="maxNozzleInput" type="number" min="0" max="450" step="1"></label>
-              <label>Max bed °C<input id="maxBedInput" type="number" min="0" max="160" step="1"></label>
-              <label>Max fan %<input id="maxFanInput" type="number" min="0" max="100" step="1"></label>
-              <button id="saveLimitsBtn" class="btn primary" type="button">Save limits</button>
-            </div>
-          </article>
-        </div>
 
-        <div class="split-grid">
-          <article class="card fade-card">
-            <h2>Camera</h2>
-            <p>Camera is direct at printer-ip:8080, with the cc2-dash proxy as a fallback when the browser is being a goblin.</p>
-            <div class="settings-list">
-              <label class="switch-row"><span>Auto-load camera on dashboard</span><input id="autoCameraToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Prefer direct stream</span><input id="preferDirectCameraToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Proxy fallback</span><input id="proxyFallbackToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Auto wake camera before proxy</span><input id="autoWakeCameraToggle" type="checkbox" checked></label>
+            <!-- SAFETY SECTION -->
+            <div class="settings-section" id="settings-sect-safety">
+              <div class="split-grid">
+                <article class="card fade-card">
+                  <h2>Safety</h2>
+                  <p>LAN-only still means real printer commands. Keep destructive controls locked unless you actually need them.</p>
+                  <div class="settings-list">
+                    <label class="switch-row"><span>Enable printer controls</span><input id="allowCommandsToggle" type="checkbox"></label>
+                    <label class="switch-row"><span>Enable destructive controls</span><input id="allowDangerToggle" type="checkbox"></label>
+                    <label class="switch-row"><span>Confirm cancel print</span><input id="confirmCancelToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Confirm start print</span><input id="confirmStartToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Confirm delete file</span><input id="confirmDeleteToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Confirm temperature changes</span><input id="confirmTempToggle" type="checkbox"></label>
+                  </div>
+                </article>
+                <article class="card fade-card">
+                  <h2>Safety limits</h2>
+                  <p>Frontend and backend both clamp to these limits before sending commands.</p>
+                  <div class="form-grid compact">
+                    <label>Max nozzle °C<input id="maxNozzleInput" type="number" min="0" max="450" step="1"></label>
+                    <label>Max bed °C<input id="maxBedInput" type="number" min="0" max="160" step="1"></label>
+                    <label>Max fan %<input id="maxFanInput" type="number" min="0" max="100" step="1"></label>
+                    <button id="saveLimitsBtn" class="btn primary" type="button">Save limits</button>
+                  </div>
+                </article>
+              </div>
             </div>
-          </article>
-          <article class="card fade-card">
-            <h2>System</h2>
-            <p>App settings live in <code>config/app.json</code>. Printer pairing lives separately in <code>config/printers.json</code>.</p>
-            <div class="button-row two">
-              <button id="exportSettingsBtn" class="btn ghost" type="button">Export settings</button>
-              <button id="resetAppSettingsBtn" class="btn danger" type="button">Reset app settings</button>
-            </div>
-          </article>
-        </div>
 
-        <div class="split-grid">
-          <article class="card fade-card">
-            <h2>Login & sessions</h2>
-            <p>Local-only password login. Guests get the limited dashboard below; logged-in users get permissions by role.</p>
-            <div class="settings-list">
-              <label class="switch-row"><span>Allow guest dashboard</span><input id="allowGuestDashboardToggle" type="checkbox" checked></label>
-              <label>Session timeout minutes<input id="sessionTimeoutInput" type="number" min="5" max="10080" step="5"></label>
-              <label class="switch-row"><span>Login lockout</span><input id="lockoutToggle" type="checkbox" checked></label>
-              <label>Max failed attempts<input id="maxFailedAttemptsInput" type="number" min="2" max="50" step="1"></label>
-              <label>Lockout minutes<input id="lockoutMinutesInput" type="number" min="1" max="1440" step="1"></label>
-              <button id="saveAuthSettingsBtn" class="btn primary" type="button">Save auth settings</button>
-            </div>
-          </article>
-          <article class="card fade-card">
-            <h2>Guest dashboard</h2>
-            <p>Choose what not-logged-in LAN users can see. No controls are available to guests.</p>
-            <div class="settings-list compact-checks">
-              <label class="switch-row"><span>Show camera</span><input id="guestShowCameraToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Show current job</span><input id="guestShowJobToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Show temperatures</span><input id="guestShowTempsToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Show progress</span><input id="guestShowProgressToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Show ETA</span><input id="guestShowEtaToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Show files tab</span><input id="guestShowFilesToggle" type="checkbox"></label>
-              <label class="switch-row"><span>Show timelapse tab</span><input id="guestShowTimelapseToggle" type="checkbox" checked></label>
-              <label class="switch-row"><span>Mask file names</span><input id="guestMaskFilesToggle" type="checkbox"></label>
-              <label class="switch-row"><span>Show printer IP</span><input id="guestShowIpToggle" type="checkbox"></label>
-              <label class="switch-row"><span>Show serial</span><input id="guestShowSerialToggle" type="checkbox"></label>
-              <button id="saveGuestSettingsBtn" class="btn primary" type="button">Save guest dashboard</button>
-            </div>
-          </article>
-        </div>
+            <!-- USERS SECTION -->
+            <div class="settings-section" id="settings-sect-users">
+              <div class="split-grid">
+                <article class="card fade-card">
+                  <h2>Login & sessions</h2>
+                  <p>Local-only password login. Guests get the limited dashboard below; logged-in users get permissions by role.</p>
+                  <div class="settings-list">
+                    <label class="switch-row"><span>Allow guest dashboard</span><input id="allowGuestDashboardToggle" type="checkbox" checked></label>
+                    <label>Session timeout minutes<input id="sessionTimeoutInput" type="number" min="5" max="10080" step="5"></label>
+                    <label class="switch-row"><span>Login lockout</span><input id="lockoutToggle" type="checkbox" checked></label>
+                    <label>Max failed attempts<input id="maxFailedAttemptsInput" type="number" min="2" max="50" step="1"></label>
+                    <label>Lockout minutes<input id="lockoutMinutesInput" type="number" min="1" max="1440" step="1"></label>
+                    <button id="saveAuthSettingsBtn" class="btn primary" type="button">Save auth settings</button>
+                  </div>
+                </article>
+                <article class="card fade-card">
+                  <h2>Guest dashboard</h2>
+                  <p>Choose what not-logged-in LAN users can see. No controls are available to guests.</p>
+                  <div class="settings-list compact-checks">
+                    <label class="switch-row"><span>Show camera</span><input id="guestShowCameraToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Show current job</span><input id="guestShowJobToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Show temperatures</span><input id="guestShowTempsToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Show progress</span><input id="guestShowProgressToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Show ETA</span><input id="guestShowEtaToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Show files tab</span><input id="guestShowFilesToggle" type="checkbox"></label>
+                    <label class="switch-row"><span>Show timelapse tab</span><input id="guestShowTimelapseToggle" type="checkbox" checked></label>
+                    <label class="switch-row"><span>Mask file names</span><input id="guestMaskFilesToggle" type="checkbox"></label>
+                    <label class="switch-row"><span>Show printer IP</span><input id="guestShowIpToggle" type="checkbox"></label>
+                    <label class="switch-row"><span>Show serial</span><input id="guestShowSerialToggle" type="checkbox"></label>
+                    <button id="saveGuestSettingsBtn" class="btn primary" type="button">Save guest dashboard</button>
+                  </div>
+                </article>
+              </div>
 
-        <article class="card fade-card">
-          <div class="card-head"><div><h2>Users</h2><p>Create local cc2-dash accounts. Viewer is read-only, Operator can run safe controls, Admin can do everything.</p></div><button id="refreshUsersBtn" class="btn subtle small" type="button">Refresh</button></div>
-          <div id="usersList" class="file-list empty">Login as admin to manage users.</div>
-          <form id="createUserForm" class="form-grid compact user-create-form">
-            <label>Username<input name="username" autocomplete="off" required></label>
-            <label>Display name<input name="display_name" autocomplete="off"></label>
-            <label>Role<select name="role"><option value="viewer">Viewer</option><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
-            <label>Password<input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
-            <button class="btn primary wide" type="submit">Create user</button>
-          </form>
-        </article>
+              <article class="card fade-card">
+                <div class="card-head"><div><h2>Users</h2><p>Create local cc2-dash accounts. Viewer is read-only, Operator can run safe controls, Admin can do everything.</p></div><button id="refreshUsersBtn" class="btn subtle small" type="button">Refresh</button></div>
+                <div id="usersList" class="file-list empty">Login as admin to manage users.</div>
+                <form id="createUserForm" class="form-grid compact user-create-form">
+                  <label>Username<input name="username" autocomplete="off" required></label>
+                  <label>Display name<input name="display_name" autocomplete="off"></label>
+                  <label>Role<select name="role"><option value="viewer">Viewer</option><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
+                  <label>Password<input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+                  <button class="btn primary wide" type="submit">Create user</button>
+                </form>
+              </article>
+            </div>
 
-        <article class="card fade-card">
-          <div class="card-head"><div><h2>Layout tabs</h2><p>Show/hide and reorder the portal sections. This is now persisted in the backend app config.</p></div><button id="resetLayoutBtn" class="btn subtle small">Reset</button></div>
-          <div id="layoutEditor" class="layout-editor"></div>
-        </article>
-        <article class="card fade-card">
-          <h2>Printer</h2>
-          <p>The stored access code is never echoed back into the UI. Leave it blank unless you want to replace it.</p>
-          <form id="settingsPrinterForm" class="form-grid compact">
-            <label>Name<input name="name" autocomplete="off"></label>
-            <label>Host/IP<input name="host" inputmode="decimal"></label>
-            <label>Serial<input name="serial" autocomplete="off"></label>
-            <label>PIN/access code<input name="access_code" autocomplete="off" placeholder="Stored — enter a new code to replace"></label>
-            <button class="btn primary wide" type="submit">Save printer settings</button>
-          </form>
-          <div class="button-row two danger-zone">
-            <button id="openPortalBtn" class="btn ghost">Open stock portal</button>
-            <button id="resetConfigBtn" class="btn danger">Forget printer</button>
+            <!-- PRINTER SECTION -->
+            <div class="settings-section" id="settings-sect-printer">
+              <div class="split-grid">
+                <article class="card fade-card">
+                  <h2>Printer Connection</h2>
+                  <p>The stored access code is never echoed back into the UI. Leave it blank unless you want to replace it.</p>
+                  <form id="settingsPrinterForm" class="form-grid compact">
+                    <label>Name<input name="name" autocomplete="off"></label>
+                    <label>Host/IP<input name="host" inputmode="decimal"></label>
+                    <label>Serial<input name="serial" autocomplete="off"></label>
+                    <label>PIN/access code<input name="access_code" autocomplete="off" placeholder="Stored — enter a new code to replace"></label>
+                    <button class="btn primary wide" type="submit">Save printer settings</button>
+                  </form>
+                  <div class="button-row two danger-zone">
+                    <button id="openPortalBtn" class="btn ghost" type="button">Open stock portal</button>
+                    <button id="resetConfigBtn" class="btn danger" type="button">Forget printer</button>
+                  </div>
+                </article>
+                <article class="card fade-card">
+                  <div class="card-head"><div><h2>Layout tabs</h2><p>Show/hide and reorder the portal sections. This is now persisted in the app config.</p></div><button id="resetLayoutBtn" class="btn subtle small">Reset</button></div>
+                  <div id="layoutEditor" class="layout-editor"></div>
+                </article>
+              </div>
+            </div>
           </div>
-        </article>
+        </div>
       </section>
     </section>
 

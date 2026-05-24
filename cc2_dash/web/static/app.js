@@ -695,4 +695,22 @@ $('#allowDangerToggle')?.addEventListener('change', updateSafety);
 $('#resetConfigBtn')?.addEventListener('click', forgetPrinter);
 $('#resetLayoutBtn')?.addEventListener('click', async () => { await saveTabs(structuredClone(DEFAULT_TABS)); setPage('dashboard'); });
 
+function initSettingsSubnav() {
+  const subnav = $('#settingsSubNav');
+  if (!subnav) return;
+  const buttons = $$('.settings-subnav-btn', subnav);
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.settingsTab;
+      buttons.forEach(b => b.classList.toggle('active', b === btn));
+      $$('.settings-section').forEach(sect => {
+        const isActive = sect.id === `settings-sect-${tab}`;
+        sect.classList.toggle('active', isActive);
+      });
+    });
+  });
+}
+
+initSettingsSubnav();
 boot();
+
