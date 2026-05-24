@@ -1,0 +1,138 @@
+{
+  "auth": {
+    "allow_guest_dashboard": true,
+    "enabled": true,
+    "lockout_enabled": true,
+    "lockout_minutes": 10,
+    "max_failed_attempts": 8,
+    "secure_cookie": false,
+    "session_secret": "0s4KAWs1zPKwphml0a3QW63GhCHVTE5WMfBiD_NjLhe4fKcaa7xvtDMi1PTg38_L",
+    "session_timeout_minutes": 720
+  },
+  "camera": {
+    "auto_wake": true,
+    "prefer_direct": true,
+    "proxy_fallback": true
+  },
+  "config_version": 2,
+  "dashboard": {
+    "auto_load_camera": true,
+    "default_tab": "dashboard",
+    "developer_mode": false,
+    "poll_interval_ms": 2500
+  },
+  "developer": {
+    "show_raw_console_payloads": false
+  },
+  "guest_dashboard": {
+    "mask_file_names": false,
+    "show_camera": true,
+    "show_current_job": true,
+    "show_eta": true,
+    "show_files": false,
+    "show_printer_ip": false,
+    "show_printer_name": true,
+    "show_progress": true,
+    "show_serial": false,
+    "show_temperatures": true,
+    "show_timelapse": true
+  },
+  "layout": {
+    "tabs": []
+  },
+  "mobile": {
+    "bottom_nav": true,
+    "force_mobile_layout": false,
+    "large_touch_controls": true
+  },
+  "permissions": {
+    "admin": {
+      "control_print": true,
+      "dangerous_commands": true,
+      "delete_files": true,
+      "developer_console": true,
+      "edit_settings": true,
+      "set_fans": true,
+      "set_temperatures": true,
+      "start_print": true,
+      "stock_portal": true,
+      "view_camera": true,
+      "view_dashboard": true,
+      "view_files": true,
+      "view_temperatures": true,
+      "view_timelapse": true
+    },
+    "guest": {
+      "control_print": false,
+      "dangerous_commands": false,
+      "delete_files": false,
+      "developer_console": false,
+      "edit_settings": false,
+      "set_fans": false,
+      "set_temperatures": false,
+      "start_print": false,
+      "stock_portal": false,
+      "view_camera": true,
+      "view_dashboard": true,
+      "view_files": false,
+      "view_temperatures": true,
+      "view_timelapse": true
+    },
+    "operator": {
+      "control_print": true,
+      "dangerous_commands": false,
+      "delete_files": false,
+      "developer_console": false,
+      "edit_settings": false,
+      "set_fans": true,
+      "set_temperatures": true,
+      "start_print": true,
+      "stock_portal": false,
+      "view_camera": true,
+      "view_dashboard": true,
+      "view_files": true,
+      "view_temperatures": true,
+      "view_timelapse": true
+    },
+    "viewer": {
+      "control_print": false,
+      "dangerous_commands": false,
+      "delete_files": false,
+      "developer_console": false,
+      "edit_settings": false,
+      "set_fans": false,
+      "set_temperatures": false,
+      "start_print": false,
+      "stock_portal": false,
+      "view_camera": true,
+      "view_dashboard": true,
+      "view_files": true,
+      "view_temperatures": true,
+      "view_timelapse": true
+    }
+  },
+  "safety": {
+    "confirm_cancel": true,
+    "confirm_delete_file": true,
+    "confirm_history_delete": true,
+    "confirm_start_print": true,
+    "confirm_temperature_change": false,
+    "enable_controls_by_default": false,
+    "enable_dangerous_by_default": false,
+    "max_bed_temp": 120,
+    "max_fan_percent": 100,
+    "max_nozzle_temp": 320
+  },
+  "server": {
+    "allowed_origins": [],
+    "cors_mode": "same-origin",
+    "host": "0.0.0.0",
+    "port": 8088
+  },
+  "theme": {
+    "accent": "blue",
+    "animations": true,
+    "glass": true,
+    "preset": "carbon"
+  }
+}

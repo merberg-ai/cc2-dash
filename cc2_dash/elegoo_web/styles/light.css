@@ -1,0 +1,416 @@
+@import url("../thirdparty/element-plus/index.min.css");
+
+:root {
+  /* Background Colors */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #f5f5f5;
+  --bg-quaternary: #F3F4F6;
+  --bg-hover: #f8f9fa;
+  --bg-active: #e3f2fd;
+
+  /* Text Colors */
+  --text-primary: #222;
+  --text-secondary: #666;
+  --text-tertiary: #999999;
+  --text-muted: #a1a1a2;
+  --text-contrast: #3d3d3d;
+
+  /* Border Colors */
+  --border-primary: #e0e0e0;
+  --border-secondary: #dedede;
+  --border-tertiary: #ccc;
+  --border-light: #f0f0f0;
+  --border-dark: #aaa9aa;
+
+  /* Brand Colors */
+  --color-primary: #1677ff;
+  --color-primary-hover: #0056b3;
+  --color-primary-light: rgba(0, 123, 255, 0.1);
+  --color-primary-shadow: rgba(0, 123, 255, 0.1);
+  --color-primary-rgb: rgb(22, 119, 255);
+
+  /* Status Colors */
+  --color-success: #28a745;
+  --color-warning: #FF7900;
+  --color-danger: #dc3545;
+  --color-info: #17a2b8;
+  --color-error:#DF4536;
+  --color-danger-hover: #c82333;
+
+  /* Printer Status Colors */
+  --printer-status-offline-color: #333333;
+  --printer-status-offline-bg: #F3F3F3;
+  --printer-status-success-color: var(--color-success);
+  --printer-status-success-bg: #E3F1E7;
+  --printer-status-error-color: var(--color-danger);
+  --printer-status-error-bg: #F8D7DA;
+  --printer-status-warning-color: var(--color-warning);
+  --printer-status-warning-bg: #FFDEC0;
+  --printer-status-primary-color: var(--color-primary);
+  --printer-status-primary-bg: #DBEAFE;
+
+  /* Shadow Colors */
+  --shadow-light: rgba(0, 0, 0, 0.15);
+  --shadow-medium: rgba(0, 0, 0, 0.2);
+  --shadow-overlay: rgba(0, 0, 0, 0.8);
+  --shadow-hover: rgba(0, 0, 0, 0.05);
+  --shadow-active: rgba(0, 0, 0, 0.06);
+
+  --button-text-color-primary: white;
+  --button-text-color-secondary: var(--text-secondary);
+
+  --menu-item-background-hover: rgba(22, 119, 255, 0.15);
+  --menu-item-background-active: rgba(22, 119, 255, 0.15);
+
+  /* Component Specific */
+  --toggle-bg-off: #ccc;
+  --toggle-bg-on: var(--color-primary);
+  --toggle-thumb: white;
+
+  --bg-progress-active: var(--color-primary);
+  --bg-progress-inactive: var(--bg-tertiary);
+
+  --el-color-primary: var(--color-primary);
+
+  --el-bg-color: var(--bg-primary);
+  --el-dialog-bg-color: var(--el-bg-color);
+  --el-drawer-bg-color: var(--el-dialog-bg-color, var(--el-bg-color));
+  --el-mask-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ===== BASE STYLES ===== */
+html,
+body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+img {
+  -webkit-user-drag: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+body {
+  background: var(--bg-primary);
+  font-family: "Source Han Sans", "Microsoft YaHei", Arial, sans-serif;
+  height: 100vh;
+  width: 100vw;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.btn-secondary {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.15s ease;
+  min-width: 80px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  outline: 1px solid var(--border-primary);
+
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-tertiary);
+}
+
+.btn-primary {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.15s ease;
+  min-width: 80px;
+  background: var(--color-primary);
+  color: var(--button-text-color-primary);
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-hover);
+}
+
+.btn-primary:disabled {
+  background: var(--toggle-bg-off);
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.15s ease;
+  min-width: 80px;
+  background: var(--color-danger);
+  color: var(--button-text-color-primary);
+}
+
+.btn-danger:hover {
+  background: var(--color-danger-hover);
+}
+
+.btn-danger:disabled {
+  background: var(--toggle-bg-off);
+  cursor: not-allowed;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.icon-button:hover {
+  background-color: var(--shadow-hover);
+}
+
+.icon-button:active {
+  background-color: var(--shadow-active);
+}
+
+.el-drawer__header{
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  background: var(--bg-tertiary);
+}
+.el-drawer .el-drawer__body{
+  --el-drawer-padding-primary: 0px 16px;
+}
+
+
+/* loading */
+
+.linear-loading {
+  width: 100%;
+  height: 4px;
+  background: rgba(22, 119, 255, 0.2);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.linear-loading::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, 
+    transparent 0%,
+    rgba(22, 119, 255, 0.6) 30%,
+    var(--color-primary) 50%,
+    rgba(22, 119, 255, 0.6) 70%,
+    transparent 100%
+  );
+  animation: loading-progress 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  border-radius: 2px;
+}
+
+.linear-loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -50%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, 
+    transparent 0%,
+    rgba(255, 255, 255, 0.8) 50%,
+    transparent 100%
+  );
+  animation: loading-shimmer 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation-delay: 0.3s;
+  border-radius: 2px;
+}
+
+@keyframes loading-progress {
+  0%, 5% {
+    left: -100%;
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  15% {
+    left: -80%;
+    transform: scaleX(0.3);
+    opacity: 0.4;
+  }
+  30% {
+    left: -30%;
+    transform: scaleX(0.8);
+    opacity: 0.8;
+  }
+  50% {
+    left: 10%;
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  70% {
+    left: 50%;
+    transform: scaleX(0.8);
+    opacity: 0.8;
+  }
+  85% {
+    left: 80%;
+    transform: scaleX(0.3);
+    opacity: 0.4;
+  }
+  95%, 100% {
+    left: 100%;
+    transform: scaleX(0);
+    opacity: 0;
+  }
+}
+
+@keyframes loading-shimmer {
+  0%, 10% {
+    left: -50%;
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  20% {
+    left: -30%;
+    opacity: 0.2;
+    transform: scaleX(0.6);
+  }
+  40% {
+    left: 0%;
+    opacity: 0.6;
+    transform: scaleX(1);
+  }
+  60% {
+    left: 30%;
+    opacity: 0.6;
+    transform: scaleX(1);
+  }
+  80% {
+    left: 60%;
+    opacity: 0.2;
+    transform: scaleX(0.6);
+  }
+  90%, 100% {
+    left: 100%;
+    opacity: 0;
+    transform: scaleX(0);
+  }
+}
+
+
+.required:after {
+    content: "*";
+    color: var(--color-danger);
+    margin-left: 4px;
+}
+
+
+/* ===== TOGGLE SWITCH ===== */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--toggle-bg-off);
+  transition: background-color 0.15s ease;
+  border-radius: 24px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--toggle-thumb);
+  transition: transform 0.15s ease;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px var(--shadow-medium);
+}
+.toggle-switch {
+  margin-left: 8px;
+}
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--toggle-bg-on);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(24px);
+}
+
+/* ElMessage error message style - ensure long messages are fully displayed */
+.el-message {
+}
+
+.el-message__content {
+  word-break: break-word;
+  white-space: normal;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.custom-dialog-helper .el-message-box__btns{
+  justify-content: flex-end !important;
+}
+.custom-dialog-helper .el-message-box__btns button{
+  min-width: 80px !important;
+  padding: 8px 16px !important;
+  font-size: 16px !important;
+  height: auto !important;
+  line-height: normal !important;
+}
+
+
+.custom-dialog-helper .el-message-box__header{
+  padding: 8px 0px 16px 0px !important;
+}
+
+.custom-dialog-helper .el-message-box__content{
+  min-height: 150px !important;
+  display: flex;
+  justify-content: center;
+  margin: 0 -12px;
+  border-bottom: 1px solid var(--border-secondary);
+  border-top: 1px solid var(--border-secondary);
+}

@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from threading import RLock
-from typing import Any
-
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
 
 
-class PrinterConfig(BaseModel):
+DEFAULT_CONFIG_PATH = Path(os.environ.get("CC2_DASH_CONFIG", "config/printers.json"))
+
+
+@dataclass
+class PrinterConfig:
     id: str
     name: str
     host: str
     serial: str
-    access_code: str
+    access_code: str = "123456"
     port: int = 1883
     enabled: bool = True
     allow_commands: bool = False
@@ -22,53 +25,76 @@ class PrinterConfig(BaseModel):
 
 
 class ConfigStore:
-    def __init__(self, path: str | None = None) -> None:
-        self.path = Path(path or os.getenv("CC2_DASH_CONFIG") or "config/printers.json")
+    def __init__(self, path: Path = DEFAULT_CONFIG_PATH) -> None:
+        self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock = RLock()
+        self._printers: Dict[str, PrinterConfig] = {}
+        self.load()
 
-    def _read_raw(self) -> list[dict[str, Any]]:
+    def load(self) -> None:
         if not self.path.exists():
-            return []
+            self._printers = {}
+            return
         try:
-            data = json.loads(self.path.read_text())
-            return data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            return []
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            rows = data if isinstance(data, list) else data.get("printers", [])
+            self._printers = {}
+            for raw in rows:
+                if not isinstance(raw, dict):
+                    continue
+                cfg = PrinterConfig(**raw)
+                self._printers[cfg.id] = cfg
+        except Exception:
+            backup = self.path.with_suffix(self.path.suffix + f".corrupt-{int(time.time())}")
+            try:
+                self.path.replace(backup)
+            except Exception:
+                pass
+            self._printers = {}
 
-    def _write_raw(self, rows: list[dict[str, Any]]) -> None:
-        self.path.write_text(json.dumps(rows, indent=2) + "\n")
+    def save(self) -> None:
+        data = {"printers": [asdict(p) for p in self._printers.values()]}
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(self.path)
 
-    def list_printers(self) -> list[PrinterConfig]:
-        with self.lock:
-            return [PrinterConfig(**row) for row in self._read_raw()]
+    def list_printers(self) -> List[PrinterConfig]:
+        return list(self._printers.values())
 
-    def get(self, printer_id: str) -> PrinterConfig | None:
-        with self.lock:
-            for row in self._read_raw():
-                if row.get("id") == printer_id:
-                    return PrinterConfig(**row)
-            return None
+    def get(self, printer_id: str) -> Optional[PrinterConfig]:
+        return self._printers.get(printer_id)
 
-    def upsert(self, printer: PrinterConfig) -> PrinterConfig:
-        with self.lock:
-            rows = self._read_raw()
-            replaced = False
-            for i, row in enumerate(rows):
-                if row.get("id") == printer.id:
-                    rows[i] = printer.model_dump()
-                    replaced = True
-                    break
-            if not replaced:
-                rows.append(printer.model_dump())
-            self._write_raw(rows)
-            return printer
+    def upsert(self, cfg: PrinterConfig) -> PrinterConfig:
+        self._printers[cfg.id] = cfg
+        self.save()
+        return cfg
 
     def delete(self, printer_id: str) -> bool:
-        with self.lock:
-            rows = self._read_raw()
-            new_rows = [row for row in rows if row.get("id") != printer_id]
-            changed = len(new_rows) != len(rows)
-            if changed:
-                self._write_raw(new_rows)
-            return changed
+        if printer_id not in self._printers:
+            return False
+        del self._printers[printer_id]
+        self.save()
+        return True
+
+
+def safe_printer_id(name_or_serial: str) -> str:
+    out = []
+    for ch in name_or_serial.lower():
+        if ch.isalnum():
+            out.append(ch)
+        elif ch in ("-", "_", " "):
+            out.append("-")
+    value = "".join(out).strip("-")
+    while "--" in value:
+        value = value.replace("--", "-")
+    return value or "cc2-printer"
+
+
+def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> Dict[str, Any]:
+    data = asdict(cfg)
+    if include_secret:
+        data["access_code_set"] = bool(cfg.access_code)
+        return data
+    data.pop("access_code", None)
+    data["access_code_set"] = bool(cfg.access_code)
+    return data

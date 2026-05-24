@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connection Failed</title>
+    <script type="text/javascript" src="../include/jquery-3.6.0.min.js"></script>
+    <script type="text/javascript" src="../include/globalapi.js"></script>
+    <script type="text/javascript" src="../data/text.js"></script>
+    <script type="text/javascript" src="../utils/ipc.js"></script>
+    <style>
+        body,
+        html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #fff;
+            font-family: Arial, sans-serif;
+        }
+
+        .failed-container {
+            text-align: center;
+        }
+
+        .message {
+            margin-top: 20px;
+            font-size: 22px;
+            font-weight: 500;
+            color: #3D3D3D;
+        }
+
+        html.dark {
+            background-color: #242428;
+        }
+
+        html.dark .message {
+            color: #FFF;
+        }
+
+        .failed {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -60%);
+            width: 800px;
+
+        }
+
+        .text {
+            font-size: 18px;
+            margin-top: 40px;
+        }
+
+        .title {
+            text-align: left;
+            line-height: 28px;
+        }
+
+        .line {
+            text-align: left;
+            line-height: 28px;
+
+        }
+
+        .line::before {
+            content: '•';
+            display: inline-block;
+            width: 1em;
+            margin-right: 0.5em;
+            text-align: center;
+        }
+
+        .reload-button {
+            width: 116px;
+            height: 42px;
+            border-radius: 4px;
+            opacity: 1;
+            background: #1677FF;
+            margin-top: 25px;
+            border: 0px;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .reload-button:hover {
+            background: #0B66E6;
+        }
+        .reload-button:active {
+            background: #0F5CD8;
+        }
+        .reload-button.loading {
+            position: relative;
+            color: transparent !important;
+            pointer-events: none;
+        }
+        .reload-button.loading::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 24px;
+            height: 24px;
+            margin-left: -12px;
+            margin-top: -14px;
+            border: 3px solid #fff;
+            border-top: 3px solid #1677FF;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+    <script>
+        let checkInterval = null;
+
+        function reloadPage() {
+            var btn = document.querySelector('.reload-button');
+            if (btn.classList.contains('loading')) return;
+            btn.classList.add('loading');
+            btn.disabled = true;
+
+            if (checkInterval) {
+                clearInterval(checkInterval);
+                checkInterval = null;
+            }
+
+            nativeIpc.request("reload",{});
+            checkInterval = setInterval(function() {
+                try {
+                    const ret = nativeIpc.request("isLoading",{});
+                    if(ret&&ret.isLoading===true){
+                        return;
+                    }
+                } catch (error) {
+                    console.error('检查加载状态时出错:', error);
+                }
+                clearInterval(checkInterval);
+                checkInterval = null;
+                btn.classList.remove('loading');
+                btn.disabled = false;      
+            }, 3000);
+        }
+
+        window.addEventListener('contextmenu', function (e) {
+            e.preventDefault();
+        });
+
+    </script>
+</head>
+
+<body onLoad="TranslatePage()">
+    <div class="failed-container">
+        <div class="failed">
+            <img src="./connection-failed.svg" />
+            <div>
+                <div class="message trans" tid="web_load_failed">Web content load failed, please try again.</div>
+                <button onclick="reloadPage()" class="reload-button trans" tid="reload_web_page">
+                    Retry
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

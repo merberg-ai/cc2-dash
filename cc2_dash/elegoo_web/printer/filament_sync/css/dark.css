@@ -1,0 +1,62 @@
+@import url("../../../styles/dark.css");
+
+/* Dark theme specific overrides for filament sync */
+html.dark .filament-sync-container {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+html.dark .icon-button:hover {
+  background-color: var(--shadow-hover);
+}
+
+html.dark .icon-button:active {
+  background-color: var(--shadow-active);
+}
+
+html.dark .model-select .el-select__wrapper {
+  background: transparent;
+  border-color: var(--border-primary);
+}
+
+html.dark .model-select .el-select__icon,
+html.dark .model-select svg {
+  color: var(--text-primary) !important;
+}
+
+html.dark .model-title {
+  color: var(--text-contrast);
+}
+
+html.dark .model-description {
+  color: var(--text-secondary);
+}
+
+html.dark .filament-title {
+  color: var(--text-contrast);
+}
+
+html.dark .filament-list,
+html.dark .empty-content {
+  background: var(--bg-tertiary);
+}
+
+html.dark .filament-item {
+
+}
+
+html.dark .filament-item-id,
+html.dark .filament-item-info {
+  color: var(--text-contrast);
+}
+
+html.dark .filament-item-line {
+  background: var(--border-primary);
+}
+
+/* ===== PRINTER STATUS (DARK THEME) ===== */
+html.dark .printer-status-dropdown,
+html.dark .printer-status-current {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+}

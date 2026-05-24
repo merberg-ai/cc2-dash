@@ -1,1 +1,15 @@
-[]
+{
+  "printers": [
+    {
+      "access_code": "BBVqUg",
+      "allow_commands": true,
+      "allow_dangerous_commands": true,
+      "enabled": true,
+      "host": "192.168.1.3",
+      "id": "centauri-carbon-2",
+      "name": "Centauri Carbon 2",
+      "port": 1883,
+      "serial": "F01UT8FKFZ1HFNR"
+    }
+  ]
+}

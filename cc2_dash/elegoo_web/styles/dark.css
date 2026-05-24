@@ -1,0 +1,104 @@
+@import url("../thirdparty/element-plus/dark/css-vars.css");
+
+/* ===== DARK THEME VARIABLES ===== */
+html.dark {
+  /* Background Colors */
+  --bg-primary: #2D2D31;
+  --bg-secondary: #363636;
+  --bg-tertiary: #35363D;
+  --bg-quaternary: #242428;
+  --bg-hover: #444444;
+  --bg-active: rgba(22, 119, 255, 0.2);
+  
+  /* Text Colors */
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --text-tertiary: #999999;
+  --text-muted: #808080;
+  --text-contrast: #f0f0f0;
+  
+  /* Border Colors */
+  --border-primary: #4D4C55;
+  --border-secondary: #4a4a4a;
+  --border-tertiary: #555555;
+  --border-dark: #666666;
+  
+  /* Brand Colors - keeping similar but adjusted for dark theme */
+  --color-primary: #1677FF;
+  --color-primary-hover: #1565c0;
+  --color-primary-light: rgba(25, 118, 210, 0.2);
+  --color-primary-shadow: rgba(25, 118, 210, 0.3);
+  
+  /* Status Colors - adjusted for dark theme */
+  --color-success: #4caf50;
+  --color-warning: #ff9800;
+  --color-danger: #f44336;
+  --color-info: #2196f3;
+  
+  /* Printer Status Colors - Dark Theme */
+  --printer-status-offline-color: #cccccc;
+  --printer-status-offline-bg: #404040;
+  --printer-status-success-color: var(--color-success);
+  --printer-status-success-bg: rgba(76, 175, 80, 0.2);
+  --printer-status-error-color: var(--color-danger);
+  --printer-status-error-bg: rgba(244, 67, 54, 0.2);
+  --printer-status-warning-color: var(--color-warning);
+  --printer-status-warning-bg: rgba(255, 152, 0, 0.2);
+  --printer-status-primary-color: var(--color-primary);
+  --printer-status-primary-bg: rgba(22, 119, 255, 0.2);
+
+  /* Shadow Colors */
+  --shadow-light: rgba(0, 0, 0, 0.5);
+  --shadow-medium: rgba(0, 0, 0, 0.7);
+  --shadow-overlay: rgba(0, 0, 0, 0.9);
+  --shadow-hover: rgba(255, 255, 255, 0.05);
+  --shadow-active: rgba(255, 255, 255, 0.1);
+  
+  --menu-item-background-hover: rgba(22, 119, 255, 0.15);
+  --menu-item-background-active: rgba(22, 119, 255, 0.15);
+
+  /* Component Specific */
+  --toggle-bg-off: #666666;
+  --toggle-bg-on: var(--color-primary);
+  --toggle-thumb: #ffffff;
+
+  --el-color-primary: var(--color-primary);
+  --el-fill-color-blank: #2d2d2d;
+  --el-border-color-hover: var(--border-secondary);
+
+  --el-bg-color: var(--bg-primary);
+  --el-dialog-bg-color: var(--el-bg-color);
+  --el-drawer-bg-color: var(--el-dialog-bg-color, var(--el-bg-color));
+  --el-mask-color: rgba(0, 0, 0, 0.4);
+  
+}
+
+/* ===== DARK THEME SPECIFIC ADJUSTMENTS ===== */
+
+/* Scrollbar styling for dark theme */
+html.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html.dark ::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: var(--border-tertiary);
+  border-radius: 4px;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+
+.linear-loading::after {
+  background: linear-gradient(90deg, 
+    transparent 0%,
+    rgba(30, 30, 30, 0.8) 50%,
+    transparent 100%
+  );
+}

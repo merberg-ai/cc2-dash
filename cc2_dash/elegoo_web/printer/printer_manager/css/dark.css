@@ -1,0 +1,28 @@
+@import url("../../../styles/dark.css");
+
+/* ===================== Dark Mode Overrides for Printer Manager ===================== */
+
+/* 
+  Since light.css already uses CSS variables extensively, 
+  most styles will automatically adapt to dark mode through the variable definitions in ../../styles/dark.css
+  Only specific overrides are needed here.
+*/
+
+html.dark {
+  /* Only add specific overrides that differ from the light theme logic */
+  
+  /* Progress bar uses specific variable mapping */
+  .progress-bar-bg {
+    background: var(--bg-tertiary);
+  }
+
+  .progress-bar {
+    background: var(--bg-progress-active);
+  }
+
+  /* Update tag styling needs specific dark theme colors */
+  .printer-setting-update-tag.available {
+    background: var(--color-success);
+    color: var(--bg-primary);
+  }
+}
