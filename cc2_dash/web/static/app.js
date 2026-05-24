@@ -46,6 +46,7 @@ let lastStatus = null;
 let cameraOn = false;
 let lightState = false;
 let currentTab = prefs.tab || 'dashboard';
+const fileTotalLayersCache = new Map();
 
 function savePrefs(){ localStorage.setItem('cc2_dash_v10_prefs', JSON.stringify(prefs)); }
 function mergeDeep(base, patch){
@@ -326,6 +327,12 @@ async function refreshStatus(){
 function startRefresh(){ clearInterval(refreshTimer); refreshTimer = setInterval(refreshStatus, Number(appConfig.dashboard?.poll_interval_ms || 2500)); }
 function renderStatus(snapshot){
   const n = normalizedFrom(snapshot);
+
+  // Log raw snapshot for developer console debugging
+  if (appConfig.dashboard?.developer_mode || appConfig.developer?.show_raw_console_payloads) {
+    log(`Status snapshot update: connected=${snapshot.connected}`, 'DEV', snapshot);
+  }
+
   const connected = snapshot.connected ? 'connected' : 'not connected';
   const registered = snapshot.registered ? 'registered' : 'pairing';
   setText('printerMeta', `${activePrinter.host} · ${connected} · ${registered}`);
@@ -342,7 +349,31 @@ function renderStatus(snapshot){
   setText('fileName', n.file || 'No active file');
   setText('subState', n.sub_state || snapshot.last_error || 'Ready');
   setText('remainingTime', n.time?.remaining_human || '--');
-  setText('layerText', `${n.layers?.current ?? '--'}/${n.layers?.total ?? '--'}`);
+  
+  // Layer details metadata query fallback
+  let totalLayers = n.layers?.total;
+  const currentFile = n.file;
+  if (currentFile && (!totalLayers || totalLayers === '--' || totalLayers === 0 || totalLayers === '0')) {
+    if (fileTotalLayersCache.has(currentFile)) {
+      totalLayers = fileTotalLayersCache.get(currentFile);
+    } else if (can('view_files')) {
+      fileTotalLayersCache.set(currentFile, '--');
+      api(`/api/printers/${encodeURIComponent(activePrinter.id)}/files/detail?storage_media=local&filename=${encodeURIComponent(currentFile)}`)
+        .then(res => {
+          const result = res.result?.result || res.result || res;
+          const layerCount = result.layer || result.layer_count || result.metadata?.layer_count || result.total_layers || result.layers;
+          if (layerCount) {
+            fileTotalLayersCache.set(currentFile, layerCount);
+            setText('layerText', `${n.layers?.current ?? '--'}/${layerCount}`);
+          }
+        })
+        .catch(e => {
+          log(`Failed to fetch total layers for ${currentFile}: ${e.message}`, 'ERR');
+        });
+    }
+  }
+  setText('layerText', `${n.layers?.current ?? '--'}/${totalLayers ?? '--'}`);
+  
   setText('speedMode', n.position?.speed_mode_name || '--');
   const nozzleActual = `${num(n.temps?.nozzle?.actual)}°`; const nozzleTarget = `target ${num(n.temps?.nozzle?.target)}°`;
   const bedActual = `${num(n.temps?.bed?.actual)}°`; const bedTarget = `target ${num(n.temps?.bed?.target)}°`;
@@ -350,8 +381,18 @@ function renderStatus(snapshot){
   setText('nozzleTemp', nozzleActual); setText('nozzleTarget', nozzleTarget); setText('nozzleTempLarge', nozzleActual);
   setText('bedTemp', bedActual); setText('bedTarget', bedTarget); setText('bedTempLarge', bedActual);
   setText('chamberTemp', chamberActual); setText('chamberTarget', chamberTarget);
-  setText('filamentState', n.filament?.detected === true ? 'Detected' : n.filament?.detected === false ? 'Missing' : '--');
-  setText('filamentSensor', `sensor ${n.filament?.sensor_enabled === true ? 'on' : n.filament?.sensor_enabled === false ? 'off' : '--'}`);
+  
+  // Resilient filament state coercion
+  const detected = n.filament?.detected;
+  const isDetected = detected === true || detected === 1 || String(detected).toLowerCase() === 'true' || String(detected).toLowerCase() === 'detected';
+  const isMissing = detected === false || detected === 0 || String(detected).toLowerCase() === 'false' || String(detected).toLowerCase() === 'missing';
+  setText('filamentState', isDetected ? 'Detected' : isMissing ? 'Missing' : '--');
+
+  const sensorEnabled = n.filament?.sensor_enabled;
+  const isSensorOn = sensorEnabled === true || sensorEnabled === 1 || String(sensorEnabled).toLowerCase() === 'true' || String(sensorEnabled).toLowerCase() === 'on' || String(sensorEnabled).toLowerCase() === 'enabled';
+  const isSensorOff = sensorEnabled === false || sensorEnabled === 0 || String(sensorEnabled).toLowerCase() === 'false' || String(sensorEnabled).toLowerCase() === 'off' || String(sensorEnabled).toLowerCase() === 'disabled';
+  setText('filamentSensor', `sensor ${isSensorOn ? 'on' : isSensorOff ? 'off' : '--'}`);
+  
   setText('posX', num(n.position?.x,2)); setText('posY', num(n.position?.y,2)); setText('posZ', num(n.position?.z,2)); setText('posE', num(n.position?.e,2));
   lightState = !!(n.led?.status || n.led?.power);
   renderFans(n.fans || {});

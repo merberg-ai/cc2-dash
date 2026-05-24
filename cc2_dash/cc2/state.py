@@ -109,6 +109,42 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
     extruder_e = move.get("e", move.get("extruder")) if isinstance(move, dict) else None
     speed_mode = move.get("speed_mode") if isinstance(move, dict) else None
 
+    # Dynamic filament sensor discovery
+    sensor_enabled = None
+    filament_detected = None
+    for k, v in full_status.items():
+        if isinstance(v, dict) and ("filament" in k or "runout" in k):
+            if "enabled" in v:
+                sensor_enabled = v["enabled"]
+            if "filament_detected" in v:
+                filament_detected = v["filament_detected"]
+            elif "detected" in v:
+                filament_detected = v["detected"]
+
+    # Fallbacks for extruder-based or nested filament status
+    if sensor_enabled is None:
+        sensor_enabled = get_path(
+            full_status,
+            "filament_switch_sensor filament_sensor.enabled",
+            "filament_switch_sensor runout_sensor.enabled",
+            "filament_switch_sensor filament_runout.enabled",
+            "filament_sensor.enabled",
+            "runout_sensor.enabled",
+            "extruder.filament_detect_enable",
+            "extruder.filament_detect_enabled",
+        )
+    if filament_detected is None:
+        filament_detected = get_path(
+            full_status,
+            "filament_switch_sensor filament_sensor.filament_detected",
+            "filament_switch_sensor runout_sensor.filament_detected",
+            "filament_switch_sensor filament_runout.filament_detected",
+            "filament_sensor.filament_detected",
+            "runout_sensor.filament_detected",
+            "extruder.filament_detected",
+            "extruder.filament_detect",
+        )
+
     normalized = {
         "state": MACHINE_STATUS.get(machine_status_code, f"unknown ({machine_status_code})" if machine_status_code is not None else "unknown"),
         "status_code": machine_status_code,
@@ -129,6 +165,7 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
             ),
             "total": get_path(
                 full_status,
+                "print_status.layer",
                 "print_status.total_layer",
                 "print_status.info.total_layer",
                 "print_stats.info.total_layer",
@@ -157,8 +194,8 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
             },
         },
         "filament": {
-            "sensor_enabled": get_path(full_status, "extruder.filament_detect_enable"),
-            "detected": get_path(full_status, "extruder.filament_detected"),
+            "sensor_enabled": sensor_enabled,
+            "detected": filament_detected,
         },
         "fans": {},
         "position": {
