@@ -1,0 +1,5 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Placeholder for future Tailwind build. The runtime app currently uses ../static/app.css. */

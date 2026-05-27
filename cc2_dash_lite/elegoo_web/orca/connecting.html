@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connecting to Device</title>
+    <script type="text/javascript" src="../homepage/js/jquery-3.6.0.min.js"></script>	
+    <script type="text/javascript" src="../homepage/js/globalapi.js"></script>	
+    <script type="text/javascript" src="../data/text.js"></script>	
+    <style>
+        body,
+        html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #DDDDDD;
+            font-family: Arial, sans-serif;
+        }
+
+        .connecting-container {
+            text-align: center;
+        }
+
+        .message {
+            font-size: 24px;
+            color: #333;
+            margin-left: 50px;
+        }
+
+        .connecting {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            /* width: 300px; */
+            padding: 14px 50px;
+            background-color: #fff;
+            border-radius: 16px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+    <script>
+        window.is_slicer_system_page = true;
+    </script>
+</head>
+
+<body onLoad="TranslatePage()">
+    <div class="connecting-container">
+        <div class="connecting">
+            <!-- loading image -->
+            <img src="./loading.gif" alt="loading" />
+            <span class="message trans" tid="connecting_device">Loading...</span>
+        </div>
+    </div>
+</body>
+
+</html>

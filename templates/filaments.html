@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block page_id %}filaments{% endblock %}
+{% block content %}
+<section class="filament-stack fade-in">
+  <article class="card hero-card">
+    <h1>Filament Manager</h1>
+    <p>Stock-Elegoo-style CANVAS / filament tray view, rebuilt with cc2-dash-lite cards, controls, and theme styling.</p>
+    {% if printer %}
+    <div class="mini-note">Active printer: <strong>{{ printer.name }}</strong> · {{ printer.host }}</div>
+    {% else %}
+    <div class="mini-note warn-text">No active printer configured. Run setup first.</div>
+    {% endif %}
+  </article>
+
+  <article class="card filament-manager-card">
+    <div class="card-title-row file-title-row">
+      <div>
+        <h2>CANVAS / Filament Information</h2>
+        <p>Shows MMS/CANVAS trays when the printer reports them. This mirrors the stock filament information panel: slot name, material, color, status, temps, and refill state.</p>
+      </div>
+      <div class="filament-button-row">
+        <button class="button secondary tiny" id="refreshFilamentsButton" type="button"><span class="button-label">Refresh</span></button>
+      </div>
+    </div>
+
+    <div id="filamentLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading filament data...</span></div>
+
+    <section class="filament-summary-grid" aria-label="Filament summary">
+      <div class="filament-summary-tile"><span>System</span><strong id="filamentSystemName">--</strong></div>
+      <div class="filament-summary-tile"><span>CANVAS</span><strong id="filamentConnected">--</strong></div>
+      <div class="filament-summary-tile"><span>Active Slots</span><strong id="filamentActiveSlots">--</strong></div>
+      <div class="filament-summary-tile"><span>Filament Sensor</span><strong id="filamentSensor">--</strong></div>
+    </section>
+
+    <div class="filament-control-panel">
+      <div>
+        <strong>Auto Filament Refill</strong>
+        <small>Same idea as the stock Auto Filament Refill switch. Requires commands enabled for this printer.</small>
+      </div>
+      <div class="setting-controls">
+        <span id="autoRefillState" class="pill">unknown</span>
+        <button class="button primary tiny" id="enableAutoRefillButton" type="button"><span class="button-label">Enable</span></button>
+        <button class="button secondary tiny" id="disableAutoRefillButton" type="button"><span class="button-label">Disable</span></button>
+      </div>
+    </div>
+
+    <div id="filamentList" class="filament-list empty">Tap Refresh to load CANVAS filament data.</div>
+  </article>
+</section>
+{% endblock %}

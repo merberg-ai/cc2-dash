@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connection Failed</title>
+    <script type="text/javascript" src="../homepage/js/jquery-3.6.0.min.js"></script>	
+    <script type="text/javascript" src="../homepage/js/globalapi.js"></script>	
+    <script type="text/javascript" src="../data/text.js"></script>	
+    <style>
+        body,
+        html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #F6f6f6;
+            font-family: Arial, sans-serif;
+        }
+
+        .failed-container {
+            text-align: center;
+        }
+
+        .message {
+            font-size: 24px;
+            color: #333;
+            margin-top: 20px;
+            font-weight: 600;
+        }
+
+        .failed {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            
+        }
+        .text {
+            font-size: 18px;
+            margin-top: 40px;
+        }
+        .title {
+            text-align: left;
+            line-height: 28px;
+        }
+        .line {
+            text-align: left;
+            line-height: 28px;
+
+        }
+        .line::before {
+            content: '•';
+            display: inline-block;
+            width: 1em;
+            margin-right: 0.5em;
+            text-align: center;
+        }
+    </style>
+    <script>
+        // window.is_slicer_system_page = true;
+
+        setTimeout(() => {
+            let url = GetQueryString("url");
+            console.log(url);
+            if (url) {
+                $("#ipAddress").text(url);
+            }else{
+                $("#ipAddress").text("");
+            }
+        }, 0);
+
+        setInterval(() => {
+            if(window.is_loading_printer){
+                return;
+            }
+            window.is_loading_printer = true;
+            if (typeof wx !== 'undefined') {
+                wx.postMessage({ id: "inject_"+ Date.now().toString(), type : "request", method: 'reload' });
+            } else {
+                console.error('wx is not defined');
+            }
+        }, 30000);
+    </script>
+</head>
+
+<body onLoad="TranslatePage()">
+    <div class="failed-container">
+        <div class="failed">
+            <img src="./connection-failed.svg" />
+            <!-- <span class="message" tid="printer_connection_failed1">无法访问 </span>
+            <div class="text">
+                <div class="line" tid="printer_connection_failed2">请检查:</div>
+                <div class="line" tid="printer_connection_failed3">1. 主机名、IP或者URL是否正确输入。</div>
+                <div class="line" tid="printer_connection_failed4">2. 电脑及打印机的网络是否正常。</div>
+                <div class="line" tid="printer_connection_failed5">3. 电脑与打印机是否处于同一个网络。</div>
+            </div> -->
+            <div>
+                <span class="message trans" tid="printer_connection_failed1">Unable to access</span>
+                <span id="ipAddress" class="message"></span>
+            </div>
+            <div class="text">
+                <div class="title trans" tid="printer_connection_failed2">Please check:</div>
+                <div class="line trans" tid="printer_connection_failed3">Hostname, IP or URL entry。</div>
+                <div class="line trans" tid="printer_connection_failed4">Computer and printer network connection.</div>
+                <div class="line trans" tid="printer_connection_failed5">Both are on the same network.</div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
