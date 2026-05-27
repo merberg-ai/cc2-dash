@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block page_id %}portal{% endblock %}
+{% block content %}
+<section class="settings-stack fade-in">
+  <article class="card hero-card">
+    <h1>Elegoo Web Portal</h1>
+    <p>This opens the printer’s stock portal. If iframe embedding is blocked by the printer, use the big button below.</p>
+    <a class="button primary full" href="{{ printer.portal_url if printer else '#' }}" target="_blank" rel="noreferrer">Open Stock Portal</a>
+  </article>
+  {% if printer %}
+  <article class="card portal-frame-card">
+    <iframe class="portal-frame" src="{{ printer.portal_url }}" title="Elegoo Web Portal"></iframe>
+  </article>
+  {% endif %}
+</section>
+{% endblock %}

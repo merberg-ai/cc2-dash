@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="{{ theme.colors.bg }}" />
+  <title>{{ cfg.app.name|default('cc2-dash-lite') }}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    :root {
+      {{ theme_vars|safe }}
+    }
+    {% if theme.effects.scanlines %}
+    body::after { content:""; pointer-events:none; position:fixed; inset:0; background:linear-gradient(rgba(255,255,255,.035) 50%, rgba(0,0,0,.04) 50%); background-size:100% 4px; opacity:.22; z-index:9999; }
+    {% endif %}
+  </style>
+</head>
+<body data-page="{% block page_id %}{% endblock %}" data-printer-id="{{ printer_id or '' }}">
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+  <div class="app-shell">
+    <header class="topbar fade-in">
+      <a class="brand" href="/" title="cc2-dash-lite v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_branch and build.git_branch != 'unknown' %} · {{ build.git_branch }}{% endif %}{% if build.git_dirty %} · dirty{% endif %}">
+        <span class="brand-icon">⬢</span>
+        <span class="brand-text">
+          <strong>{{ cfg.app.name|default('cc2-dash-lite') }}</strong>
+          <span class="brand-build">v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_dirty %}*{% endif %}</span>
+          <small>{{ printer.name if printer else 'setup required' }}</small>
+        </span>
+      </a>
+      <nav class="topnav">
+        <a href="/" class="navlink">Dash</a>
+        {% if printer %}
+        <a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open the Elegoo web portal in a new tab">Portal</a>
+        {% else %}
+        <a href="/setup" class="navlink">Portal</a>
+        {% endif %}
+        {% if cfg.features.file_manager_enabled %}<a href="/files" class="navlink">Files</a>{% endif %}
+        {% if cfg.features.filament_manager_enabled %}<a href="/filaments" class="navlink">Filament</a>{% endif %}
+        <a href="/settings" class="navlink">Settings</a>
+        <a href="/logs" class="navlink">Logs</a>
+      </nav>
+    </header>
+
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+
+    {% if cfg.dashboard.show_footer %}
+    <footer class="footer fade-in">
+      <span>cc2-dash-lite v{{ version }}</span>
+      <span>•</span>
+      <a href="/settings">Settings</a>
+      <span>•</span>
+      <a href="/logs">Console</a>
+    </footer>
+    {% endif %}
+  </div>
+  <script id="bootConfig" type="application/json">{{ cfg|tojson }}</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

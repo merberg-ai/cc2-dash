@@ -1,0 +1,12 @@
+{
+  "name": "cc2-dash-lite-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build:css": "tailwindcss -i ./input.css -o ../static/tailwind-built.css --minify",
+    "watch:css": "tailwindcss -i ./input.css -o ../static/tailwind-built.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

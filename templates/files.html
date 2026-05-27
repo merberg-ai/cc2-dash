@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block page_id %}files{% endblock %}
+{% block content %}
+<section class="files-stack fade-in">
+  <article class="card hero-card">
+    <h1>File Manager</h1>
+    <p>Browse system G-code files separately from the stock-portal-style timelapse Video List.</p>
+    {% if printer %}
+    <div class="mini-note">Active printer: <strong>{{ printer.name }}</strong> · {{ printer.host }}</div>
+    {% else %}
+    <div class="mini-note warn-text">No active printer configured. Run setup first.</div>
+    {% endif %}
+  </article>
+
+  <article class="card file-manager-card">
+    <div class="tabbar" role="tablist" aria-label="File manager sections">
+      <button class="tab-button active" id="tabGcode" data-file-tab="gcode" type="button">G-code Files</button>
+      <button class="tab-button" id="tabTimelapse" data-file-tab="timelapse" type="button">Timelapse Videos</button>
+    </div>
+
+    <section class="file-panel active" id="panelGcode" data-panel="gcode">
+      <div class="card-title-row file-title-row">
+        <div>
+          <h2>System G-code files</h2>
+          <p>List local or USB files, inspect details, start a print, or delete files when safety settings allow it.</p>
+        </div>
+        <button class="button secondary tiny" id="refreshFilesButton" type="button"><span class="button-label">Refresh</span></button>
+      </div>
+
+      <div class="toolbar-row">
+        <label class="field-label inline-field">Storage
+          <select class="input" id="fileStorage">
+            <option value="local">Local</option>
+            <option value="u-disk">USB Drive</option>
+          </select>
+        </label>
+        <label class="field-label inline-field grow">Path
+          <input class="input" id="filePath" value="/" placeholder="/" autocomplete="off" />
+        </label>
+      </div>
+
+      <div id="fileLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading files...</span></div>
+      <div id="fileList" class="file-list empty">Tap Refresh to load printer files.</div>
+    </section>
+
+    <section class="file-panel" id="panelTimelapse" data-panel="timelapse">
+      <div class="card-title-row file-title-row">
+        <div>
+          <h2>Timelapse videos</h2>
+          <p>Loads the same kind of Video List shown by the stock Elegoo portal: history rows with timelapse status, size, creation time, and duration.</p>
+        </div>
+        <button class="button secondary tiny" id="refreshTimelapseButton" type="button"><span class="button-label">Refresh</span></button>
+      </div>
+
+      <div id="timelapseLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading timelapse records...</span></div>
+      <div id="timelapseList" class="file-list empty">Tap Refresh to load timelapse records.</div>
+    </section>
+  </article>
+</section>
+{% endblock %}

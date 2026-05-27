@@ -1,0 +1,57 @@
+@import url("../../styles/dark.css");
+body
+{
+	background-color:#242428;
+}
+
+*
+{
+	border-color: #3E3E45;
+}
+
+.text-s1
+{
+	color:#efeff0;
+}
+
+.z-scroll::-webkit-scrollbar-thumb {
+    background-color: #939395;
+}
+
+.z-scroll::-webkit-scrollbar-track {
+    background: #161618;
+}
+
+#login-text {
+	color: #a8a8a8;
+}
+
+#user-name {
+	color: #efeff0;
+}
+
+#user-menu {
+	background: #2d2d2d;
+	border: 1px solid #404040;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	border-radius: 6px;
+	min-width: 100px;
+}
+
+#recent-clear-all-btn:hover
+{
+	color: #000;
+}
+
+#recent-context-menu
+{
+	color: #efeff0;
+	background-color: #2d2d2d;
+	border: 1px solid #404040;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+
+html.dark #ct-folder-bar .ct-explore {
+  background-image: url("../img/open_folder2.svg");
+}

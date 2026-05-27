@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block page_id %}setup{% endblock %}
+{% block content %}
+<section class="setup-wizard fade-in" data-current-step="0">
+  <div class="setup-wizard-shell">
+    <div class="setup-progress-card card">
+      <div class="setup-progress-top">
+        <div>
+          <span class="eyebrow">First-run setup</span>
+          <h1>Let’s wire up cc2-dash-lite</h1>
+          <p>One card at a time: discover the printer, optionally add it manually, tune the UI, lock down access, configure Portal AI, then launch the dashboard.</p>
+        </div>
+        <span id="setupStepPill" class="pill">Step 1 / 6</span>
+      </div>
+      <div class="setup-progress-track"><span id="setupProgressBar" style="width:16.6%"></span></div>
+      <div id="setupStepLabel" class="mini-note">Scan for verified Centauri printers.</div>
+    </div>
+
+    <article class="card setup-card active" data-setup-card="scan" data-step-title="Scan for verified Centauri printers">
+      <div class="step-title"><span class="step-badge">1</span><h2>Scan for printers</h2></div>
+      <p class="muted">We’ll only show devices that answer the Centauri discovery probe. Routers and unrelated LAN devices stay hidden.</p>
+      <label class="field-label" for="scanSubnet">Subnet or host</label>
+      <input id="scanSubnet" class="input" value="{{ default_subnet }}" placeholder="192.168.1.0/24 or 192.168.1.x" />
+      <button id="scanButton" class="button primary full"><span class="button-label">Scan / Discover Printers</span></button>
+      <div id="scanStatus" class="scan-status hidden"><span class="spinner"></span><span>Scanning...</span></div>
+      <div id="scanResults" class="result-list"></div>
+      <div class="setup-nav-row">
+        <button class="button secondary setup-next" type="button"><span class="button-label">Next: Manual Add</span></button>
+      </div>
+    </article>
+
+    <article class="card setup-card" data-setup-card="manual" data-step-title="Optional manual printer add">
+      <div class="step-title"><span class="step-badge">2</span><h2>Manual add</h2></div>
+      <p class="muted">Use this if discovery is blocked but you know the printer IP, serial, and PIN. If the scan already saved your printer, just continue.</p>
+      <label class="field-label" for="manualHost">Printer IP / host</label>
+      <input id="manualHost" class="input" placeholder="192.168.1.87" />
+      <label class="field-label" for="manualName">Display name</label>
+      <input id="manualName" class="input" value="Centauri Carbon 2" />
+      <label class="field-label" for="manualSerial">Serial number</label>
+      <input id="manualSerial" class="input" placeholder="Printer serial / SN" />
+      <label class="field-label" for="manualPin">Printer PIN / access code</label>
+      <input id="manualPin" class="input" type="password" inputmode="numeric" value="123456" placeholder="123456" />
+      <button id="manualAddButton" class="button primary full"><span class="button-label">Pair / Save Manual Printer</span></button>
+      <div class="setup-nav-row">
+        <button class="button secondary setup-back" type="button"><span class="button-label">Back</span></button>
+        <button class="button primary setup-next" type="button"><span class="button-label">Next: UI</span></button>
+      </div>
+    </article>
+
+    <article class="card setup-card" data-setup-card="ui" data-step-title="Choose theme, fonts, and interface feel">
+      <div class="step-title"><span class="step-badge">3</span><h2>Configure UI</h2></div>
+      <p class="muted">Pick the visual personality before the dashboard loads. Yes, this is where we decide how cyberpunk the printer room feels.</p>
+      <label class="field-label" for="setupTheme">Theme</label>
+      <select id="setupTheme" class="input">
+        {% for id, t in themes.items() %}
+        <option value="{{ id }}" {% if cfg.app.theme == id %}selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="grid-2 gap setup-field-grid">
+        <div>
+          <label class="field-label" for="setupBaseFont">Base font</label>
+          <select id="setupBaseFont" class="input font-select" data-font-role="base"></select>
+        </div>
+        <div>
+          <label class="field-label" for="setupHeadingFont">Heading font</label>
+          <select id="setupHeadingFont" class="input font-select" data-font-role="heading"></select>
+        </div>
+        <div>
+          <label class="field-label" for="setupNumberFont">Number font</label>
+          <select id="setupNumberFont" class="input font-select" data-font-role="number"></select>
+        </div>
+        <div>
+          <label class="field-label" for="setupButtonFont">Button font</label>
+          <select id="setupButtonFont" class="input font-select" data-font-role="button"></select>
+        </div>
+      </div>
+      <div class="setup-nav-row">
+        <button class="button secondary setup-back" type="button"><span class="button-label">Back</span></button>
+        <button id="saveSetupUiButton" class="button primary" type="button"><span class="button-label">Save UI & Next</span></button>
+      </div>
+    </article>
+
+    <article class="card setup-card" data-setup-card="access" data-step-title="Configure network access allowlist">
+      <div class="step-title"><span class="step-badge">4</span><h2>Configure access</h2></div>
+      <p class="muted">Control which LAN clients can reach the dashboard. Default is your local /24 subnet plus localhost.</p>
+      <label class="field-label" for="setupAllowedSubnets">Allowed subnets, one per line</label>
+      <textarea id="setupAllowedSubnets" class="textarea" rows="4">{{ '\n'.join(cfg.network.allowed_subnets) }}</textarea>
+      <label class="field-label" for="setupAllowedHosts">Allowed single hosts, one per line</label>
+      <textarea id="setupAllowedHosts" class="textarea" rows="3">{{ '\n'.join(cfg.network.allowed_hosts) }}</textarea>
+      <div class="mini-note">Examples: <code>192.168.1.0/24</code>, <code>192.168.1.11</code>, <code>10.0.0.50</code></div>
+      <div class="setup-nav-row">
+        <button class="button secondary setup-back" type="button"><span class="button-label">Back</span></button>
+        <button id="saveSetupAccessButton" class="button primary" type="button"><span class="button-label">Save Access & Next</span></button>
+      </div>
+    </article>
+
+    <article class="card setup-card" data-setup-card="ai" data-step-title="Configure Portal AI monitoring">
+      <div class="step-title"><span class="step-badge">5</span><h2>AI monitoring / failure detection</h2></div>
+      <p class="muted">Telemetry rules stay explainable. Ollama vision is optional and uses your LAN model host for camera checks.</p>
+      <div class="settings-list compact-settings">
+        <div class="setting-row">
+          <div><strong>Enable Portal AI</strong><small>Shows risk score, reasons, feedback buttons, and watchdog status.</small></div>
+          <div class="setting-controls"><label><input id="setupPortalAIEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.enabled %}checked{% endif %}> enabled</label></div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Background watchdog</strong><small>Runs even when the browser is closed.</small></div>
+          <div class="setting-controls"><label><input id="setupAIBackgroundEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.background_monitor_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Telemetry rules</strong><small>Status, temps, progress, stale MQTT, and filament hints.</small></div>
+          <div class="setting-controls"><label><input id="setupAITelemetryRules" class="toggle" type="checkbox" {% if cfg.portal_ai.telemetry_rules_enabled %}checked{% endif %}> enabled</label></div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Local frame heuristics</strong><small>Detects dark/flat camera frames and stringing-ish edge changes.</small></div>
+          <div class="setting-controls"><label><input id="setupAIHeuristics" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_heuristics_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Ollama vision monitoring</strong><small>Sends sampled camera frames to the selected LAN Ollama vision model.</small></div>
+          <div class="setting-controls"><label><input id="setupAIVisionEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_ai_enabled|default(false) %}checked{% endif %}> enabled</label></div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Ollama host:port</strong><small>Example: http://192.168.1.24:11434</small></div>
+          <div class="setting-controls"><input id="aiOllamaBaseUrl" class="input wide-input" type="text" value="{{ cfg.portal_ai.ollama_base_url|default('http://192.168.1.24:11434') }}"></div>
+        </div>
+        <div class="setting-row tall">
+          <div><strong>Vision model</strong><small>Load models from Ollama, test the selected model, or pull one.</small></div>
+          <div class="setting-controls ollama-model-controls">
+            <select id="aiOllamaVisionModel" class="input model-select" data-current-model="{{ cfg.portal_ai.ollama_vision_model|default('llava') }}">
+              <option value="{{ cfg.portal_ai.ollama_vision_model|default('llava') }}">{{ cfg.portal_ai.ollama_vision_model|default('llava') }}</option>
+            </select>
+            <button id="refreshOllamaModelsButton" class="button secondary tiny" type="button"><span class="button-label">Load Models</span></button>
+            <button id="testOllamaButton" class="button secondary tiny" type="button"><span class="button-label">Test</span></button>
+            <input id="aiOllamaPullModel" class="input model-pull-input" type="text" placeholder="model to pull, e.g. llava:latest" />
+            <button id="pullOllamaModelButton" class="button secondary tiny" type="button"><span class="button-label">Pull</span></button>
+            <span id="ollamaModelStatus" class="inline-status">Model list not loaded yet.</span>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Vision interval</strong><small>Seconds between camera checks during active monitoring.</small></div>
+          <div class="setting-controls"><input id="setupVisionInterval" class="input" type="number" min="30" max="900" step="15" value="{{ cfg.portal_ai.vision_check_interval_seconds|default(120) }}"></div>
+        </div>
+        <div class="setting-row">
+          <div><strong>Bad checks required</strong><small>How many suspicious checks before vision adds stronger risk.</small></div>
+          <div class="setting-controls"><input id="setupVisionBadChecks" class="input" type="number" min="1" max="5" step="1" value="{{ cfg.portal_ai.vision_required_bad_checks|default(2) }}"></div>
+        </div>
+      </div>
+      <div class="setup-nav-row">
+        <button class="button secondary setup-back" type="button"><span class="button-label">Back</span></button>
+        <button id="saveSetupAiButton" class="button primary" type="button"><span class="button-label">Save AI & Next</span></button>
+      </div>
+    </article>
+
+    <article class="card setup-card" data-setup-card="finish" data-step-title="Finish setup and launch dashboard">
+      <div class="step-title"><span class="step-badge">6</span><h2>Ready to launch</h2></div>
+      <p class="muted">Setup is staged. Finish will mark first-run complete and open the dashboard.</p>
+      <div id="setupSummary" class="setup-summary"></div>
+      <div class="setup-nav-row">
+        <button class="button secondary setup-back" type="button"><span class="button-label">Back</span></button>
+        <button id="finishSetupButton" class="button primary" type="button"><span class="button-label">Finish & Open Dashboard</span></button>
+      </div>
+    </article>
+  </div>
+</section>
+{% endblock %}

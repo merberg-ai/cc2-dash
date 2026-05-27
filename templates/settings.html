@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+{% block page_id %}settings{% endblock %}
+{% block content %}
+<section class="settings-stack fade-in">
+  <article class="card hero-card">
+    <h1>Settings</h1>
+    <p>Configure layout, buttons, themes, fonts, network access, and the printer list.</p>
+  </article>
+
+  <article class="card">
+    <h2>Theme + Fonts</h2>
+    <label class="field-label" for="themeSelect">Theme</label>
+    <select id="themeSelect" class="input">
+      {% for id, t in themes.items() %}
+      <option value="{{ id }}" {% if cfg.app.theme == id %}selected{% endif %}>{{ t.name }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="grid-2 gap">
+      <div>
+        <label class="field-label" for="baseFont">Base font</label>
+        <select id="baseFont" class="input font-select" data-font-role="base"></select>
+      </div>
+      <div>
+        <label class="field-label" for="headingFont">Heading font</label>
+        <select id="headingFont" class="input font-select" data-font-role="heading"></select>
+      </div>
+      <div>
+        <label class="field-label" for="numberFont">Number font</label>
+        <select id="numberFont" class="input font-select" data-font-role="number"></select>
+      </div>
+      <div>
+        <label class="field-label" for="buttonFont">Button font</label>
+        <select id="buttonFont" class="input font-select" data-font-role="button"></select>
+      </div>
+    </div>
+    <button id="saveThemeButton" class="button primary full"><span class="button-label">Save Appearance</span></button>
+  </article>
+
+  <article class="card">
+    <h2>Dashboard Layout</h2>
+    <p class="muted">Enable/disable cards and change their order. Lower numbers appear first.</p>
+    <div id="cardSettings" class="settings-list"></div>
+    <button id="saveLayoutButton" class="button primary full"><span class="button-label">Save Layout</span></button>
+  </article>
+
+  <article class="card">
+    <h2>Menu / Features</h2>
+    <p class="muted">Hide unfinished or experimental sections from the top navigation without deleting their config.</p>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div>
+          <strong>File Manager menu option</strong>
+          <small>Shows or hides the Files link in the top Dash / Portal / Settings / Logs menu.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="fileManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.file_manager_enabled %}checked{% endif %}> show</label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Filament Manager menu option</strong>
+          <small>Shows or hides the Filament link. The page remains available directly for testing.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="filamentManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.filament_manager_enabled %}checked{% endif %}> show</label>
+        </div>
+      </div>
+    </div>
+    <button id="saveMenuButton" class="button primary full"><span class="button-label">Save Menu</span></button>
+  </article>
+
+  <article class="card">
+    <h2>Camera Relay / Stream Protection</h2>
+    <p class="muted">Keeps cc2-dash-lite to one upstream camera connection per printer, then fans that stream out to dashboard browsers, snapshots, watchdog vision, and the embedded portal.</p>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div><strong>Enable camera relay</strong><small>Recommended. Browser clients and Portal AI read from the local relay instead of dogpiling the printer camera.</small></div>
+        <div class="setting-controls"><label><input id="cameraProxyEnabled" class="toggle" type="checkbox" {% if cfg.camera_proxy.enabled|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Start relay on boot</strong><small>Opens one upstream camera connection as soon as the backend starts, so watchdog vision has a frame ready.</small></div>
+        <div class="setting-controls"><label><input id="cameraProxyStartOnBoot" class="toggle" type="checkbox" {% if cfg.camera_proxy.start_on_boot|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Max client FPS</strong><small>Limits how fast each browser client receives frames from the relay. Lower is kinder to phones and Pi CPUs.</small></div>
+        <div class="setting-controls"><input id="cameraProxyMaxFps" class="input" type="number" min="1" max="30" step="1" value="{{ cfg.camera_proxy.max_client_fps|default(8) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Stale frame threshold</strong><small>Seconds before the relay marks the camera stale and begins reconnect/recovery behavior.</small></div>
+        <div class="setting-controls"><input id="cameraProxyStaleSeconds" class="input" type="number" min="2" max="300" step="1" value="{{ cfg.camera_proxy.stale_frame_seconds|default(10) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Upstream timeouts</strong><small>Connect timeout and read timeout in seconds for the single printer camera connection.</small></div>
+        <div class="setting-controls compact-inline"><input id="cameraProxyConnectTimeout" class="input" type="number" min="1" max="30" step="1" value="{{ cfg.camera_proxy.upstream_connect_timeout_seconds|default(5) }}"><input id="cameraProxyReadTimeout" class="input" type="number" min="5" max="120" step="1" value="{{ cfg.camera_proxy.upstream_read_timeout_seconds|default(20) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Rewrite stock portal camera URLs</strong><small>Attempts to redirect the embedded Elegoo portal camera references through the local relay instead of printer :8080.</small></div>
+        <div class="setting-controls"><label><input id="cameraProxyRewritePortal" class="toggle" type="checkbox" {% if cfg.camera_proxy.rewrite_portal_camera_urls|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Fallback to direct camera for vision</strong><small>Usually leave this off. Turning it on lets Portal AI hit the printer directly if the relay has no frame, which can reintroduce connection pileups.</small></div>
+        <div class="setting-controls"><label><input id="cameraProxyFallbackDirect" class="toggle" type="checkbox" {% if cfg.camera_proxy.fallback_to_direct|default(false) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Relay diagnostics</strong><small id="cameraProxyStatus">Status not loaded yet.</small></div>
+        <div class="setting-controls compact-inline"><button id="refreshCameraProxyStatusButton" class="button secondary tiny" type="button">Status</button><button id="saveCameraProxyButton" class="button primary tiny" type="button"><span class="button-label">Save Relay</span></button></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="card">
+    <h2>Portal AI 🤖</h2>
+    <p class="muted">Explainable failure detection using printer telemetry first, with optional server-side camera frame checks through your LAN Ollama vision model.</p>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div><strong>Enable Portal AI</strong><small>Turns the dashboard AI risk card on or off.</small></div>
+        <div class="setting-controls"><label><input id="portalAIEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.enabled %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Background watchdog</strong><small>Keeps Portal AI monitoring from the backend service even when no browser is open.</small></div>
+        <div class="setting-controls"><label><input id="aiBackgroundMonitorEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.background_monitor_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Background check interval</strong><small>Seconds between watchdog checks. Lower is more responsive; higher is quieter.</small></div>
+        <div class="setting-controls"><input id="aiCheckIntervalSeconds" class="input" type="number" min="5" max="600" step="5" value="{{ cfg.portal_ai.check_interval_seconds|default(30) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Log state/risk changes only</strong><small>Prevents the watchdog from spamming the log every check.</small></div>
+        <div class="setting-controls"><label><input id="aiBackgroundLogChanges" class="toggle" type="checkbox" {% if cfg.portal_ai.background_log_changes|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Minimum watchdog log level</strong><small>Only write background AI log entries at or above this risk level.</small></div>
+        <div class="setting-controls">
+          <select id="aiBackgroundMinLogLevel" class="input">
+            <option value="low" {% if (cfg.portal_ai.background_min_log_level|default('watch')) == 'low' %}selected{% endif %}>low</option>
+            <option value="watch" {% if (cfg.portal_ai.background_min_log_level|default('watch')) == 'watch' %}selected{% endif %}>watch</option>
+            <option value="medium" {% if (cfg.portal_ai.background_min_log_level|default('watch')) == 'medium' %}selected{% endif %}>medium</option>
+            <option value="high" {% if (cfg.portal_ai.background_min_log_level|default('watch')) == 'high' %}selected{% endif %}>high</option>
+          </select>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Telemetry rules</strong><small>Printer error state, MQTT freshness, temperatures, filament sensor, and progress movement.</small></div>
+        <div class="setting-controls"><label><input id="aiTelemetryRules" class="toggle" type="checkbox" {% if cfg.portal_ai.telemetry_rules_enabled %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Camera health hints</strong><small>Uses printer-reported camera availability where available.</small></div>
+        <div class="setting-controls"><label><input id="aiCameraRules" class="toggle" type="checkbox" {% if cfg.portal_ai.camera_rules_enabled %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Ollama vision monitoring</strong><small>Samples printer camera frames from the backend and asks your LAN Ollama vision model for a conservative second opinion.</small></div>
+        <div class="setting-controls"><label><input id="aiVisionEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_ai_enabled|default(false) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Ollama host:port</strong><small>Example: http://192.168.1.24:11434</small></div>
+        <div class="setting-controls"><input id="aiOllamaBaseUrl" class="input wide-input" type="text" value="{{ cfg.portal_ai.ollama_base_url|default('http://192.168.1.24:11434') }}"></div>
+      </div>
+      <div class="setting-row tall">
+        <div><strong>Vision model</strong><small>Pick from models already installed on your LAN Ollama box. Use Pull to download a model by name if Ollama has access to it.</small></div>
+        <div class="setting-controls ollama-model-controls">
+          <select id="aiOllamaVisionModel" class="input model-select" data-current-model="{{ cfg.portal_ai.ollama_vision_model|default('llava') }}">
+            <option value="{{ cfg.portal_ai.ollama_vision_model|default('llava') }}">{{ cfg.portal_ai.ollama_vision_model|default('llava') }} (saved)</option>
+          </select>
+          <button id="refreshOllamaModelsButton" class="button secondary tiny" type="button">Load Models</button>
+          <button id="testOllamaButton" class="button secondary tiny" type="button">Test</button>
+          <input id="aiOllamaPullModel" class="input model-pull-input" type="text" placeholder="model to pull, e.g. llava:latest">
+          <button id="pullOllamaModelButton" class="button secondary tiny" type="button">Pull</button>
+          <small id="ollamaModelStatus" class="inline-status">Models have not been loaded yet.</small>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Vision check interval</strong><small>Seconds between background camera+Ollama checks. This is separate from the fast telemetry watchdog.</small></div>
+        <div class="setting-controls"><input id="aiVisionCheckInterval" class="input" type="number" min="10" max="3600" step="10" value="{{ cfg.portal_ai.vision_check_interval_seconds|default(120) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Only check during active prints</strong><small>Keeps Ollama quiet when the printer is idle.</small></div>
+        <div class="setting-controls"><label><input id="aiVisionRequireActivePrint" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_require_active_print|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Local frame heuristics</strong><small>Cheap server-side checks catch dark frames and high fine-edge/stringing-ish changes before the model gets involved.</small></div>
+        <div class="setting-controls"><label><input id="aiVisionHeuristicsEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_heuristics_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Heuristic thresholds</strong><small>Dark luma threshold and fine-edge density threshold. Lower dark = less sensitive; lower edge = more sensitive.</small></div>
+        <div class="setting-controls compact-inline"><input id="aiVisionDarkMeanThreshold" class="input" type="number" min="0" max="120" step="1" value="{{ cfg.portal_ai.vision_dark_mean_threshold|default(42) }}"><input id="aiVisionStringingEdgeThreshold" class="input" type="number" min="0.02" max="0.5" step="0.005" value="{{ cfg.portal_ai.vision_stringing_edge_density_threshold|default(0.125) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Vision thresholds</strong><small>Minimum confidence/severity before a model result counts as suspicious.</small></div>
+        <div class="setting-controls compact-inline"><input id="aiVisionConfidenceThreshold" class="input" type="number" min="0" max="100" step="5" value="{{ cfg.portal_ai.vision_confidence_threshold|default(70) }}"><input id="aiVisionSeverityThreshold" class="input" type="number" min="0" max="100" step="5" value="{{ cfg.portal_ai.vision_severity_threshold|default(60) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Bad vision checks required</strong><small>How many suspicious camera analyses in a row before Portal AI treats vision as confirmed.</small></div>
+        <div class="setting-controls"><input id="aiVisionRequiredBadChecks" class="input" type="number" min="1" max="10" step="1" value="{{ cfg.portal_ai.vision_required_bad_checks|default(2) }}"></div>
+      </div>
+      <div class="setting-row tall">
+        <div><strong>Vision prompt</strong><small>Editable system prompt sent with each camera image. Keep JSON-only instructions unless you enjoy parsing soup.</small></div>
+        <div class="setting-controls"><textarea id="aiVisionPrompt" class="input config-textarea small-textarea">{{ cfg.portal_ai.vision_prompt|default('') }}</textarea></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Progress stuck threshold</strong><small>Minutes without progress change before Portal AI becomes suspicious.</small></div>
+        <div class="setting-controls"><input id="aiProgressStuckMinutes" class="input" type="number" min="1" max="120" step="1" value="{{ cfg.portal_ai.progress_stuck_minutes }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Multi-color / swap grace</strong><small>Auto watches for filament-operation states. Always is useful for current multi-color prints with long purge pauses.</small></div>
+        <div class="setting-controls">
+          <select id="aiMultiColorMode" class="input">
+            <option value="auto" {% if (cfg.portal_ai.multi_color_mode|default('auto')) == 'auto' %}selected{% endif %}>auto</option>
+            <option value="always" {% if (cfg.portal_ai.multi_color_mode|default('auto')) == 'always' %}selected{% endif %}>always</option>
+            <option value="off" {% if (cfg.portal_ai.multi_color_mode|default('auto')) == 'off' %}selected{% endif %}>off</option>
+          </select>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Multi-color grace threshold</strong><small>Minutes without progress change before swap/purge pauses become suspicious.</small></div>
+        <div class="setting-controls"><input id="aiMultiColorStuckMinutes" class="input" type="number" min="5" max="180" step="1" value="{{ cfg.portal_ai.multi_color_progress_stuck_minutes|default(30) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Stale status threshold</strong><small>Seconds since last MQTT status update before the printer is considered stale.</small></div>
+        <div class="setting-controls"><input id="aiStaleStatusSeconds" class="input" type="number" min="15" max="600" step="5" value="{{ cfg.portal_ai.stale_status_seconds }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Feedback buttons</strong><small>Allows Looks Good / Looks Bad / False Alarm labels for future tuning.</small></div>
+        <div class="setting-controls"><label><input id="aiFeedbackEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.feedback_enabled %}checked{% endif %}> show</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Auto-pause</strong><small>Planned safety action. Stored in config, but this build does not auto-pause yet.</small></div>
+        <div class="setting-controls"><label><input id="aiAutoPauseEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.auto_pause_enabled %}checked{% endif %}> armed</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Auto-pause risk threshold</strong><small>Reserved for a later build after we trust the risk score.</small></div>
+        <div class="setting-controls"><input id="aiAutoPauseThreshold" class="input" type="number" min="50" max="100" step="5" value="{{ cfg.portal_ai.auto_pause_threshold }}"></div>
+      </div>
+    </div>
+    <button id="saveAIButton" class="button primary full"><span class="button-label">Save Portal AI</span></button>
+  </article>
+
+  <article class="card">
+    <h2>Buttons / Quick Actions</h2>
+    <p class="muted">Hide buttons, rename them, reorder them, require confirmation, or tune action-specific options.</p>
+    <div id="actionSettings" class="settings-list"></div>
+    <button id="saveActionsButton" class="button primary full"><span class="button-label">Save Buttons</span></button>
+  </article>
+
+  <article class="card printer-manager-card">
+    <h2>Printer Manager</h2>
+    <p class="muted">Scan for verified Centauri Carbon printers, add one manually, remove old entries, or tune per-printer connection/command settings.</p>
+
+    <div class="printer-manager-grid">
+      <section class="printer-manager-panel">
+        <h3>Scan / discover</h3>
+        <p class="muted">Only verified Centauri discovery responses are shown here. Routers and other web devices are hidden.</p>
+        <label class="field-label" for="managerScanSubnet">Subnet or host</label>
+        <input id="managerScanSubnet" class="input" value="{{ default_subnet }}" placeholder="192.168.1.0/24 or 192.168.1.x" />
+        <button id="managerScanButton" class="button primary full"><span class="button-label">Scan / Discover Printers</span></button>
+        <div id="managerScanStatus" class="scan-status hidden"><span class="spinner"></span><span>Scanning...</span></div>
+        <div id="managerScanResults" class="result-list"></div>
+      </section>
+
+      <section class="printer-manager-panel">
+        <h3>Manual add</h3>
+        <p class="muted">Use this if broadcast discovery is blocked but you know the printer IP, serial, and PIN.</p>
+        <label class="field-label" for="managerManualName">Display name</label>
+        <input id="managerManualName" class="input" value="Centauri Carbon 2" />
+        <label class="field-label" for="managerManualHost">Printer IP / host</label>
+        <input id="managerManualHost" class="input" placeholder="192.168.1.50" />
+        <label class="field-label" for="managerManualSerial">Serial number</label>
+        <input id="managerManualSerial" class="input" placeholder="Printer serial / SN" />
+        <label class="field-label" for="managerManualPin">Printer PIN / access code</label>
+        <input id="managerManualPin" class="input" type="password" inputmode="numeric" value="123456" />
+        <button id="managerManualAddButton" class="button primary full"><span class="button-label">Add / Save Printer</span></button>
+      </section>
+    </div>
+
+    <h3 class="section-subtitle">Configured printers</h3>
+    <div id="printerSettings" class="settings-list printer-config-list"></div>
+  </article>
+
+  <article class="card">
+    <h2>Network Access</h2>
+    <label class="field-label" for="allowedSubnets">Allowed subnets, one per line</label>
+    <textarea id="allowedSubnets" class="textarea" rows="4">{{ '\n'.join(cfg.network.allowed_subnets) }}</textarea>
+    <label class="field-label" for="allowedHosts">Allowed hosts, one per line</label>
+    <textarea id="allowedHosts" class="textarea" rows="3">{{ '\n'.join(cfg.network.allowed_hosts) }}</textarea>
+    <button id="saveNetworkButton" class="button primary full"><span class="button-label">Save Network Access</span></button>
+  </article>
+
+  <article class="card">
+    <h2>Advanced JSON</h2>
+    <p class="muted">Full config editor. Handy for command endpoints once the exact CC2 local API calls are nailed down.</p>
+    <textarea id="configEditor" class="textarea code" rows="18">{{ cfg|tojson(indent=2) }}</textarea>
+    <button id="saveJsonButton" class="button danger full"><span class="button-label">Save Full JSON Config</span></button>
+  </article>
+</section>
+{% endblock %}

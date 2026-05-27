@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block page_id %}logs{% endblock %}
+{% block content %}
+<section class="settings-stack fade-in">
+  <article class="card hero-card">
+    <h1>Logs</h1>
+    <p>System, command, Portal AI, and vision events for troubleshooting and review.</p>
+  </article>
+  <article class="card console-card">
+    <div class="card-title-row">
+      <h2>Event Console</h2>
+      <button id="refreshLogs" class="button tiny secondary"><span class="button-label">Refresh</span></button>
+    </div>
+    <div class="log-toolbar">
+      <select id="logSource" class="input" aria-label="Log source">
+        <option value="all">all sources</option>
+      </select>
+      <select id="logLevel" class="input" aria-label="Log level">
+        <option value="all">all levels</option>
+        <option value="INFO">info</option>
+        <option value="WARN">warn</option>
+        <option value="ERROR">error</option>
+      </select>
+      <input id="logSearch" class="input" type="search" placeholder="search logs...">
+      <select id="logLimit" class="input" aria-label="Log limit">
+        <option value="80">80</option>
+        <option value="180" selected>180</option>
+        <option value="400">400</option>
+        <option value="800">800</option>
+      </select>
+    </div>
+    <div id="logOutput" class="console-output"></div>
+  </article>
+</section>
+{% endblock %}
