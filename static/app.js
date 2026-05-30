@@ -1014,6 +1014,131 @@
     el.className = `inline-status ${tone || ''}`.trim();
   }
 
+  function fmtLearningNumber(value, digits = 3) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return value === 0 ? '0' : '-';
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function signedLearningNumber(value, digits = 3) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return '0';
+    return `${n > 0 ? '+' : ''}${fmtLearningNumber(n, digits)}`;
+  }
+
+  function collectAiLearningSettings() {
+    cfg.portal_ai = cfg.portal_ai || {};
+    const mode = $('#aiLearningMode')?.value || cfg.portal_ai.ai_feedback_learning_mode || 'suggest_only';
+    cfg.portal_ai.ai_feedback_learning_enabled = !!$('#aiLearningEnabled')?.checked && mode !== 'off';
+    cfg.portal_ai.ai_feedback_learning_mode = mode;
+    cfg.portal_ai.ai_learning_min_samples = Number($('#aiLearningMinSamples')?.value || 8);
+    cfg.portal_ai.ai_learning_min_false_positives = Number($('#aiLearningMinFalsePositives')?.value || 4);
+    cfg.portal_ai.ai_learning_min_false_negatives = Number($('#aiLearningMinFalseNegatives')?.value || 2);
+    cfg.portal_ai.ai_learning_max_dark_luma_adjustment = Number($('#aiLearningMaxDarkLuma')?.value || 8);
+    cfg.portal_ai.ai_learning_max_edge_density_adjustment = Number($('#aiLearningMaxEdgeDensity')?.value || 0.05);
+    cfg.portal_ai.ai_learning_max_required_bad_checks_adjustment = Number($('#aiLearningMaxBadChecks')?.value || 1);
+    cfg.portal_ai.ai_learning_apply_dark_luma = !!$('#aiLearningApplyDarkLuma')?.checked;
+    cfg.portal_ai.ai_learning_apply_edge_density = !!$('#aiLearningApplyEdgeDensity')?.checked;
+    cfg.portal_ai.ai_learning_apply_required_bad_checks = !!$('#aiLearningApplyBadChecks')?.checked;
+    cfg.portal_ai.ai_learning_rebuild_on_feedback = !!$('#aiLearningRebuildOnFeedback')?.checked;
+    cfg.portal_ai.ai_learning_keep_jsonl_audit_log = true;
+  }
+
+  function thresholdCell(label, value, digits = 3) {
+    return `<div class="ai-learning-threshold"><span>${esc(label)}</span><strong>${esc(fmtLearningNumber(value, digits))}</strong></div>`;
+  }
+
+  function renderAiLearningProfile(profile) {
+    profile = profile || {};
+    const thresholds = profile.thresholds || {};
+    const manual = thresholds.manual || {};
+    const suggested = thresholds.suggested || {};
+    const applied = thresholds.applied || {};
+    const effective = thresholds.effective || {};
+    const outcomes = profile.outcomes || {};
+    const baselines = profile.normal_baselines || {};
+    const luma = baselines.luma || {};
+    const contrast = baselines.contrast || {};
+    const edge = baselines.edge_density || {};
+    const confidence = String(profile.confidence || 'none').toLowerCase();
+    const reasons = (profile.reasons || []).slice(0, 4);
+
+    const metricRows = [
+      ['Dark luma', manual.dark_luma, signedLearningNumber(suggested.dark_luma_modifier, 2), signedLearningNumber(applied.dark_luma_modifier, 2), effective.dark_luma, 2],
+      ['Fine-edge density', manual.edge_density, signedLearningNumber(suggested.edge_density_modifier, 3), signedLearningNumber(applied.edge_density_modifier, 3), effective.edge_density, 3],
+      ['Bad checks', manual.required_bad_checks, signedLearningNumber(suggested.required_bad_checks_modifier, 0), signedLearningNumber(applied.required_bad_checks_modifier, 0), effective.required_bad_checks, 0],
+    ].map(row => `
+      <div class="ai-learning-metric-row">
+        <div class="ai-learning-metric-name">${esc(row[0])}</div>
+        ${thresholdCell('manual', row[1], row[5])}
+        ${thresholdCell('suggested', row[2], row[5])}
+        ${thresholdCell('applied', row[3], row[5])}
+        ${thresholdCell('effective', row[4], row[5])}
+      </div>
+    `).join('');
+
+    return `
+      <article class="ai-learning-card" data-printer-id="${esc(profile.printer_id || '')}">
+        <div class="ai-learning-card-header">
+          <div>
+            <strong>${esc(profile.printer_id || 'unknown printer')}</strong>
+            <small>${esc(profile.message || 'Learning profile loaded.')}</small>
+          </div>
+          <span class="ai-learning-badge ${esc(confidence)}">${esc((profile.mode || 'suggest_only').replaceAll('_', ' '))} · ${esc(confidence)}</span>
+        </div>
+        <div class="ai-learning-outcomes">
+          ${thresholdCell('samples', profile.sample_count, 0)}
+          ${thresholdCell('true +', outcomes.true_positive, 0)}
+          ${thresholdCell('false +', outcomes.false_positive, 0)}
+          ${thresholdCell('false -', outcomes.false_negative, 0)}
+          ${thresholdCell('true -', outcomes.true_negative, 0)}
+        </div>
+        <div class="ai-learning-thresholds">
+          ${metricRows}
+        </div>
+        <div class="ai-learning-baselines">
+          ${thresholdCell('normal luma median', luma.median, 2)}
+          ${thresholdCell('normal luma p10/p90', `${fmtLearningNumber(luma.p10, 2)} / ${fmtLearningNumber(luma.p90, 2)}`, 2)}
+          ${thresholdCell('normal contrast median', contrast.median, 2)}
+          ${thresholdCell('edge p90/p95', `${fmtLearningNumber(edge.p90, 3)} / ${fmtLearningNumber(edge.p95, 3)}`, 3)}
+        </div>
+        ${reasons.length ? `<ul class="ai-learning-reasons">${reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : '<div class="ai-learning-message">No learning reason text yet.</div>'}
+      </article>
+    `;
+  }
+
+  function renderAiLearningStatus(data) {
+    const panel = $('#aiLearningPanel');
+    const summary = $('#aiLearningStatusSummary');
+    if (!panel) return;
+    const learning = data?.learning || {};
+    const db = data?.database || {};
+    const profiles = learning.profiles || [];
+    if (summary) {
+      summary.textContent = `${learning.enabled ? 'Enabled' : 'Off'} · ${String(learning.mode || 'suggest_only').replaceAll('_', ' ')} · ${profiles.length} profile(s) · ${db.feedback_samples || 0} sample(s)`;
+    }
+    if (!profiles.length) {
+      panel.innerHTML = '<div class="ai-learning-empty">No printer learning profiles yet. Click feedback during prints, then rebuild profiles here.</div>';
+      return;
+    }
+    panel.innerHTML = profiles.map(renderAiLearningProfile).join('');
+  }
+
+  async function refreshAiLearningStatus(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    try {
+      const data = await api('/api/ai/learning/status');
+      renderAiLearningStatus(data);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiLearningStatusSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
   function ollamaBaseUrlFromSettings() {
     return $('#aiOllamaBaseUrl')?.value?.trim() || cfg?.portal_ai?.ollama_base_url || 'http://localhost:11434';
   }
@@ -1265,6 +1390,7 @@
       cfg.portal_ai.feedback_suppression_enabled = !!$('#aiFeedbackSuppressionEnabled')?.checked;
       cfg.portal_ai.feedback_suppression_ttl_hours = Number($('#aiFeedbackSuppressionTtlHours')?.value || 18);
       cfg.portal_ai.feedback_suppression_max_severity = Number($('#aiFeedbackSuppressionMaxSeverity')?.value || 65);
+      collectAiLearningSettings();
       cfg.portal_ai.auto_pause_enabled = !!$('#aiAutoPauseEnabled')?.checked;
       cfg.portal_ai.auto_pause_threshold = Number($('#aiAutoPauseThreshold')?.value || 90);
 
@@ -1372,6 +1498,44 @@
       }
     });
 
+    const refreshAiLearning = $('#refreshAiLearningButton');
+    if (refreshAiLearning) refreshAiLearning.addEventListener('click', async () => {
+      try { await refreshAiLearningStatus(refreshAiLearning); }
+      catch (err) { toast(err.message, 'error', 9000); }
+    });
+
+    const rebuildAiLearning = $('#rebuildAiLearningButton');
+    if (rebuildAiLearning) rebuildAiLearning.addEventListener('click', async () => {
+      setButtonBusy(rebuildAiLearning, true, 'Rebuilding...');
+      try {
+        const data = await api('/api/ai/learning/rebuild', { method:'POST', body:JSON.stringify({}) });
+        renderAiLearningStatus({ ok:true, database:data.database || {}, learning:{ profiles:data.profiles || [], mode:cfg?.portal_ai?.ai_feedback_learning_mode || 'suggest_only', enabled:!!cfg?.portal_ai?.ai_feedback_learning_enabled } });
+        await refreshAiLearningStatus();
+        toast(`Rebuilt ${data.count || 0} AI learning profile(s).`, 'success');
+      } catch (err) {
+        toast(err.message, 'error', 9000);
+      } finally {
+        setButtonBusy(rebuildAiLearning, false);
+      }
+    });
+
+    const resetAiLearning = $('#resetAiLearningButton');
+    if (resetAiLearning) resetAiLearning.addEventListener('click', async () => {
+      if (!confirm('Reset learned tuning profiles? Feedback samples and JSONL audit logs will be kept.')) return;
+      setButtonBusy(resetAiLearning, true, 'Resetting...');
+      try {
+        const data = await api('/api/ai/learning/reset', { method:'POST', body:JSON.stringify({ delete_samples:false }) });
+        renderAiLearningStatus(data.status || data);
+        toast('Learned tuning reset. Feedback samples were kept.', 'success');
+      } catch (err) {
+        toast(err.message, 'error', 9000);
+      } finally {
+        setButtonBusy(resetAiLearning, false);
+      }
+    });
+
+    refreshAiLearningStatus().catch(() => {});
+
     const saveAI = $('#saveAIButton');
     if (saveAI) saveAI.addEventListener('click', async () => {
       cfg.portal_ai = cfg.portal_ai || {};
@@ -1404,6 +1568,7 @@
       cfg.portal_ai.feedback_suppression_enabled = !!$('#aiFeedbackSuppressionEnabled')?.checked;
       cfg.portal_ai.feedback_suppression_ttl_hours = Number($('#aiFeedbackSuppressionTtlHours')?.value || 18);
       cfg.portal_ai.feedback_suppression_max_severity = Number($('#aiFeedbackSuppressionMaxSeverity')?.value || 65);
+      collectAiLearningSettings();
       cfg.portal_ai.auto_pause_enabled = !!$('#aiAutoPauseEnabled')?.checked;
       cfg.portal_ai.auto_pause_threshold = Number($('#aiAutoPauseThreshold')?.value || 90);
       setButtonBusy(saveAI, true, 'Saving...');

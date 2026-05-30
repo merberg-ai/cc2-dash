@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.34-blue)
+![Version](https://img.shields.io/badge/version-1.2.35-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.34 persistent-ai-learning-foundation
+1.2.35 learning-settings-ui
 ```
 
 Major current capabilities:
@@ -76,7 +76,7 @@ Major current capabilities:
 | Ollama vision checks | Working, active-print-only by default |
 | AI feedback dataset | Working, includes fresh-frame capture, JSONL audit log, SQLite mirror, and outcome interpretation |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
-| Persistent AI learning | Foundation added: SQLite samples, per-printer profiles, rebuild/reset/status APIs, suggest-only by default |
+| Persistent AI learning | Working foundation plus Settings UI visibility: SQLite samples, profiles, manual/suggested/applied/effective thresholds, rebuild/reset controls |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
 | Filament Manager / CANVAS | Available but hidden by default while command behavior is tested on real firmware |
 | Themes | Built-in theme library with preview cards |
@@ -595,9 +595,10 @@ How it works in this version:
 2. The same feedback is mirrored into `data/ai_learning.sqlite3` as structured samples.
 3. Samples are grouped per printer.
 4. Rebuild endpoints calculate per-printer learning profiles, outcome counts, normal baselines, and suggested threshold modifiers.
-5. Manual threshold settings are not overwritten.
-6. Default mode is `suggest_only`, so learned modifiers are calculated but not applied to live detection.
-7. Portal AI remains advisory-only and does not pause, cancel, resume, load/unload filament, or control jobs automatically.
+5. Settings → Portal AI shows the AI Feedback Learning controls and profile cards.
+6. Manual threshold settings are not overwritten.
+7. Default mode is `suggest_only`, so learned modifiers are calculated but not applied to live detection.
+8. Portal AI remains advisory-only and does not pause, cancel, resume, load/unload filament, or control jobs automatically.
 
 Learning modes under `portal_ai` config:
 
@@ -620,8 +621,18 @@ Current bounds/defaults:
 
 The learning database uses Python's built-in `sqlite3` module with WAL mode, normal sync, a short busy timeout, and no image blobs. Images stay on disk; SQLite stores paths and metrics only.
 
+Settings → Portal AI now includes **AI Feedback Learning** controls for:
+
+- enabling/disabling persistent learning;
+- switching between `off`, `suggest_only`, and `auto_adjust_safe`;
+- tuning minimum sample requirements and clamp bounds;
+- choosing which modifier types may be suggested;
+- rebuilding profiles;
+- resetting learned tuning without deleting JSONL feedback;
+- viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds.
+
 > [!IMPORTANT]
-> v1.2.34 adds the backend foundation and APIs. Full Settings UI panels, feedback reason chips, and live effective-threshold integration are planned follow-up work.
+> v1.2.35 makes learning visible and configurable in Settings. Live effective-threshold integration and feedback reason chips are still planned follow-up work.
 
 ---
 
@@ -1105,6 +1116,14 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.35 learning settings UI
+
+- Added a Settings → Portal AI → AI Feedback Learning section.
+- Added controls for persistent learning enablement, learning mode, minimum sample counts, maximum learned adjustment bounds, modifier-type toggles, and rebuild-on-feedback behavior.
+- Added per-printer learning profile cards showing sample counts, true/false positive/negative outcomes, manual/suggested/applied/effective thresholds, normal baselines, confidence, and explanation reasons.
+- Added Settings buttons to refresh learning status, rebuild all profiles, and reset learned tuning while keeping feedback samples and JSONL audit logs.
+- Kept live AI scoring unchanged in this version; suggest-only mode remains the default and Portal AI remains advisory-only.
 
 ### v1.2.34 persistent AI learning foundation
 
