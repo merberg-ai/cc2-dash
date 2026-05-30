@@ -369,14 +369,12 @@
       const speedText = st.speed_setting || st.speed_mode_name || (st.speed_percent ? `${st.speed_percent}%` : '-') || '-';
       setText('currentSpeed', speedText);
       setText('currentSpeedBrief', speedText);
-      setText('filamentUsed', st.filament_used || '-');
-      setText('layerProgress', st.layer_progress || '-');
+      setText('layerProgress', formatDashboardLayer(st));
       renderGcodeThumbnail(st);
       setText('hotendTemp', tempLine(st.hotend_current, st.hotend_target));
       setText('bedTemp', tempLine(st.bed_current, st.bed_target));
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
-      setText('apiState', st.reachable ? 'Reachable' : 'Offline');
       setText('lastUpdate', new Date().toLocaleTimeString());
       if (st.portal_url) setText('portalState', st.portal_url);
       if (st.camera_url) setText('cameraState', st.camera_url);
@@ -394,7 +392,6 @@
       const cam = $('#cameraStream');
       if (ph && cam && !cam.classList.contains('hidden')) ph.classList.add('hidden');
     } catch (err) {
-      setText('apiState', 'Error');
       renderPortalAI({ summary: 'Connection Trouble', level: 'high', risk: 75, reasons: [err.message || 'Dashboard could not load printer status.'] });
       const statusEl = $('#statusText');
       if (statusEl) {
@@ -405,6 +402,21 @@
     }
   }
 
+
+  function formatDashboardLayer(status) {
+    const toLayerInt = value => {
+      if (value === null || value === undefined || value === '') return null;
+      const number = Number(value);
+      if (!Number.isFinite(number) || number < 0) return null;
+      return Math.floor(number);
+    };
+    const current = toLayerInt(status?.layer_current ?? status?.current_layer ?? status?.currentLayer);
+    const total = toLayerInt(status?.layer_total ?? status?.total_layer ?? status?.totalLayers ?? status?.total_layer_count);
+    if (current !== null && total !== null && total > 0) return `${current}/${total}`;
+    if (current !== null && current > 0) return String(current);
+    if (total !== null && total > 0) return `-/${total}`;
+    return status?.layer_progress || '-';
+  }
 
   function dashboardAccordionStorageKey() {
     const printerId = document.body.dataset.printerId || 'default';
