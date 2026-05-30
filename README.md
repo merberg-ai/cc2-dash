@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.42-blue)
+![Version](https://img.shields.io/badge/version-1.2.43-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.42 feedback-ui-polish
+1.2.43 dashboard-learning-badge
 ```
 
 Major current capabilities:
@@ -1124,6 +1124,15 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.43 dashboard learning badge
+
+- Adds a compact AI learning badge/details panel to the dashboard Portal AI card.
+- Shows whether learning is off, suggesting, or auto-adjusting safely.
+- Surfaces sample count, confidence, and manual/suggested/applied/effective thresholds when threshold data is available from the live vision path.
+- Clarifies whether learned modifiers are being applied live or only suggested.
+- Changes the feedback custom “Save note” button to a theme-safe success/green style instead of danger red.
+- Keeps manual thresholds unchanged and Portal AI advisory-only.
 
 ### v1.2.42 feedback UI polish
 

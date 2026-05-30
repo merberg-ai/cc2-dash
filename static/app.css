@@ -473,19 +473,29 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
   padding:.42rem .58rem;
 }
 
-/* v1.2.42: make optional feedback training controls readable across themes */
+/* v1.2.42/1.2.43: make optional feedback training controls readable across themes */
 .ai-feedback-reasons .button.ghost,
-.ai-feedback-reason-chip,
-.ai-feedback-reason-custom .button {
+.ai-feedback-reason-chip {
   background: color-mix(in srgb, var(--cc2-danger) 42%, #12080c);
   border: 1px solid color-mix(in srgb, var(--cc2-danger) 70%, var(--cc2-border));
   color: #fff;
   box-shadow: 0 8px 20px color-mix(in srgb, var(--cc2-danger) 16%, transparent);
 }
 .ai-feedback-reasons .button.ghost:hover,
-.ai-feedback-reason-chip:hover,
-.ai-feedback-reason-custom .button:hover {
+.ai-feedback-reason-chip:hover {
   background: color-mix(in srgb, var(--cc2-danger) 56%, #12080c);
+  color: #fff;
+}
+.ai-feedback-reason-custom .button,
+.ai-feedback-reason-custom [data-feedback-reason-custom-save] {
+  background: color-mix(in srgb, var(--cc2-success) 44%, var(--cc2-primary) 20%);
+  border: 1px solid color-mix(in srgb, var(--cc2-success) 68%, var(--cc2-border));
+  color: #fff;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--cc2-success) 16%, transparent);
+}
+.ai-feedback-reason-custom .button:hover,
+.ai-feedback-reason-custom [data-feedback-reason-custom-save]:hover {
+  background: color-mix(in srgb, var(--cc2-success) 58%, var(--cc2-primary) 18%);
   color: #fff;
 }
 .ai-feedback-reason-custom {
@@ -508,6 +518,106 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
   color:var(--cc2-success);
   font-size:.78rem;
 }
+
+/* v1.2.43: dashboard learning visibility */
+.ai-learning-dashboard {
+  margin:.58rem 0 .5rem;
+  border:1px solid color-mix(in srgb, var(--cc2-primary) 26%, var(--cc2-border));
+  background:color-mix(in srgb, var(--cc2-card-soft) 88%, var(--cc2-primary) 5%);
+  border-radius:.85rem;
+  overflow:hidden;
+}
+.ai-learning-dashboard summary {
+  display:flex;
+  align-items:center;
+  gap:.55rem;
+  padding:.58rem .68rem;
+  cursor:pointer;
+  position:relative;
+  list-style:none;
+}
+.ai-learning-dashboard summary::-webkit-details-marker { display:none; }
+.ai-learning-dashboard summary::after {
+  content:'▾';
+  margin-left:auto;
+  color:var(--cc2-muted);
+  transition:transform .15s ease;
+}
+.ai-learning-dashboard[open] summary::after { transform:rotate(180deg); }
+.ai-learning-dash-badge {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:0 0 auto;
+  border-radius:999px;
+  border:1px solid var(--cc2-border);
+  padding:.25rem .52rem;
+  font-family:var(--font-number);
+  font-size:.7rem;
+  font-weight:900;
+  white-space:nowrap;
+}
+.ai-learning-dash-badge.off {
+  color:var(--cc2-muted);
+  background:color-mix(in srgb, var(--cc2-card) 78%, transparent);
+}
+.ai-learning-dash-badge.suggest {
+  color:var(--cc2-warning);
+  border-color:color-mix(in srgb, var(--cc2-warning) 42%, var(--cc2-border));
+  background:color-mix(in srgb, var(--cc2-warning) 11%, var(--cc2-card));
+}
+.ai-learning-dash-badge.auto {
+  color:var(--cc2-success);
+  border-color:color-mix(in srgb, var(--cc2-success) 45%, var(--cc2-border));
+  background:color-mix(in srgb, var(--cc2-success) 12%, var(--cc2-card));
+}
+.ai-learning-dash-summary {
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--cc2-muted);
+  font-size:.76rem;
+}
+.ai-learning-dash-details {
+  border-top:1px solid color-mix(in srgb, var(--cc2-border) 80%, transparent);
+  padding:.62rem .68rem .7rem;
+  display:grid;
+  gap:.45rem;
+}
+.ai-learning-dash-row {
+  display:grid;
+  grid-template-columns:minmax(5.8rem, .8fr) repeat(4, minmax(3.4rem, 1fr));
+  gap:.38rem;
+  align-items:center;
+  font-size:.72rem;
+  color:var(--cc2-muted);
+}
+.ai-learning-dash-row strong {
+  color:var(--cc2-text);
+  font-size:.76rem;
+}
+.ai-learning-dash-row span {
+  border:1px solid color-mix(in srgb, var(--cc2-border) 82%, transparent);
+  border-radius:.55rem;
+  padding:.32rem .38rem;
+  background:color-mix(in srgb, var(--cc2-card) 72%, transparent);
+}
+.ai-learning-dash-row b {
+  display:block;
+  color:var(--cc2-text);
+  font-family:var(--font-number);
+  font-size:.8rem;
+}
+.ai-learning-dash-note,
+.ai-learning-dash-foot {
+  color:var(--cc2-muted);
+  font-size:.74rem;
+  line-height:1.3;
+}
+.ai-learning-dash-foot {
+  color:color-mix(in srgb, var(--cc2-warning) 74%, var(--cc2-muted));
+}
 .hidden { display:none !important; }
 @media (max-width: 520px) {
   .dashboard-summary .summary-progress { max-width:14rem; gap:.38rem; }
@@ -516,6 +626,11 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
   .dashboard-summary .summary-ai-status { max-width:12.5rem; overflow:hidden; text-overflow:ellipsis; padding:.25rem .48rem; font-size:.68rem; }
   .ai-feedback { grid-template-columns:1fr; }
   .ai-feedback-reason-custom { grid-template-columns:1fr; }
+  .ai-learning-dashboard summary { align-items:flex-start; flex-direction:column; }
+  .ai-learning-dashboard summary::after { position:absolute; right:1.1rem; }
+  .ai-learning-dash-summary { white-space:normal; }
+  .ai-learning-dash-row { grid-template-columns:1fr 1fr; }
+  .ai-learning-dash-row strong { grid-column:1 / -1; }
 }
 
 /* Portal AI vision monitoring */

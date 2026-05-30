@@ -79,6 +79,84 @@
     return { tone: 'good', label: 'Looks Good' };
   }
 
+  function fmtDashboardLearningNumber(value, digits = 2) {
+    if (value === null || value === undefined || value === '') return '-';
+    const n = Number(value);
+    if (!Number.isFinite(n)) return String(value);
+    return n.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+  }
+
+  function signedDashboardLearningNumber(value, digits = 2) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n)) return '0';
+    const out = fmtDashboardLearningNumber(Math.abs(n), digits);
+    if (Math.abs(n) < 0.000001) return '0';
+    return `${n > 0 ? '+' : '-'}${out}`;
+  }
+
+  function renderDashboardLearning(ai, vision) {
+    const shell = $('#aiLearningDashboard');
+    const badge = $('#aiLearningDashBadge');
+    const summary = $('#aiLearningDashSummary');
+    const details = $('#aiLearningDashDetails');
+    if (!shell || !badge || !summary || !details) return;
+
+    const learning = vision?.learning_thresholds || ai?.learning_thresholds || {};
+    const cfgAi = cfg?.portal_ai || {};
+    const mode = String(learning.mode || cfgAi.ai_feedback_learning_mode || (cfgAi.ai_feedback_learning_enabled === false ? 'off' : 'suggest_only'));
+    const enabled = learning.enabled !== undefined ? !!learning.enabled : (cfgAi.ai_feedback_learning_enabled !== false && mode !== 'off');
+    const normalizedMode = enabled ? mode : 'off';
+    const active = !!(vision?.learning_applied || learning.active);
+    const confidence = learning.confidence || 'none';
+    const sampleCount = Number.isFinite(Number(learning.sample_count)) ? Number(learning.sample_count) : null;
+    const manual = learning.manual || {};
+    const suggested = learning.suggested || {};
+    const applied = learning.applied || {};
+    const effective = learning.effective || {};
+
+    let tone = 'off';
+    let label = 'Learning: Off';
+    let text = 'Persistent AI learning is disabled or not collecting live threshold data yet.';
+    if (normalizedMode === 'suggest_only') {
+      tone = 'suggest';
+      label = 'Learning: Suggesting';
+      text = `Collecting feedback and suggestions only${sampleCount !== null ? ` · ${sampleCount} sample${sampleCount === 1 ? '' : 's'}` : ''}${confidence ? ` · ${confidence} confidence` : ''}.`;
+    } else if (normalizedMode === 'auto_adjust_safe') {
+      tone = active ? 'auto' : 'suggest';
+      label = 'Learning: Auto-adjusting';
+      text = active
+        ? `Bounded learned modifiers are active${sampleCount !== null ? ` · ${sampleCount} sample${sampleCount === 1 ? '' : 's'}` : ''}${confidence ? ` · ${confidence} confidence` : ''}.`
+        : `Auto-adjust is enabled, but no learned modifier is currently being applied${sampleCount !== null ? ` · ${sampleCount} sample${sampleCount === 1 ? '' : 's'}` : ''}.`;
+    }
+
+    badge.className = `ai-learning-dash-badge ${tone}`;
+    badge.textContent = label;
+    summary.textContent = text;
+
+    const rows = [
+      ['Dark luma', manual.dark_luma, suggested.dark_luma_modifier, applied.dark_luma_modifier, effective.dark_luma, 2],
+      ['Fine edge', manual.edge_density, suggested.edge_density_modifier, applied.edge_density_modifier, effective.edge_density, 3],
+      ['Bad checks', manual.required_bad_checks, suggested.required_bad_checks_modifier, applied.required_bad_checks_modifier, effective.required_bad_checks, 0],
+    ];
+    const haveThresholds = rows.some(row => row.slice(1, 5).some(v => v !== null && v !== undefined && v !== ''));
+    const thresholdHtml = haveThresholds ? rows.map(row => `
+      <div class="ai-learning-dash-row">
+        <strong>${esc(row[0])}</strong>
+        <span>manual <b>${esc(fmtDashboardLearningNumber(row[1], row[5]))}</b></span>
+        <span>suggested <b>${esc(signedDashboardLearningNumber(row[2], row[5]))}</b></span>
+        <span>applied <b>${esc(signedDashboardLearningNumber(row[3], row[5]))}</b></span>
+        <span>effective <b>${esc(fmtDashboardLearningNumber(row[4], row[5]))}</b></span>
+      </div>`).join('') : '<div class="ai-learning-dash-note">Threshold details will appear after a vision check or profile rebuild.</div>';
+    const modeMessage = normalizedMode === 'auto_adjust_safe'
+      ? (active ? 'Live vision heuristics are using the effective thresholds above.' : 'Auto-adjust is enabled, but live thresholds currently match manual values.')
+      : (normalizedMode === 'suggest_only' ? 'Suggest-only mode does not alter live scoring.' : 'Learning is off for live scoring.');
+    details.innerHTML = `
+      <div class="ai-learning-dash-note">${esc(modeMessage)}</div>
+      ${thresholdHtml}
+      <div class="ai-learning-dash-foot">Manual settings are not overwritten. Portal AI remains advisory-only.</div>
+    `;
+  }
+
   function renderPortalAI(ai) {
     ai = ai || {};
     const summary = ai.summary || 'Standing By';
@@ -109,6 +187,7 @@
       reasons.innerHTML = rows.map(r => `<li>${esc(r)}</li>`).join('');
     }
     const vision = ai.vision || ai.vision_ai || {};
+    renderDashboardLearning(ai, vision);
     const headerState = summarizeAIHeaderStatus(ai, vision);
     const headerPill = $('#aiSummaryPill');
     if (headerPill) {
