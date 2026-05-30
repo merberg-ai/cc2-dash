@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.38-blue)
+![Version](https://img.shields.io/badge/version-1.2.39-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.38 layer-progress-unknown-total
+1.2.39 active-file-layer-total-lookup
 ```
 
 Major current capabilities:
@@ -1117,6 +1117,15 @@ cc2-dash/
 ---
 
 ## Release notes
+
+
+### v1.2.39 active-file layer total lookup
+
+- Improved dashboard layer progress when the live printer status only reports the current layer.
+- cc2-dash now mirrors the stock Elegoo portal behavior more closely by looking up the active G-code file metadata for total layers when live telemetry omits it.
+- Layer progress now prefers `current/total` from file metadata, falling back to `current/?` only when the file lookup cannot find a total layer count.
+- File metadata lookups are cached so the dashboard poll loop does not hammer the printer.
+- No printer-control, Portal AI, or learning behavior changes.
 
 ### v1.2.38 layer progress unknown-total polish
 

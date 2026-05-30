@@ -114,6 +114,9 @@ _AI_MONITOR_STATE: dict[str, Any] = {
     "last_error": None,
 }
 _AI_MONITOR_LAST_LOGGED: dict[str, dict[str, Any]] = {}
+_LAYER_TOTAL_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+_LAYER_TOTAL_CACHE_TTL_SEC = 300.0
+_LAYER_TOTAL_MISS_TTL_SEC = 90.0
 
 SPEED_PRESETS = {
     0: "Silent",
@@ -638,6 +641,173 @@ def _format_layer_progress(current: Any, total: Any) -> str:
     if tot is not None and tot > 0:
         return f"-/{tot}"
     return "-"
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        number = int(float(value))
+        return number if number > 0 else None
+    except Exception:
+        return None
+
+
+def _same_file_name(left: Any, right: Any) -> bool:
+    a = _basename_from_path(left).lower()
+    b = _basename_from_path(right).lower()
+    return bool(a and b and a == b)
+
+
+def _find_total_layer_in_payload(payload: Any, filename: str | None = None) -> tuple[int | None, str | None]:
+    """Find a stock-portal-style total layer value in file-list/detail data.
+
+    The live printer status currently reports print_status.current_layer but not
+    total layers. The stock Elegoo portal gets total layers from cached file list
+    rows or from the file-detail command, where the field may be named Layer,
+    TotalLayer, or TotalLayers depending on firmware/build. Keep this helper
+    scoped to file metadata payloads so a generic ``Layer`` field is interpreted
+    as total layers, not the live current layer.
+    """
+    wanted = str(filename or "").strip()
+    total_keys = {
+        "totallayers", "total_layers", "totallayer", "total_layer",
+        "layercount", "layer_count", "layer", "layers",
+    }
+    name_keys = {"filename", "file_name", "filename", "name", "taskname", "task_name", "filepath", "file_path", "path"}
+
+    def record_name(d: dict[str, Any]) -> str:
+        for key, value in d.items():
+            if str(key).replace("-", "_").lower() in name_keys and value not in (None, ""):
+                return str(value)
+        return ""
+
+    def scan(obj: Any, path: str = "") -> tuple[int | None, str | None]:
+        if isinstance(obj, dict):
+            # Prefer an object that explicitly belongs to the current filename.
+            if wanted:
+                rec = record_name(obj)
+                if rec and not _same_file_name(rec, wanted):
+                    # Still scan nested containers; just don't use this row's own
+                    # scalar fields as the answer for a different file.
+                    for key, value in obj.items():
+                        if isinstance(value, (dict, list)):
+                            found, src = scan(value, f"{path}.{key}" if path else str(key))
+                            if found is not None:
+                                return found, src
+                    return None, None
+            for key, value in obj.items():
+                norm = str(key).replace("-", "_").lower()
+                if norm in total_keys:
+                    number = _positive_int(value)
+                    if number is not None:
+                        return number, f"file_metadata.{path + '.' if path else ''}{key}"
+            for key, value in obj.items():
+                if isinstance(value, (dict, list)):
+                    found, src = scan(value, f"{path}.{key}" if path else str(key))
+                    if found is not None:
+                        return found, src
+        elif isinstance(obj, list):
+            # If filename is provided, prioritize matching file rows.
+            if wanted:
+                for idx, item in enumerate(obj):
+                    if isinstance(item, dict) and _same_file_name(record_name(item), wanted):
+                        found, src = scan(item, f"{path}[{idx}]")
+                        if found is not None:
+                            return found, src
+            for idx, item in enumerate(obj):
+                found, src = scan(item, f"{path}[{idx}]")
+                if found is not None:
+                    return found, src
+        return None, None
+
+    root = _unwrap_command_payload(payload)
+    return scan(root)
+
+
+def _cache_layer_total(printer_id: str, filename: str, storage_media: str, total: int | None, source: str | None) -> None:
+    key = (str(printer_id), _basename_from_path(filename).lower(), normalize_storage_media(storage_media))
+    _LAYER_TOTAL_CACHE[key] = {
+        "time": time.time(),
+        "total": total,
+        "source": source,
+    }
+
+
+def _cached_layer_total(printer_id: str, filename: str, storage_media: str) -> tuple[bool, int | None, str | None]:
+    key = (str(printer_id), _basename_from_path(filename).lower(), normalize_storage_media(storage_media))
+    row = _LAYER_TOTAL_CACHE.get(key)
+    if not row:
+        return False, None, None
+    age = time.time() - float(row.get("time") or 0)
+    ttl = _LAYER_TOTAL_CACHE_TTL_SEC if row.get("total") else _LAYER_TOTAL_MISS_TTL_SEC
+    if age > ttl:
+        _LAYER_TOTAL_CACHE.pop(key, None)
+        return False, None, None
+    return True, row.get("total"), row.get("source")
+
+
+def _lookup_total_layer_from_file_metadata_sync(printer_id: str, filename: str, storage_media: str = "local") -> tuple[int | None, str | None]:
+    if not _has_real_file(filename):
+        return None, None
+    media = normalize_storage_media(storage_media)
+    cached, total, source = _cached_layer_total(printer_id, filename, media)
+    if cached:
+        return total, source
+
+    # This mirrors the stock Elegoo portal: when live status lacks total layers,
+    # ask the file-detail/file-list side for metadata about the currently printed file.
+    lookups: list[tuple[str, int, dict[str, Any], float]] = [
+        ("detail", GET_FILE_DETAIL, file_detail_params(filename, media), 15.0),
+        ("list", GET_FILE_LIST, file_list_params("/", media, page=1, page_size=200), 15.0),
+    ]
+    # USB prints may show up with a leading slash in file APIs; try both common
+    # media buckets without making every dashboard refresh hammer the printer.
+    if media != "u-disk":
+        lookups.extend([
+            ("udisk_detail", GET_FILE_DETAIL, file_detail_params(filename, "u-disk"), 15.0),
+            ("udisk_list", GET_FILE_LIST, file_list_params("/", "u-disk", page=1, page_size=200), 15.0),
+        ])
+
+    for label, method, params, timeout in lookups:
+        try:
+            payload = _send_command(printer_id, method, params, True, timeout, False)
+        except Exception as exc:
+            log("debug", f"Layer-total {label} lookup failed for {filename}: {exc}", "command", printer=printer_id)
+            continue
+        total, source = _find_total_layer_in_payload(payload, filename)
+        if total is not None:
+            src = f"{label}.{source or 'unknown'}"
+            _cache_layer_total(printer_id, filename, media, total, src)
+            return total, src
+    _cache_layer_total(printer_id, filename, media, None, "file_metadata.miss")
+    return None, None
+
+
+async def _enrich_status_with_file_layer_total(printer_id: str, status: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        return status
+    if not status.get("layer_total_missing"):
+        return status
+    filename = status.get("file")
+    if not _has_real_file(filename):
+        return status
+    try:
+        total, source = await asyncio.to_thread(_lookup_total_layer_from_file_metadata_sync, printer_id, str(filename), "local")
+    except Exception as exc:
+        log("debug", f"Layer-total metadata lookup failed for {filename}: {exc}", "command", printer=printer_id)
+        return status
+    if total is None:
+        return status
+    status["layer_total"] = total
+    status["layer_progress"] = _format_layer_progress(status.get("layer_current"), total)
+    status["layer_total_missing"] = False
+    status["layer_total_from_file_metadata"] = True
+    status["layer_total_source"] = source
+    src = status.get("layer_source") if isinstance(status.get("layer_source"), dict) else {}
+    src["total"] = source
+    status["layer_source"] = src
+    return status
 
 
 def _format_filament_used(value: Any, source: str | None = None) -> str:
@@ -1725,6 +1895,8 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "layer_current": print_metrics.get("layer_current"),
         "layer_total": print_metrics.get("layer_total"),
         "layer_progress": print_metrics.get("layer_progress") or "-",
+        "layer_source": print_metrics.get("layer_source"),
+        "layer_total_missing": print_metrics.get("layer_total_missing"),
         "hotend_current": nozzle.get("actual"),
         "hotend_target": nozzle.get("target"),
         "bed_current": bed.get("actual"),
@@ -1842,7 +2014,8 @@ async def api_status():
     if not runtime.get_client(pid):
         runtime.start(pid, printer_dict_to_config(pid, printer))
     snap = runtime.snapshot(pid)
-    return _status_from_snapshot(pid, printer, snap)
+    status = _status_from_snapshot(pid, printer, snap)
+    return await _enrich_status_with_file_layer_total(pid, status)
 
 
 @app.get("/api/status/{printer_id}")
@@ -1854,7 +2027,8 @@ async def api_status_printer(printer_id: str):
     if not runtime.get_client(printer_id):
         runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
     snap = runtime.snapshot(printer_id)
-    return _status_from_snapshot(printer_id, printer, snap)
+    status = _status_from_snapshot(printer_id, printer, snap)
+    return await _enrich_status_with_file_layer_total(printer_id, status)
 
 
 @app.get("/api/ai/monitor")
