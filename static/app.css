@@ -435,6 +435,63 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
   gap:.45rem;
 }
 .ai-feedback .button { width:100%; }
+.ai-feedback-reasons {
+  margin-top:.55rem;
+  border:1px solid color-mix(in srgb, var(--cc2-primary) 28%, var(--cc2-border));
+  background:color-mix(in srgb, var(--cc2-card-soft) 86%, var(--cc2-primary) 8%);
+  border-radius:.85rem;
+  padding:.65rem;
+  box-shadow:0 12px 28px rgba(0,0,0,.12);
+}
+.ai-feedback-reason-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:.65rem;
+  margin-bottom:.55rem;
+}
+.ai-feedback-reason-head strong {
+  display:block;
+  color:var(--cc2-text);
+  font-size:.84rem;
+}
+.ai-feedback-reason-head span {
+  display:block;
+  color:var(--cc2-muted);
+  font-size:.72rem;
+  line-height:1.3;
+  margin-top:.12rem;
+}
+.ai-feedback-reason-chips {
+  display:flex;
+  flex-wrap:wrap;
+  gap:.38rem;
+}
+.ai-feedback-reason-chip {
+  width:auto !important;
+  min-height:2rem;
+  padding:.42rem .58rem;
+}
+.ai-feedback-reason-custom {
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:.45rem;
+  margin-top:.55rem;
+}
+.ai-feedback-reason-custom input {
+  min-width:0;
+  border:1px solid var(--cc2-border);
+  border-radius:.65rem;
+  background:rgba(0,0,0,.16);
+  color:var(--cc2-text);
+  padding:.52rem .62rem;
+  font:inherit;
+  font-size:.78rem;
+}
+.ai-feedback-reason-saved {
+  color:var(--cc2-success);
+  font-size:.78rem;
+}
 .hidden { display:none !important; }
 @media (max-width: 520px) {
   .dashboard-summary .summary-progress { max-width:14rem; gap:.38rem; }
@@ -442,6 +499,7 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
   .dashboard-summary .summary-progress-text { min-width:2.85rem; font-size:.72rem; }
   .dashboard-summary .summary-ai-status { max-width:12.5rem; overflow:hidden; text-overflow:ellipsis; padding:.25rem .48rem; font-size:.68rem; }
   .ai-feedback { grid-template-columns:1fr; }
+  .ai-feedback-reason-custom { grid-template-columns:1fr; }
 }
 
 /* Portal AI vision monitoring */

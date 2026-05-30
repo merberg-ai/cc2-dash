@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.39-blue)
+![Version](https://img.shields.io/badge/version-1.2.40-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.39 active-file-layer-total-lookup
+1.2.40 feedback-reason-chips
 ```
 
 Major current capabilities:
@@ -74,7 +74,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Portal AI telemetry checks | Working, advisory-only |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, JSONL audit log, SQLite mirror, and outcome interpretation |
+| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror, and outcome interpretation |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
@@ -552,7 +552,7 @@ data/ai_feedback_suppressions.json
 data/ai_learning.sqlite3
 ```
 
-When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame.
+When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame. After the fast click is saved, an optional reason-chip panel can tag why the feedback was given, such as normal supports, purge tower, spaghetti/stringing, detached print, low light but visible, or a custom note.
 
 Feedback is interpreted against what Portal AI believed at the time:
 
@@ -571,6 +571,7 @@ Review endpoints:
 GET /api/ai/feedback/recent
 GET /api/ai/feedback/stats
 GET /api/ai/feedback/suppressions
+POST /api/printers/<printer_id>/ai/feedback/reason
 ```
 
 Manual threshold values remain manual. Feedback suppression does not silently rewrite your dark-frame or fine-edge thresholds.
@@ -633,7 +634,7 @@ Settings → Portal AI now includes **AI Feedback Learning** controls for:
 - viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds.
 
 > [!IMPORTANT]
-> v1.2.36 wires learned effective thresholds into live vision checks only when `auto_adjust_safe` is explicitly selected. `off` and `suggest_only` remain advisory/no-op for live scoring. Feedback reason chips are still planned follow-up work.
+> Learned effective thresholds are wired into live vision checks only when `auto_adjust_safe` is explicitly selected. `off` and `suggest_only` remain advisory/no-op for live scoring. Feedback reason chips enrich future samples but still do not let AI control print jobs automatically.
 
 ---
 
@@ -922,6 +923,7 @@ GET  /api/ai/monitor
 GET  /api/printers/<printer_id>/ai/status
 POST /api/printers/<printer_id>/ai/check-now
 POST /api/printers/<printer_id>/ai/feedback
+POST /api/printers/<printer_id>/ai/feedback/reason
 GET  /api/ai/feedback/recent
 GET  /api/ai/feedback/stats
 GET  /api/ai/feedback/suppressions
@@ -1118,6 +1120,16 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.40 feedback reason chips
+
+- Added optional reason chips after fast Portal AI feedback clicks.
+- Feedback buttons still save immediately; reason selection is a second, optional training-quality step.
+- Looks Bad reasons include spaghetti/stringing, detached print, blob/nozzle buildup, first-layer issue, layer shift, filament issue, camera bad/unclear, and custom notes.
+- False Alarm reasons include normal supports, purge tower, infill pattern, reflection/glare, low light but visible, multicolor purge mess, camera angle, and custom notes.
+- Looks Good reasons include normal print, normal idle, normal purge/supports, and custom notes.
+- Reason updates are appended to `data/ai_feedback.jsonl` and attached to the matching SQLite feedback sample when available.
+- This improves future learning/review data without changing live AI scoring, thresholds, or printer-control safety behavior.
 
 ### v1.2.39 active-file layer total lookup
 

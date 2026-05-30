@@ -449,6 +449,126 @@
     panels.forEach(panel => panel.addEventListener('toggle', persist));
   }
 
+  const FEEDBACK_REASON_CHIPS = {
+    looks_bad: [
+      ['spaghetti_stringing', 'Spaghetti / stringing'],
+      ['detached_print', 'Detached print'],
+      ['blob_nozzle_buildup', 'Blob / nozzle buildup'],
+      ['first_layer_issue', 'First-layer issue'],
+      ['layer_shift', 'Layer shift'],
+      ['filament_issue', 'Filament issue'],
+      ['camera_bad_unclear', 'Camera bad / unclear'],
+      ['other', 'Other']
+    ],
+    false_alarm: [
+      ['normal_supports', 'Normal supports'],
+      ['purge_tower', 'Purge tower'],
+      ['infill_pattern', 'Infill pattern'],
+      ['reflection_glare', 'Reflection / glare'],
+      ['low_light_but_visible', 'Low light but visible'],
+      ['multicolor_purge_mess', 'Multicolor purge mess'],
+      ['camera_angle', 'Camera angle'],
+      ['other', 'Other']
+    ],
+    looks_good: [
+      ['normal_print', 'Normal print'],
+      ['normal_idle', 'Normal idle'],
+      ['normal_purge_supports', 'Normal purge/supports'],
+      ['other', 'Other']
+    ]
+  };
+
+  function feedbackLabelText(label) {
+    const map = { looks_good: 'Looks Good', looks_bad: 'Looks Bad', false_alarm: 'False Alarm' };
+    return map[label] || String(label || 'Feedback').replace(/_/g, ' ');
+  }
+
+  function hideFeedbackReasons() {
+    const panel = $('#aiFeedbackReasons');
+    if (!panel) return;
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+  }
+
+  async function saveFeedbackReason(meta, reasonKey, reasonText, button) {
+    const panel = $('#aiFeedbackReasons');
+    const printerId = meta?.printerId || document.body.dataset.printerId;
+    if (!printerId) return toast('No printer configured for feedback reason.', 'warn');
+    const text = String(reasonText || '').trim();
+    if (!text) return toast('Pick or enter a reason first.', 'warn');
+    setButtonBusy(button, true, 'Saving...');
+    try {
+      const payload = {
+        sample_id: meta?.sampleId || null,
+        feedback_timestamp: meta?.feedbackTimestamp || null,
+        label: meta?.label || '',
+        reason: text,
+        reason_key: reasonKey || ''
+      };
+      await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback/reason`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      toast(`Feedback reason saved: ${text}`, 'success', 3600);
+      if (panel) {
+        panel.innerHTML = `<div class="ai-feedback-reason-saved">Reason saved: <strong>${esc(text)}</strong></div>`;
+        setTimeout(hideFeedbackReasons, 2600);
+      }
+    } catch (err) {
+      toast(err.message, 'error', 7000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function showFeedbackReasons(label, data) {
+    const panel = $('#aiFeedbackReasons');
+    if (!panel) return;
+    const chips = FEEDBACK_REASON_CHIPS[label] || FEEDBACK_REASON_CHIPS.looks_good;
+    const sampleId = data?.learning?.id || data?.learning?.sample_id || null;
+    const feedbackTimestamp = data?.feedback?.timestamp || null;
+    const meta = {
+      label,
+      printerId: document.body.dataset.printerId,
+      sampleId,
+      feedbackTimestamp
+    };
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+      <div class="ai-feedback-reason-head">
+        <div><strong>Optional training reason</strong><span>${esc(feedbackLabelText(label))} was saved. Add a quick reason to make future learning less dumb.</span></div>
+        <button class="button ghost tiny" type="button" data-feedback-reason-skip>Skip</button>
+      </div>
+      <div class="ai-feedback-reason-chips">
+        ${chips.map(([key, text]) => `<button class="button secondary tiny ai-feedback-reason-chip" type="button" data-reason-key="${esc(key)}" data-reason-text="${esc(text)}">${esc(text)}</button>`).join('')}
+      </div>
+      <div class="ai-feedback-reason-custom">
+        <input type="text" id="aiFeedbackReasonCustom" maxlength="240" placeholder="Optional custom reason/note">
+        <button class="button secondary tiny" type="button" data-feedback-reason-custom-save>Save note</button>
+      </div>
+    `;
+    $('[data-feedback-reason-skip]', panel)?.addEventListener('click', hideFeedbackReasons);
+    $$('.ai-feedback-reason-chip', panel).forEach(chip => {
+      chip.addEventListener('click', async () => {
+        const key = chip.dataset.reasonKey || '';
+        const text = chip.dataset.reasonText || chip.textContent || '';
+        if (key === 'other') {
+          const input = $('#aiFeedbackReasonCustom');
+          if (input) {
+            input.focus();
+            input.placeholder = 'Type the other reason, then Save note';
+          }
+          return;
+        }
+        await saveFeedbackReason(meta, key, text, chip);
+      });
+    });
+    $('[data-feedback-reason-custom-save]', panel)?.addEventListener('click', async (ev) => {
+      const input = $('#aiFeedbackReasonCustom');
+      await saveFeedbackReason(meta, 'custom', input?.value || '', ev.currentTarget);
+    });
+  }
+
   function initDashboard() {
     initDashboardAccordions();
     initGcodeThumbnailModal();
@@ -480,6 +600,7 @@
           const outcome = data?.interpretation?.outcome ? ` · ${String(data.interpretation.outcome).replace(/_/g, ' ')}` : '';
           const supMsg = data?.suppression ? ' · similar warnings muted for this print' : '';
           toast(`Portal AI feedback saved${frameMsg}${outcome}${supMsg}`, data?.frame?.captured ? 'success' : 'warn', data?.suppression ? 6500 : 4500);
+          showFeedbackReasons(label, data);
         } catch (err) {
           toast(err.message, 'error', 7000);
         } finally {

@@ -1071,6 +1071,14 @@ class AIFeedbackRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class AIFeedbackReasonRequest(BaseModel):
+    sample_id: Optional[int] = None
+    feedback_timestamp: Optional[float] = None
+    label: str = ""
+    reason: str
+    reason_key: str = ""
+
+
 class LearningResetRequest(BaseModel):
     delete_samples: bool = False
 
@@ -2337,6 +2345,63 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
     learn_msg = "; learning=sqlite" if learning_result.get("inserted") else ""
     log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
     return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
+
+
+@app.post("/api/printers/{printer_id}/ai/feedback/reason")
+async def api_ai_feedback_reason(printer_id: str, body: AIFeedbackReasonRequest):
+    """Attach an optional reason chip/note to a previously saved feedback sample.
+
+    The main feedback button saves immediately. This endpoint lets the UI add a
+    lightweight reason afterward without blocking the original feedback flow.
+    """
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    reason = str(body.reason or "").strip()[:240]
+    reason_key = str(body.reason_key or "").strip()[:80]
+    if not reason:
+        raise HTTPException(status_code=400, detail="Reason is required")
+
+    update_result: dict[str, Any] = {"ok": False, "updated": False, "enabled": False}
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    if bool(ai_cfg.get("ai_feedback_learning_enabled", True)):
+        try:
+            update_result = await asyncio.to_thread(
+                ai_learning.update_feedback_reason,
+                body.sample_id,
+                printer_id,
+                reason,
+                reason_key,
+                body.label,
+                body.feedback_timestamp,
+            )
+            update_result["enabled"] = True
+        except Exception as exc:
+            update_result = {"ok": False, "updated": False, "enabled": True, "error": str(exc)}
+            log("warning", f"AI feedback reason SQLite update failed: {exc}", "portal_ai", printer=printer_id)
+
+    event = {
+        "schema": "cc2-ai-feedback-reason-v1",
+        "kind": "feedback_reason_update",
+        "printer_id": printer_id,
+        "label": str(body.label or "unknown"),
+        "reason": reason,
+        "reason_key": reason_key,
+        "feedback_timestamp": body.feedback_timestamp,
+        "learning_sample_id": body.sample_id,
+        "timestamp": time.time(),
+        "sqlite_update": update_result,
+    }
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with (DATA_DIR / "ai_feedback.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    except Exception as exc:
+        event["persist_error"] = str(exc)
+        log("warning", f"AI feedback reason JSONL append failed: {exc}", "portal_ai", printer=printer_id)
+
+    log("info", f"Portal AI feedback reason saved: {body.label} -> {reason}", "portal_ai", printer=printer_id, label=body.label, reason_key=reason_key)
+    return {"ok": True, "reason": {"text": reason, "key": reason_key}, "learning": update_result, "event": event}
 
 
 @app.get("/api/printers/{printer_id}/status")

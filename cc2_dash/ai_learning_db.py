@@ -285,6 +285,95 @@ def insert_feedback_sample(sample: dict[str, Any]) -> dict[str, Any]:
         return {"inserted": True, "duplicate": False, "id": sample_id}
 
 
+
+def update_feedback_reason(
+    sample_id: int | None,
+    printer_id: str,
+    reason: str,
+    reason_key: str = "",
+    label: str = "",
+    feedback_timestamp: float | None = None,
+) -> dict[str, Any]:
+    """Attach an optional user-selected reason/note to an existing feedback sample.
+
+    Feedback labels are saved immediately so the dashboard never blocks on a second
+    prompt. This helper lets the optional reason chip update the structured SQLite
+    row afterward while preserving the original raw payload for audit/debugging.
+    """
+    ensure_database()
+    reason = str(reason or "").strip()[:240]
+    reason_key = str(reason_key or "").strip()[:80]
+    label = str(label or "").strip()
+    if not reason:
+        return {"ok": False, "updated": False, "error": "empty_reason"}
+
+    with connect() as conn:
+        row = None
+        if sample_id:
+            row = conn.execute(
+                "SELECT * FROM feedback_samples WHERE id=? AND printer_id=? LIMIT 1",
+                (int(sample_id), printer_id),
+            ).fetchone()
+        if row is None and feedback_timestamp is not None:
+            # Fallback for older clients: match by ISO timestamp derived from the
+            # JSONL epoch plus printer/label, newest first. Timestamps are usually
+            # exact because sample_from_feedback_row uses the same epoch value.
+            try:
+                created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(feedback_timestamp)))
+            except Exception:
+                created_at = ""
+            if created_at:
+                row = conn.execute(
+                    """
+                    SELECT * FROM feedback_samples
+                    WHERE printer_id=? AND created_at=? AND (?='' OR feedback_label=?)
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (printer_id, created_at, label, label),
+                ).fetchone()
+        if row is None:
+            return {"ok": False, "updated": False, "error": "sample_not_found"}
+
+        raw = row["raw_json"]
+        try:
+            raw_obj = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
+        except Exception:
+            raw_obj = {"raw_json_parse_error": True, "raw_json_previous": raw}
+        if not isinstance(raw_obj, dict):
+            raw_obj = {"raw_json_previous": raw_obj}
+
+        raw_obj["note"] = reason
+        raw_obj["reason"] = reason
+        raw_obj["reason_key"] = reason_key
+        raw_obj["reason_updated_at"] = _now_iso()
+        snapshot = raw_obj.get("snapshot")
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+            raw_obj["snapshot"] = snapshot
+        snapshot["note"] = reason
+        snapshot["reason"] = reason
+        snapshot["reason_key"] = reason_key
+        ctx = snapshot.get("client_context")
+        if not isinstance(ctx, dict):
+            ctx = {}
+            snapshot["client_context"] = ctx
+        ctx["feedback_reason"] = reason
+        ctx["feedback_reason_key"] = reason_key
+
+        conn.execute(
+            "UPDATE feedback_samples SET feedback_note=?, raw_json=? WHERE id=?",
+            (reason, json.dumps(raw_obj, ensure_ascii=False, default=str), int(row["id"])),
+        )
+        log_event(
+            "feedback_reason_updated",
+            printer_id=printer_id,
+            message=f"Feedback sample {int(row['id'])} reason saved: {reason}",
+            conn=conn,
+            raw={"id": int(row["id"]), "label": row["feedback_label"], "reason_key": reason_key, "reason": reason},
+        )
+        return {"ok": True, "updated": True, "id": int(row["id"]), "reason": reason, "reason_key": reason_key}
+
+
 def fetch_samples(printer_id: str, limit: int = 500) -> list[dict[str, Any]]:
     ensure_database()
     limit = max(1, min(int(limit or 500), 5000))

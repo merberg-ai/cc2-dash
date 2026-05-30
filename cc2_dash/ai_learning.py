@@ -209,6 +209,10 @@ def record_feedback_row(row: dict[str, Any]) -> dict[str, Any]:
     return db.insert_feedback_sample(sample)
 
 
+def update_feedback_reason(sample_id: int | None, printer_id: str, reason: str, reason_key: str = "", label: str = "", feedback_timestamp: float | None = None) -> dict[str, Any]:
+    return db.update_feedback_reason(sample_id, printer_id, reason, reason_key=reason_key, label=label, feedback_timestamp=feedback_timestamp)
+
+
 def rebuild_profile(printer_id: str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = cfg or {}
     ai_cfg = cfg.get("portal_ai", {}) if isinstance(cfg.get("portal_ai"), dict) else {}
