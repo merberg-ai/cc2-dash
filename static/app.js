@@ -1646,9 +1646,12 @@
     const saveMenu = $('#saveMenuButton');
     if (saveMenu) saveMenu.addEventListener('click', async () => {
       cfg.features = cfg.features || {};
+      cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
+      cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
+      cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
       setButtonBusy(saveMenu, true, 'Saving...');
       try { await api('/api/config', { method:'POST', body:JSON.stringify({ config: cfg }) }); toast('Menu settings saved. Reloading...', 'success'); setTimeout(()=>location.reload(), 500); }
       catch (err) { toast(err.message, 'error'); }
@@ -1737,9 +1740,12 @@
       const showThumb = $('#dashboardShowGcodeThumbnail');
       if (showThumb) cfg.dashboard.show_gcode_thumbnail = !!showThumb.checked;
 
+      cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
+      cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
+      cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
 
       cfg.kiosk.refresh_interval_seconds = Number($('#kioskRefreshInterval')?.value || 3);
       cfg.kiosk.camera_fit = $('#kioskCameraFit')?.value || 'contain';

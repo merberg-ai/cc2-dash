@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.45-blue)
+![Version](https://img.shields.io/badge/version-1.2.46-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.45 ai-training-review-page
+1.2.46 configurable-navigation
 ```
 
 Major current capabilities:
@@ -117,6 +117,7 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Collapsible dashboard sections.
 - Saved dashboard accordion state per printer.
 - Compact build/version chips in the header.
+- Configurable top navigation visibility for Portal, Files, Filament, Kiosk, AI Training, and Logs.
 - `/health` and `/api/version` diagnostics.
 
 ### Printer discovery and pairing
@@ -1142,6 +1143,16 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.46 configurable navigation
+
+- Added Menu / Features toggles for every top navigation item except Dash and Settings.
+- Portal, Files, Filament, Kiosk, AI Training, and Logs can now be shown or hidden from Settings without disabling their underlying routes.
+- Dash and Settings remain pinned so the dashboard and configuration page cannot be hidden accidentally.
+- Kiosk top-nav Portal/Logs links now respect the same navigation visibility settings.
+- Footer Console link now respects the Logs visibility setting.
+- Updated config defaults/migration to preserve existing File Manager and Filament Manager hidden-by-default behavior.
+- No AI scoring, learning, printer command, or safety behavior changes.
 
 ### v1.2.45 AI Training review page
 

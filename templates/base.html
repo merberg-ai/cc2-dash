@@ -35,10 +35,12 @@
       </a>
       <nav class="topnav">
         <a href="/" class="navlink">Dash</a>
-        {% if printer %}
-        <a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open the Elegoo web portal in a new tab">Portal</a>
-        {% else %}
-        <a href="/setup" class="navlink">Portal</a>
+        {% if cfg.features.portal_menu_enabled|default(true) %}
+          {% if printer %}
+          <a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open the Elegoo web portal in a new tab">Portal</a>
+          {% else %}
+          <a href="/setup" class="navlink">Portal</a>
+          {% endif %}
         {% endif %}
         {% if cfg.features.file_manager_enabled %}<a href="/files" class="navlink">Files</a>{% endif %}
         {% if cfg.features.filament_manager_enabled %}<a href="/filaments" class="navlink">Filament</a>{% endif %}
@@ -46,8 +48,8 @@
           {% if printer %}<a href="{{ printer.kiosk_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open Kiosk camera view in a new tab">Kiosk</a>{% else %}<a href="/setup" class="navlink">Kiosk</a>{% endif %}
         {% endif %}
         <a href="/settings" class="navlink">Settings</a>
-        <a href="/ai-training" class="navlink">AI Training</a>
-        <a href="/logs" class="navlink">Logs</a>
+        {% if cfg.features.ai_training_menu_enabled|default(true) %}<a href="/ai-training" class="navlink">AI Training</a>{% endif %}
+        {% if cfg.features.logs_menu_enabled|default(true) %}<a href="/logs" class="navlink">Logs</a>{% endif %}
       </nav>
     </header>
 
@@ -60,8 +62,10 @@
       <span>cc2-dash v{{ version }}</span>
       <span>•</span>
       <a href="/settings">Settings</a>
+      {% if cfg.features.logs_menu_enabled|default(true) %}
       <span>•</span>
       <a href="/logs">Console</a>
+      {% endif %}
     </footer>
     {% endif %}
   </div>

@@ -69,7 +69,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     return data
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "config_version": 4,
+    "config_version": 5,
     "app": {
         "name": "cc2-dash",
         "bind_host": "0.0.0.0",
@@ -99,9 +99,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "printers": {},
     "features": {
+        "portal_menu_enabled": True,
         "file_manager_enabled": False,
         "filament_manager_enabled": False,
         "kiosk_enabled": True,
+        "ai_training_menu_enabled": True,
+        "logs_menu_enabled": True,
     },
     "kiosk": {
         "refresh_interval_seconds": 3,
@@ -298,6 +301,9 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         # its top-nav entry by default. Older saved configs inherited the prior
         # True default, so migrate once; users can re-enable it from Settings.
         features = cfg.setdefault("features", {})
+        features.setdefault("portal_menu_enabled", True)
+        features.setdefault("ai_training_menu_enabled", True)
+        features.setdefault("logs_menu_enabled", True)
         if old_version < 2:
             features["file_manager_enabled"] = False
         # v1.2.28: Filament Manager is still experimental. Keep the route and
@@ -307,7 +313,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
             features["filament_manager_enabled"] = False
         dashboard = cfg.setdefault("dashboard", {})
         dashboard.setdefault("show_gcode_thumbnail", True)
-        cfg["config_version"] = 4
+        cfg["config_version"] = 5
     except Exception:
         pass
     try:
@@ -333,7 +339,10 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         pass
     try:
         features = cfg.setdefault("features", {})
+        features.setdefault("portal_menu_enabled", True)
         features.setdefault("kiosk_enabled", True)
+        features.setdefault("ai_training_menu_enabled", True)
+        features.setdefault("logs_menu_enabled", True)
         kiosk = cfg.setdefault("kiosk", {})
         kiosk.setdefault("refresh_interval_seconds", 3)
         kiosk.setdefault("camera_fit", "contain")

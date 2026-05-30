@@ -29,9 +29,9 @@
       </a>
       <nav class="kiosk-nav" aria-label="Kiosk navigation">
         <a href="/" class="navlink">Dash</a>
-        {% if printer %}<a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer">Portal</a>{% endif %}
+        {% if cfg.features.portal_menu_enabled|default(true) and printer %}<a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer">Portal</a>{% endif %}
         <a href="/settings" class="navlink">Settings</a>
-        <a href="/logs" class="navlink">Logs</a>
+        {% if cfg.features.logs_menu_enabled|default(true) %}<a href="/logs" class="navlink">Logs</a>{% endif %}
       </nav>
     </header>
     {% endif %}
