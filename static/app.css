@@ -472,6 +472,22 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
   min-height:2rem;
   padding:.42rem .58rem;
 }
+
+/* v1.2.42: make optional feedback training controls readable across themes */
+.ai-feedback-reasons .button.ghost,
+.ai-feedback-reason-chip,
+.ai-feedback-reason-custom .button {
+  background: color-mix(in srgb, var(--cc2-danger) 42%, #12080c);
+  border: 1px solid color-mix(in srgb, var(--cc2-danger) 70%, var(--cc2-border));
+  color: #fff;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--cc2-danger) 16%, transparent);
+}
+.ai-feedback-reasons .button.ghost:hover,
+.ai-feedback-reason-chip:hover,
+.ai-feedback-reason-custom .button:hover {
+  background: color-mix(in srgb, var(--cc2-danger) 56%, #12080c);
+  color: #fff;
+}
 .ai-feedback-reason-custom {
   display:grid;
   grid-template-columns:1fr auto;

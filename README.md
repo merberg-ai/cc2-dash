@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.41-blue)
+![Version](https://img.shields.io/badge/version-1.2.42-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.41 recent-feedback-samples
+1.2.42 feedback-ui-polish
 ```
 
 Major current capabilities:
@@ -1124,6 +1124,13 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.42 feedback UI polish
+
+- Fixed optional Portal AI feedback training reason controls so they remain readable across themes instead of appearing as white-on-white buttons.
+- Reason chips, skip, and custom note save controls now use a dark red danger-style treatment with white text.
+- Printer Manager in Settings now loads collapsed by default, matching the other Settings panels.
+- No AI scoring, learning, printer command, or safety behavior changes.
 
 ### v1.2.41 recent feedback samples
 
