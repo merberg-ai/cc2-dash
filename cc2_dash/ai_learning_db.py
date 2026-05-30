@@ -390,31 +390,74 @@ def fetch_samples(printer_id: str, limit: int = 500) -> list[dict[str, Any]]:
     return [row_to_dict(r) or {} for r in rows]
 
 
-def fetch_recent_samples(printer_id: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+def _sample_filters(
+    printer_id: str | None = None,
+    outcome: str | None = None,
+    label: str | None = None,
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if printer_id:
+        clauses.append("printer_id=?")
+        params.append(str(printer_id))
+    if outcome:
+        clauses.append("outcome=?")
+        params.append(str(outcome))
+    if label:
+        clauses.append("feedback_label=?")
+        params.append(str(label))
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    return where, params
+
+
+def count_recent_samples(
+    printer_id: str | None = None,
+    outcome: str | None = None,
+    label: str | None = None,
+) -> int:
+    ensure_database()
+    where, params = _sample_filters(printer_id, outcome, label)
+    with connect() as conn:
+        row = conn.execute(f"SELECT COUNT(*) AS c FROM feedback_samples{where}", params).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def fetch_recent_samples(
+    printer_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    outcome: str | None = None,
+    label: str | None = None,
+) -> list[dict[str, Any]]:
     ensure_database()
     limit = max(1, min(int(limit or 50), 500))
     offset = max(0, int(offset or 0))
+    where, params = _sample_filters(printer_id, outcome, label)
+    params.extend([limit, offset])
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM feedback_samples
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        ).fetchall()
+    return [row_to_dict(r) or {} for r in rows]
+
+
+def get_sample(sample_id: int, printer_id: str | None = None) -> dict[str, Any] | None:
+    ensure_database()
     with connect() as conn:
         if printer_id:
-            rows = conn.execute(
-                """
-                SELECT * FROM feedback_samples
-                WHERE printer_id=?
-                ORDER BY created_at DESC, id DESC
-                LIMIT ? OFFSET ?
-                """,
-                (printer_id, limit, offset),
-            ).fetchall()
+            row = conn.execute(
+                "SELECT * FROM feedback_samples WHERE id=? AND printer_id=? LIMIT 1",
+                (int(sample_id), printer_id),
+            ).fetchone()
         else:
-            rows = conn.execute(
-                """
-                SELECT * FROM feedback_samples
-                ORDER BY created_at DESC, id DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            ).fetchall()
-    return [row_to_dict(r) or {} for r in rows]
+            row = conn.execute("SELECT * FROM feedback_samples WHERE id=? LIMIT 1", (int(sample_id),)).fetchone()
+    return row_to_dict(row)
 
 
 def list_printer_ids() -> list[str]:

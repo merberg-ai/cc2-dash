@@ -1392,3 +1392,143 @@ body.kiosk-page .camera-placeholder span:last-child {
   .ai-learning-metric-name { grid-column:1 / -1; }
 }
 .ai-learning-thresholds { display:flex; flex-direction:column; gap:.45rem; }
+
+/* v1.2.41: lightweight recent AI feedback sample review */
+.ai-feedback-sample-controls {
+  width:min(100%, 42rem);
+  display:flex;
+  flex-wrap:wrap;
+  gap:.4rem;
+  justify-content:flex-end;
+  align-items:center;
+}
+.ai-feedback-sample-controls .compact-select {
+  width:auto;
+  min-width:8.25rem;
+}
+.ai-feedback-samples-panel {
+  display:flex;
+  flex-direction:column;
+  gap:.55rem;
+  margin-top:.65rem;
+}
+.ai-feedback-sample-card {
+  display:grid;
+  grid-template-columns:5.3rem minmax(0, 1fr);
+  gap:.65rem;
+  background:var(--cc2-card-soft);
+  border:1px solid var(--cc2-border);
+  border-radius:.85rem;
+  padding:.62rem;
+  overflow:hidden;
+}
+.ai-feedback-sample-card.good { border-color:color-mix(in srgb, var(--cc2-success) 34%, var(--cc2-border)); }
+.ai-feedback-sample-card.warn { border-color:color-mix(in srgb, var(--cc2-warning) 38%, var(--cc2-border)); }
+.ai-feedback-sample-card.bad { border-color:color-mix(in srgb, var(--cc2-danger) 34%, var(--cc2-border)); }
+.ai-feedback-sample-thumb {
+  display:grid;
+  place-items:center;
+  width:100%;
+  aspect-ratio:1 / 1;
+  border-radius:.68rem;
+  overflow:hidden;
+  background:color-mix(in srgb, var(--cc2-card) 78%, transparent);
+  border:1px solid var(--cc2-border);
+  color:var(--cc2-muted);
+  font-size:.72rem;
+  text-align:center;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+.ai-feedback-sample-thumb img {
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+}
+.ai-feedback-sample-thumb.empty { padding:.35rem; }
+.ai-feedback-sample-body {
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:.42rem;
+}
+.ai-feedback-sample-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:.55rem;
+}
+.ai-feedback-sample-head strong {
+  display:block;
+  font-family:var(--font-heading);
+  font-size:.92rem;
+}
+.ai-feedback-sample-head small,
+.ai-feedback-sample-reason,
+.ai-feedback-sample-meta,
+.ai-feedback-sample-metrics,
+.ai-feedback-sample-flags {
+  color:var(--cc2-muted);
+  font-size:.78rem;
+  line-height:1.35;
+}
+.ai-feedback-sample-outcome {
+  flex:0 0 auto;
+  border:1px solid var(--cc2-border);
+  border-radius:999px;
+  padding:.22rem .48rem;
+  font-family:var(--font-number);
+  font-size:.68rem;
+  font-weight:900;
+  white-space:nowrap;
+  color:var(--cc2-muted);
+  background:color-mix(in srgb, var(--cc2-card) 78%, transparent);
+}
+.ai-feedback-sample-outcome.good { color:var(--cc2-success); border-color:color-mix(in srgb, var(--cc2-success) 42%, var(--cc2-border)); }
+.ai-feedback-sample-outcome.warn { color:var(--cc2-warning); border-color:color-mix(in srgb, var(--cc2-warning) 42%, var(--cc2-border)); }
+.ai-feedback-sample-outcome.bad { color:var(--cc2-danger); border-color:color-mix(in srgb, var(--cc2-danger) 42%, var(--cc2-border)); }
+.ai-feedback-sample-reason {
+  color:var(--cc2-text);
+  font-weight:700;
+}
+.ai-feedback-sample-reason.muted,
+.ai-feedback-sample-metrics.muted { color:var(--cc2-muted); font-weight:500; }
+.ai-feedback-sample-meta,
+.ai-feedback-sample-metrics {
+  display:flex;
+  flex-wrap:wrap;
+  gap:.32rem .65rem;
+}
+.ai-feedback-sample-meta span,
+.ai-feedback-sample-metrics span {
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.ai-feedback-sample-meta b,
+.ai-feedback-sample-metrics b {
+  color:var(--cc2-text);
+  font-weight:900;
+}
+.ai-feedback-sample-flags {
+  display:flex;
+  flex-wrap:wrap;
+  gap:.28rem;
+}
+.ai-feedback-sample-flags span {
+  border:1px solid var(--cc2-border);
+  background:color-mix(in srgb, var(--cc2-card) 76%, transparent);
+  border-radius:999px;
+  padding:.13rem .42rem;
+  font-family:var(--font-number);
+  font-size:.68rem;
+}
+.ai-feedback-samples-note { margin-top:.55rem; }
+@media (max-width: 620px) {
+  .ai-feedback-sample-controls { justify-content:stretch; }
+  .ai-feedback-sample-controls .compact-select,
+  .ai-feedback-sample-controls .button { width:100%; }
+  .ai-feedback-sample-card { grid-template-columns:4.4rem minmax(0, 1fr); }
+  .ai-feedback-sample-head { flex-direction:column; align-items:flex-start; }
+}

@@ -88,6 +88,7 @@ from .cc2.runtime import Cc2PrinterRuntime
 from .cc2.state import seconds_to_hms
 from .ai import portal_ai
 from . import ai_learning
+from . import ai_learning_db
 from .build_info import get_build_info
 from .camera_proxy import camera_proxy_config, camera_relays, rewrite_camera_urls
 from .feedback_learning import (
@@ -2216,6 +2217,94 @@ async def api_ai_feedback_suppressions(printer_id: str | None = None):
     return {"ok": True, "count": len(items), "suppressions": items}
 
 
+def _json_maybe(value: Any, fallback: Any = None) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return fallback
+        try:
+            return json.loads(raw)
+        except Exception:
+            return fallback
+    return fallback
+
+
+def _feedback_frame_path(frame_path: str | None) -> Path | None:
+    raw = str(frame_path or "").strip()
+    if not raw:
+        return None
+    try:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = DATA_DIR / candidate
+        candidate = candidate.resolve()
+        root = (DATA_DIR / "ai_feedback_frames").resolve()
+        if candidate != root and root not in candidate.parents:
+            return None
+        if not candidate.exists() or not candidate.is_file():
+            return None
+        return candidate
+    except Exception:
+        return None
+
+
+def _public_learning_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    raw_obj = _json_maybe(sample.get("raw_json"), {})
+    snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+    reason = str(sample.get("feedback_note") or raw_obj.get("reason") or snapshot.get("reason") or raw_obj.get("note") or snapshot.get("note") or "").strip()
+    reason_key = str(raw_obj.get("reason_key") or snapshot.get("reason_key") or "").strip() if isinstance(raw_obj, dict) else ""
+    flags = _json_maybe(sample.get("triggered_flags"), [])
+    if isinstance(flags, str):
+        flags = [flags]
+    if not isinstance(flags, list):
+        flags = []
+    sample_id = int(sample.get("id") or 0)
+    frame_path = str(sample.get("frame_path") or "").strip()
+    has_frame = bool(_feedback_frame_path(frame_path))
+    return {
+        "id": sample_id,
+        "created_at": sample.get("created_at"),
+        "printer_id": sample.get("printer_id"),
+        "feedback_label": sample.get("feedback_label"),
+        "feedback_note": reason,
+        "reason": reason,
+        "reason_key": reason_key,
+        "outcome": sample.get("outcome"),
+        "ai_was_warning": bool(sample.get("ai_was_warning")),
+        "user_says_failure": bool(sample.get("user_says_failure")),
+        "file_name": sample.get("file_name"),
+        "print_stage": sample.get("print_stage"),
+        "progress_percent": sample.get("progress_percent"),
+        "risk_score": sample.get("risk_score"),
+        "severity": sample.get("severity"),
+        "confidence": sample.get("confidence"),
+        "vision_state": sample.get("vision_state"),
+        "dark_luma": sample.get("dark_luma"),
+        "contrast": sample.get("contrast"),
+        "edge_density": sample.get("edge_density"),
+        "edge_delta": sample.get("edge_delta"),
+        "triggered_flags": [str(x) for x in flags if str(x).strip()],
+        "suppression_match": bool(sample.get("suppression_match")),
+        "model_name": sample.get("model_name"),
+        "prompt_version": sample.get("prompt_version"),
+        "frame_path": frame_path,
+        "has_frame": has_frame,
+        "frame_url": f"/api/ai/learning/samples/{sample_id}/frame" if sample_id and has_frame else None,
+        "has_raw_json": bool(sample.get("raw_json")),
+    }
+
+
+def _clean_sample_filter(value: str | None, allowed: set[str] | None = None) -> str | None:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"all", "any", "*"}:
+        return None
+    return text if allowed is None or text in allowed else None
+
+
 @app.get("/api/ai/learning/status")
 async def api_ai_learning_status():
     cfg = load_config()
@@ -2266,14 +2355,81 @@ async def api_printer_ai_learning_reset(printer_id: str, body: LearningResetRequ
     return {"ok": True, "result": result, "profile": profile}
 
 
+@app.get("/api/ai/learning/samples")
+async def api_ai_learning_samples(
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    printer_id: str | None = None,
+    outcome: str | None = None,
+    label: str | None = None,
+):
+    cfg = load_config()
+    known = set(ai_learning.known_printer_ids(cfg))
+    pid = _clean_sample_filter(printer_id)
+    if pid and pid not in known:
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    outcome_filter = _clean_sample_filter(outcome, {"true_positive", "false_positive", "false_negative", "true_negative"})
+    label_filter = _clean_sample_filter(label, {"looks_good", "looks_bad", "false_alarm"})
+    rows, total = await asyncio.gather(
+        asyncio.to_thread(ai_learning_db.fetch_recent_samples, pid, limit, offset, outcome_filter, label_filter),
+        asyncio.to_thread(ai_learning_db.count_recent_samples, pid, outcome_filter, label_filter),
+    )
+    samples = [_public_learning_sample(row) for row in rows]
+    return {
+        "ok": True,
+        "count": len(samples),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(samples) < total,
+        "filters": {"printer_id": pid, "outcome": outcome_filter, "label": label_filter},
+        "printer_ids": sorted(known),
+        "samples": samples,
+    }
+
+
+@app.get("/api/ai/learning/samples/{sample_id}/frame")
+async def api_ai_learning_sample_frame(sample_id: int):
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Feedback sample not found")
+    path = _feedback_frame_path(sample.get("frame_path"))
+    if not path:
+        raise HTTPException(status_code=404, detail="Feedback frame not found")
+    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
+
+
 @app.get("/api/printers/{printer_id}/ai/learning/samples")
-async def api_printer_ai_learning_samples(printer_id: str, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)):
+async def api_printer_ai_learning_samples(
+    printer_id: str,
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    outcome: str | None = None,
+    label: str | None = None,
+):
     cfg = load_config()
     if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
         raise HTTPException(status_code=404, detail="Printer not configured")
-    from . import ai_learning_db
-    samples = await asyncio.to_thread(ai_learning_db.fetch_recent_samples, printer_id, limit, offset)
-    return {"ok": True, "printer_id": printer_id, "count": len(samples), "limit": limit, "offset": offset, "samples": samples}
+    outcome_filter = _clean_sample_filter(outcome, {"true_positive", "false_positive", "false_negative", "true_negative"})
+    label_filter = _clean_sample_filter(label, {"looks_good", "looks_bad", "false_alarm"})
+    rows, total = await asyncio.gather(
+        asyncio.to_thread(ai_learning_db.fetch_recent_samples, printer_id, limit, offset, outcome_filter, label_filter),
+        asyncio.to_thread(ai_learning_db.count_recent_samples, printer_id, outcome_filter, label_filter),
+    )
+    samples = [_public_learning_sample(row) for row in rows]
+    return {
+        "ok": True,
+        "printer_id": printer_id,
+        "count": len(samples),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(samples) < total,
+        "filters": {"printer_id": printer_id, "outcome": outcome_filter, "label": label_filter},
+        "samples": samples,
+    }
+
 
 @app.post("/api/printers/{printer_id}/ai/feedback")
 async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):

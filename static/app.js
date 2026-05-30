@@ -1283,6 +1283,146 @@
     }
   }
 
+
+  function fmtFeedbackTime(value) {
+    if (!value) return '-';
+    try {
+      const d = new Date(value);
+      if (!Number.isFinite(d.getTime())) return String(value);
+      return d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    } catch { return String(value); }
+  }
+
+  function labelText(value) {
+    const map = { looks_good:'Looks Good', looks_bad:'Looks Bad', false_alarm:'False Alarm' };
+    return map[String(value || '')] || String(value || '-').replaceAll('_', ' ');
+  }
+
+  function outcomeText(value) {
+    const map = { true_positive:'True +', false_positive:'False +', false_negative:'False -', true_negative:'True -' };
+    return map[String(value || '')] || String(value || '-').replaceAll('_', ' ');
+  }
+
+  function outcomeTone(value) {
+    const v = String(value || '').toLowerCase();
+    if (v === 'true_positive' || v === 'false_negative') return 'bad';
+    if (v === 'false_positive') return 'warn';
+    if (v === 'true_negative') return 'good';
+    return 'neutral';
+  }
+
+  function metricBit(label, value, digits = 2) {
+    if (value === null || value === undefined || value === '') return '';
+    const n = Number(value);
+    const display = Number.isFinite(n) ? fmtLearningNumber(n, digits) : value;
+    return `<span><b>${esc(label)}</b> ${esc(display)}</span>`;
+  }
+
+  function syncAiFeedbackPrinterOptions(printerIds = []) {
+    const select = $('#aiFeedbackSamplesPrinter');
+    if (!select) return;
+    const current = select.value;
+    const ids = new Set();
+    Object.keys(cfg?.printers || {}).forEach(id => ids.add(id));
+    (printerIds || []).forEach(id => id && ids.add(String(id)));
+    select.innerHTML = '<option value="">All printers</option>' + Array.from(ids).sort().map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+    if (current && ids.has(current)) select.value = current;
+  }
+
+  function renderAiFeedbackSample(sample) {
+    sample = sample || {};
+    const flags = Array.isArray(sample.triggered_flags) ? sample.triggered_flags.filter(Boolean).slice(0, 6) : [];
+    const flagsHtml = flags.length ? `<div class="ai-feedback-sample-flags">${flags.map(f => `<span>${esc(f)}</span>`).join('')}</div>` : '';
+    const metrics = [
+      metricBit('risk', sample.risk_score, 0),
+      metricBit('sev', sample.severity, 0),
+      metricBit('conf', sample.confidence, 0),
+      metricBit('luma', sample.dark_luma, 1),
+      metricBit('contrast', sample.contrast, 1),
+      metricBit('edge', sample.edge_density, 3),
+      metricBit('delta', sample.edge_delta, 3),
+    ].filter(Boolean).join('');
+    const thumb = sample.frame_url
+      ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>`
+      : '<div class="ai-feedback-sample-thumb empty">no frame</div>';
+    const stageBits = [
+      sample.print_stage ? String(sample.print_stage).replaceAll('_', ' ') : '',
+      sample.progress_percent !== null && sample.progress_percent !== undefined ? `${fmtLearningNumber(sample.progress_percent, 1)}%` : '',
+      sample.vision_state ? String(sample.vision_state).replaceAll('_', ' ') : '',
+      sample.suppression_match ? 'suppression match' : '',
+    ].filter(Boolean).join(' · ');
+    const reason = sample.reason || sample.feedback_note || '';
+    return `
+      <article class="ai-feedback-sample-card ${esc(outcomeTone(sample.outcome))}">
+        ${thumb}
+        <div class="ai-feedback-sample-body">
+          <div class="ai-feedback-sample-head">
+            <div>
+              <strong>${esc(labelText(sample.feedback_label))}</strong>
+              <small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown printer')}</small>
+            </div>
+            <span class="ai-feedback-sample-outcome ${esc(outcomeTone(sample.outcome))}">${esc(outcomeText(sample.outcome))}</span>
+          </div>
+          ${reason ? `<div class="ai-feedback-sample-reason">${esc(reason)}</div>` : '<div class="ai-feedback-sample-reason muted">No reason note saved.</div>'}
+          <div class="ai-feedback-sample-meta">
+            ${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}
+            ${stageBits ? `<span><b>stage</b> ${esc(stageBits)}</span>` : ''}
+          </div>
+          ${metrics ? `<div class="ai-feedback-sample-metrics">${metrics}</div>` : '<div class="ai-feedback-sample-metrics muted">No metrics captured for this sample.</div>'}
+          ${flagsHtml}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderAiFeedbackSamples(data) {
+    const panel = $('#aiFeedbackSamplesPanel');
+    const summary = $('#aiFeedbackSamplesSummary');
+    if (!panel) return;
+    syncAiFeedbackPrinterOptions(data?.printer_ids || []);
+    const samples = data?.samples || [];
+    if (summary) {
+      const total = Number(data?.total || 0);
+      const shown = Number(data?.count || samples.length || 0);
+      const filters = data?.filters || {};
+      const bits = [
+        `${shown}/${total} shown`,
+        filters.printer_id ? `printer ${filters.printer_id}` : 'all printers',
+        filters.outcome ? String(filters.outcome).replaceAll('_', ' ') : '',
+        filters.label ? labelText(filters.label) : '',
+      ].filter(Boolean);
+      summary.textContent = bits.join(' · ');
+    }
+    if (!samples.length) {
+      panel.innerHTML = '<div class="ai-learning-empty">No feedback samples match these filters yet.</div>';
+      return;
+    }
+    panel.innerHTML = samples.map(renderAiFeedbackSample).join('');
+  }
+
+  async function refreshAiFeedbackSamples(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    try {
+      const params = new URLSearchParams();
+      const limit = $('#aiFeedbackSamplesLimit')?.value || '25';
+      params.set('limit', limit);
+      const printerId = $('#aiFeedbackSamplesPrinter')?.value || '';
+      const outcome = $('#aiFeedbackSamplesOutcome')?.value || '';
+      const label = $('#aiFeedbackSamplesLabel')?.value || '';
+      if (printerId) params.set('printer_id', printerId);
+      if (outcome) params.set('outcome', outcome);
+      if (label) params.set('label', label);
+      const data = await api(`/api/ai/learning/samples?${params.toString()}`);
+      renderAiFeedbackSamples(data);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiFeedbackSamplesSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
   function ollamaBaseUrlFromSettings() {
     return $('#aiOllamaBaseUrl')?.value?.trim() || cfg?.portal_ai?.ollama_base_url || 'http://localhost:11434';
   }
@@ -1678,7 +1818,18 @@
       }
     });
 
+    const refreshAiFeedbackSamplesButton = $('#refreshAiFeedbackSamplesButton');
+    if (refreshAiFeedbackSamplesButton) refreshAiFeedbackSamplesButton.addEventListener('click', async () => {
+      try { await refreshAiFeedbackSamples(refreshAiFeedbackSamplesButton); }
+      catch (err) { toast(err.message, 'error', 9000); }
+    });
+    ['aiFeedbackSamplesPrinter', 'aiFeedbackSamplesOutcome', 'aiFeedbackSamplesLabel', 'aiFeedbackSamplesLimit'].forEach(id => {
+      const el = $('#' + id);
+      if (el) el.addEventListener('change', () => refreshAiFeedbackSamples().catch(err => toast(err.message, 'error', 9000)));
+    });
+
     refreshAiLearningStatus().catch(() => {});
+    refreshAiFeedbackSamples().catch(() => {});
 
     const saveAI = $('#saveAIButton');
     if (saveAI) saveAI.addEventListener('click', async () => {

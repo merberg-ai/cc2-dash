@@ -398,6 +398,41 @@
       <div class="ai-learning-panel" id="aiLearningPanel">
         <div class="ai-learning-empty">Loading AI learning profiles...</div>
       </div>
+
+      <div class="setting-row tall ai-learning-warning-row">
+        <div><strong>Recent AI feedback samples</strong><small id="aiFeedbackSamplesSummary">Recent feedback samples have not been loaded yet.</small></div>
+        <div class="setting-controls ai-feedback-sample-controls">
+          <select id="aiFeedbackSamplesPrinter" class="input compact-select">
+            <option value="">All printers</option>
+          </select>
+          <select id="aiFeedbackSamplesOutcome" class="input compact-select">
+            <option value="">All outcomes</option>
+            <option value="true_positive">True positive</option>
+            <option value="false_positive">False positive</option>
+            <option value="false_negative">False negative</option>
+            <option value="true_negative">True negative</option>
+          </select>
+          <select id="aiFeedbackSamplesLabel" class="input compact-select">
+            <option value="">All labels</option>
+            <option value="looks_good">Looks Good</option>
+            <option value="looks_bad">Looks Bad</option>
+            <option value="false_alarm">False Alarm</option>
+          </select>
+          <select id="aiFeedbackSamplesLimit" class="input compact-select">
+            <option value="10">Last 10</option>
+            <option value="25" selected>Last 25</option>
+            <option value="50">Last 50</option>
+          </select>
+          <button id="refreshAiFeedbackSamplesButton" class="button secondary tiny" type="button">Refresh Samples</button>
+        </div>
+      </div>
+      <div class="ai-feedback-samples-panel" id="aiFeedbackSamplesPanel">
+        <div class="ai-learning-empty">Loading recent feedback samples...</div>
+      </div>
+      <div class="ai-learning-safety-note ai-feedback-samples-note">
+        Recent samples are a lightweight review view for labels, reasons, outcomes, metrics, and captured feedback frames. Images stay on disk; SQLite stores paths and metrics only.
+      </div>
+
       <div class="ai-learning-safety-note">
         <strong>Safety limits:</strong> learning does not change your manual threshold settings. Suggest-only mode does not alter live detection. Save All before rebuilding if you changed learning limits/mode. Portal AI remains advisory and will not pause, cancel, resume, load/unload filament, or control jobs automatically.
       </div>

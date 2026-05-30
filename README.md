@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.40-blue)
+![Version](https://img.shields.io/badge/version-1.2.41-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.40 feedback-reason-chips
+1.2.41 recent-feedback-samples
 ```
 
 Major current capabilities:
@@ -74,7 +74,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Portal AI telemetry checks | Working, advisory-only |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror, and outcome interpretation |
+| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror, outcome interpretation, and recent-sample review in Settings |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
@@ -571,6 +571,9 @@ Review endpoints:
 GET /api/ai/feedback/recent
 GET /api/ai/feedback/stats
 GET /api/ai/feedback/suppressions
+GET /api/ai/learning/samples
+GET /api/ai/learning/samples/<sample_id>/frame
+GET /api/printers/<printer_id>/ai/learning/samples
 POST /api/printers/<printer_id>/ai/feedback/reason
 ```
 
@@ -631,7 +634,8 @@ Settings → Portal AI now includes **AI Feedback Learning** controls for:
 - choosing which modifier types may be suggested;
 - rebuilding profiles;
 - resetting learned tuning without deleting JSONL feedback;
-- viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds.
+- viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds;
+- reviewing recent feedback samples with filters for printer, label, outcome, metrics, reasons, and captured feedback frames.
 
 > [!IMPORTANT]
 > Learned effective thresholds are wired into live vision checks only when `auto_adjust_safe` is explicitly selected. `off` and `suggest_only` remain advisory/no-op for live scoring. Feedback reason chips enrich future samples but still do not let AI control print jobs automatically.
@@ -1120,6 +1124,16 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.41 recent feedback samples
+
+- Added a lightweight Recent AI Feedback Samples review panel under Settings → Portal AI.
+- Added filters for printer, interpreted outcome, feedback label, and sample count.
+- Shows timestamp, printer, label, optional reason/note, outcome, file/stage/progress, risk/severity/confidence, local heuristic metrics, triggered flags, and captured feedback frame thumbnails/links when available.
+- Added global `GET /api/ai/learning/samples` with pagination/filter query parameters.
+- Enhanced `GET /api/printers/<printer_id>/ai/learning/samples` with the same lightweight public sample shape and filters.
+- Added `GET /api/ai/learning/samples/<sample_id>/frame` to safely serve captured feedback frames from `data/ai_feedback_frames/`.
+- Does not store image blobs in SQLite and does not change live AI scoring or printer-control behavior.
 
 ### v1.2.40 feedback reason chips
 
