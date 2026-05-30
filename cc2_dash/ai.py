@@ -23,7 +23,7 @@ def _text_contains(text: str, *needles: str) -> bool:
 
 
 class PortalAIDetector:
-    """Small explainable rule engine for cc2-dash-lite Portal AI.
+    """Small explainable rule engine for cc2-dash Portal AI.
 
     This intentionally starts boring and reliable: printer telemetry, MQTT freshness,
     temperature sanity, progress movement, and camera availability hints. Vision / OpenCV

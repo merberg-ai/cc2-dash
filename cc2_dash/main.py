@@ -97,7 +97,7 @@ from .feedback_learning import (
 )
 from .vision import vision_monitor
 
-app = FastAPI(title="cc2-dash-lite", version=__version__)
+app = FastAPI(title="cc2-dash", version=__version__)
 app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="static")
 ELEGEEGO_WEB_DIR = Path(__file__).resolve().parent / "elegoo_web"
 if ELEGEEGO_WEB_DIR.exists():
@@ -936,7 +936,7 @@ def _allowed_request(request: Request, cfg: dict) -> bool:
 async def lan_guard(request: Request, call_next):
     cfg = load_config()
     if not _allowed_request(request, cfg):
-        return JSONResponse({"ok": False, "error": "Client IP is not allowed by cc2-dash-lite network settings."}, status_code=403)
+        return JSONResponse({"ok": False, "error": "Client IP is not allowed by cc2-dash network settings."}, status_code=403)
     return await call_next(request)
 
 
@@ -1162,7 +1162,7 @@ async def portal(request: Request, printer: Optional[str] = None):
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Elegoo Portal - cc2-dash-lite</title>
+  <title>Elegoo Portal - cc2-dash</title>
   <style>
     html,body{{margin:0;height:100%;background:#111827;color:#e5e7eb;font-family:system-ui,sans-serif;}}
     .bar{{min-height:46px;display:flex;gap:12px;align-items:center;padding:0 14px;background:rgba(17,24,39,.94);border-bottom:1px solid rgba(148,163,184,.18);backdrop-filter:blur(12px);flex-wrap:wrap}}
@@ -1192,7 +1192,7 @@ async def portal_octo(printer: Optional[str] = None):
     html = f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Elegoo Live Portal - cc2-dash-lite</title>
+<title>Elegoo Live Portal - cc2-dash</title>
 <style>html,body{{margin:0;height:100%;background:#111827;color:#e5e7eb;font-family:system-ui,sans-serif;}}.bar{{min-height:46px;display:flex;gap:12px;align-items:center;padding:0 14px;background:rgba(17,24,39,.92);border-bottom:1px solid rgba(148,163,184,.18);backdrop-filter:blur(12px);flex-wrap:wrap}}.bar strong{{font-size:14px;white-space:nowrap}}.bar span{{color:#94a3b8;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.bar a{{color:#93c5fd;text-decoration:none;font-size:13px;white-space:nowrap}}iframe{{display:block;width:100%;height:calc(100vh - 47px);border:0;background:#202124;}}</style>
 </head><body><div class="bar"><strong>Elegoo live portal</strong><span>{pcfg.name} · MQTT WS bridge · {pcfg.host}:{pcfg.port}</span><a href="/">Back</a><a href="{app_url}" target="_blank">Open raw app</a><a href="/api/portal-probe?printer={pcfg.id}" target="_blank">Probe</a></div><iframe src="{app_url}" title="Elegoo live portal"></iframe></body></html>"""
     return HTMLResponse(html)
@@ -1219,12 +1219,12 @@ async def portal_fullscreen(printer: Optional[str] = None):
 
 @app.get("/oe-relay-static/elegoo-os-relay.js")
 async def oe_relay_js():
-    return HTMLResponse("console.log('[cc2-dash-lite] local oe relay stub loaded');", media_type="application/javascript")
+    return HTMLResponse("console.log('[cc2-dash] local oe relay stub loaded');", media_type="application/javascript")
 
 
 @app.get("/oe-relay-static/elegoo-os-relay.css")
 async def oe_relay_css():
-    return HTMLResponse("/* cc2-dash-lite local oe relay css stub */", media_type="text/css")
+    return HTMLResponse("/* cc2-dash local oe relay css stub */", media_type="text/css")
 
 
 @app.websocket("/ws/mqtt/{printer_id}")
@@ -2123,7 +2123,7 @@ async def api_action(action_id: str, req: ActionRequest | None = None):
     elif action_id == "cancel_print":
         method, params, timeout = STOP_PRINT, {}, 60.0
     elif action_id == "restart_camera":
-        # Wake/enable the webcam, then restart only the cc2-dash-lite relay.
+        # Wake/enable the webcam, then restart only the cc2-dash relay.
         # Do not create an extra direct browser-style camera stream here.
         try:
             await asyncio.to_thread(_send_command, pid, ENABLE_WEBCAM, webcam_params(True), False, 5.0)
@@ -2354,7 +2354,7 @@ async def api_canvas(printer_id: str):
 
 
 def _unwrap_command_payload(payload: Any) -> Any:
-    """Accept cc2-dash-lite command wrappers and raw firmware replies."""
+    """Accept cc2-dash command wrappers and raw firmware replies."""
     root = payload
     if isinstance(root, dict) and "result" in root:
         root = root.get("result")
@@ -3139,7 +3139,7 @@ if __name__ == "__main__":
 
     cfg = load_config()
     uvicorn.run(
-        "cc2_dash_lite.main:app",
+        "cc2_dash.main:app",
         host=cfg.get("app", {}).get("bind_host", "0.0.0.0"),
         port=int(cfg.get("app", {}).get("port", 8088)),
         reload=False,

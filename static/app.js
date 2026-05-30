@@ -534,7 +534,7 @@
       }
 
       setText('kioskTimeLeftBadge', `Left: ${st.time_left || '-'}`);
-      setText('kioskPrinterName', st.name || cfg?.app?.name || 'cc2-dash-lite');
+      setText('kioskPrinterName', st.name || cfg?.app?.name || 'cc2-dash');
       setText('kioskPrinterMeta', st.host || 'connected printer');
       setText('kioskFileName', st.file && st.file !== '-' ? st.file : (st.status_text || st.state || '-'));
       renderKioskCameraRelay(st.camera_relay || st.cameraRelay || {});
@@ -2087,7 +2087,7 @@
       const data = await printerApi(url);
       const pretty = JSON.stringify(unwrapCommand(data), null, 2);
       toast('File info loaded. Details printed to browser console.', 'success');
-      console.log('[cc2-dash-lite] file detail', name, pretty);
+      console.log('[cc2-dash] file detail', name, pretty);
       alert(`File details for ${name}:\n\n${pretty.slice(0, 1800)}${pretty.length > 1800 ? '\n\n…truncated; see browser console for full detail.' : ''}`);
     } catch (err) {
       toast('File detail failed: ' + err.message, 'error');
@@ -2181,7 +2181,7 @@
   function showHistoryInfo(item) {
     const name = historyNameOf(item);
     const pretty = JSON.stringify(item?.raw || item, null, 2);
-    console.log('[cc2-dash-lite] history detail', name, pretty);
+    console.log('[cc2-dash] history detail', name, pretty);
     alert(`Print history details for ${name}:\n\n${pretty.slice(0, 1800)}${pretty.length > 1800 ? '\n\n…truncated; see browser console for full detail.' : ''}`);
   }
 

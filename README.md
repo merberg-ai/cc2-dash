@@ -1,16 +1,16 @@
-# cc2-dash-lite
+# cc2-dash
 
 ![Version](https://img.shields.io/badge/version-1.2.33-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
 
-**cc2-dash-lite** is a lightweight local dashboard and portal shell for the **Elegoo Centauri Carbon 2 / CC2** ecosystem. It gives you a clean LAN dashboard, printer discovery and pairing, camera relay/fanout, a stock Elegoo portal bridge, optional Ollama-powered visual monitoring, feedback-aware AI review tools, kiosk mode, file/history helpers, CANVAS filament controls, and a themeable mobile-friendly UI.
+**cc2-dash** is a lightweight local dashboard and portal shell for the **Elegoo Centauri Carbon 2 / CC2** ecosystem. It gives you a clean LAN dashboard, printer discovery and pairing, camera relay/fanout, a stock Elegoo portal bridge, optional Ollama-powered visual monitoring, feedback-aware AI review tools, kiosk mode, file/history helpers, CANVAS filament controls, and a themeable mobile-friendly UI.
 
 It is designed for a Raspberry Pi-style board sitting on your trusted home network. Think: printer-room companion dashboard, not enterprise print-farm overlord.
 
 > [!WARNING]
-> **Private, home, hobbyist use only.** cc2-dash-lite is not designed, tested, or recommended for production environments, commercial print farms, safety-critical workflows, unattended remote operation, or any situation where missed detection, a failed command, or an incorrect AI result could cause damage. Keep physical access to your printer and use the stock printer controls as the final authority.
+> **Private, home, hobbyist use only.** cc2-dash is not designed, tested, or recommended for production environments, commercial print farms, safety-critical workflows, unattended remote operation, or any situation where missed detection, a failed command, or an incorrect AI result could cause damage. Keep physical access to your printer and use the stock printer controls as the final authority.
 
 > [!IMPORTANT]
 > This is an unofficial project. It is not affiliated with, endorsed by, or supported by Elegoo, OctoEverywhere, or any printer vendor. Firmware behavior can change. Some stock command paths behave differently across firmware versions.
@@ -25,7 +25,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 - [Current status](#current-status)
 - [Tested hardware and platform notes](#tested-hardware-and-platform-notes)
 - [Feature overview](#feature-overview)
-- [What cc2-dash-lite does not do](#what-cc2-dash-lite-does-not-do)
+- [What cc2-dash does not do](#what-cc2-dash-does-not-do)
 - [Install from GitHub on Raspberry Pi OS](#install-from-github-on-raspberry-pi-os)
 - [Run manually](#run-manually)
 - [Install as a systemd service](#install-as-a-systemd-service)
@@ -167,7 +167,7 @@ Command buttons are controlled by per-printer safety settings. Dangerous command
 - Bundled stock Elegoo-style portal page.
 - Local MQTT-over-WebSocket bridge.
 - Fullscreen portal route.
-- Portal camera rewrite shim that tries to route embedded camera views through cc2-dash-lite's camera relay.
+- Portal camera rewrite shim that tries to route embedded camera views through cc2-dash's camera relay.
 
 ### File and filament tools
 
@@ -196,7 +196,7 @@ Theme preview cards are available in first-run setup and Settings.
 
 ---
 
-## What cc2-dash-lite does not do
+## What cc2-dash does not do
 
 This matters, so here it is without the marketing fog machine:
 
@@ -227,14 +227,14 @@ sudo apt install -y git python3 python3-venv python3-pip
 Replace the URL below with your actual GitHub repository URL if different:
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-USER/cc2-dash-lite.git
-cd cc2-dash-lite
+git clone https://github.com/YOUR-GITHUB-USER/cc2-dash.git
+cd cc2-dash
 ```
 
 Example if you cloned from your own fork:
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-USER/cc2-dash-lite.git
+git clone https://github.com/YOUR-GITHUB-USER/cc2-dash.git
 ```
 
 ### 3. Make helper scripts executable
@@ -303,7 +303,7 @@ CC2_PORT=8090 ./run.sh
 
 ## Install as a systemd service
 
-For always-on use, install cc2-dash-lite as a background service:
+For always-on use, install cc2-dash as a background service:
 
 ```bash
 ./install.sh --service --port=8088
@@ -312,16 +312,16 @@ For always-on use, install cc2-dash-lite as a background service:
 Useful commands:
 
 ```bash
-sudo systemctl status cc2-dash-lite --no-pager
-sudo systemctl restart cc2-dash-lite
-sudo systemctl stop cc2-dash-lite
-sudo journalctl -u cc2-dash-lite -f
+sudo systemctl status cc2-dash --no-pager
+sudo systemctl restart cc2-dash
+sudo systemctl stop cc2-dash
+sudo journalctl -u cc2-dash -f
 ```
 
 The service runs:
 
 ```bash
-python -m uvicorn cc2_dash_lite.main:app --host 0.0.0.0 --port 8088
+python -m uvicorn cc2_dash.main:app --host 0.0.0.0 --port 8088
 ```
 
 ---
@@ -338,7 +338,7 @@ git pull
 If installed as a service:
 
 ```bash
-sudo systemctl restart cc2-dash-lite
+sudo systemctl restart cc2-dash
 ```
 
 If running manually, stop the old process and restart:
@@ -353,7 +353,7 @@ Your local runtime data lives in `data/`. Do not delete it unless you want to re
 
 ## First-run setup
 
-When no valid printer is configured, cc2-dash-lite opens the setup wizard.
+When no valid printer is configured, cc2-dash opens the setup wizard.
 
 Setup flow:
 
@@ -433,7 +433,7 @@ The CC2 camera can get cranky when too many things connect to it directly. The C
 
 How it works:
 
-1. cc2-dash-lite opens one upstream MJPEG connection to the printer camera.
+1. cc2-dash opens one upstream MJPEG connection to the printer camera.
 2. The latest frame is cached in memory.
 3. Browser clients receive a local MJPEG stream from the dashboard server.
 4. Portal AI and feedback capture use the cached/latest frame instead of opening extra direct camera connections.
@@ -553,7 +553,7 @@ data/ai_feedback_frames/<printer_id>/
 data/ai_feedback_suppressions.json
 ```
 
-When feedback is clicked, cc2-dash-lite tries to capture a fresh frame. If that fails, it falls back to the latest cached frame.
+When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame.
 
 Feedback is interpreted against what Portal AI believed at the time:
 
@@ -611,7 +611,7 @@ Stock command IDs used include:
 ```
 
 > [!CAUTION]
-> The stock firmware may not reliably generate/export timelapse videos even when the stock portal shows the UI. cc2-dash-lite includes a proxy for the stock `/download` flow, but it cannot fix firmware-side export failures.
+> The stock firmware may not reliably generate/export timelapse videos even when the stock portal shows the UI. cc2-dash includes a proxy for the stock `/download` flow, but it cannot fix firmware-side export failures.
 
 ---
 
@@ -675,7 +675,7 @@ Local MQTT WebSocket bridge:
 
 The bridge shuttles browser WebSocket MQTT frames to the printer's MQTT port, usually `1883`.
 
-The stock portal remains the fallback/reference view. If a cc2-dash-lite feature is experimental or firmware-specific, compare behavior against the stock portal.
+The stock portal remains the fallback/reference view. If a cc2-dash feature is experimental or firmware-specific, compare behavior against the stock portal.
 
 ---
 
@@ -684,7 +684,7 @@ The stock portal remains the fallback/reference view. If a cc2-dash-lite feature
 Themes live in:
 
 ```text
-cc2_dash_lite/themes.py
+cc2_dash/themes.py
 ```
 
 Current built-in themes:
@@ -897,8 +897,8 @@ Run:
 If using systemd:
 
 ```bash
-sudo systemctl status cc2-dash-lite --no-pager
-sudo journalctl -u cc2-dash-lite -f
+sudo systemctl status cc2-dash --no-pager
+sudo journalctl -u cc2-dash -f
 ```
 
 ### Browser cannot reach the dashboard
@@ -908,7 +908,7 @@ Check:
 1. Pi IP address.
 2. Port, default `8088`.
 3. Firewall/router rules.
-4. cc2-dash-lite access allowlist.
+4. cc2-dash access allowlist.
 5. Whether the service is running.
 
 ### Scan does not find the printer
@@ -959,7 +959,7 @@ That is expected. Current behavior is active-print-only monitoring. The loop sti
 
 ### File Manager video download/export fails
 
-If the stock Elegoo portal also fails, the problem is probably firmware-side. cc2-dash-lite includes the stock-style command path and download proxy, but it cannot force the printer firmware to generate a missing timelapse file.
+If the stock Elegoo portal also fails, the problem is probably firmware-side. cc2-dash includes the stock-style command path and download proxy, but it cannot force the printer firmware to generate a missing timelapse file.
 
 ### Filament sensor says unknown
 
@@ -1004,8 +1004,8 @@ Remove service plus `.venv` and `data/`:
 ## Project layout
 
 ```text
-cc2-dash-lite/
-├── cc2_dash_lite/
+cc2-dash/
+├── cc2_dash/
 │   ├── __init__.py
 │   ├── ai.py
 │   ├── build_info.py
@@ -1105,7 +1105,7 @@ cc2-dash-lite/
 
 ### v1.2.25 timelapse download proxy
 
-- Added cc2-dash-lite timelapse download proxy through the printer stock `/download` handler.
+- Added cc2-dash timelapse download proxy through the printer stock `/download` handler.
 - Converted export-returned video paths/tokens into dashboard download links.
 
 ### v1.2.24 stock-style file manager
@@ -1199,7 +1199,7 @@ No frontend build step is required for normal use.
 After edits, useful checks are:
 
 ```bash
-python -m compileall cc2_dash_lite
+python -m compileall cc2_dash
 python - <<'PY'
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path

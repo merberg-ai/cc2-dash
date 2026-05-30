@@ -1,4 +1,4 @@
-/* cc2-dash-lite camera relay shim for the embedded Elegoo portal.
+/* cc2-dash camera relay shim for the embedded Elegoo portal.
    Redirects common direct camera URLs through /api/printers/<id>/camera/stream
    so the stock UI does not open another upstream socket to printer:8080. */
 (function () {
@@ -64,5 +64,5 @@
     return oldSetAttribute.call(this, name, value);
   };
 
-  console.info('[cc2-dash-lite] camera relay shim active', { printerId, host, relay });
+  console.info('[cc2-dash] camera relay shim active', { printerId, host, relay });
 })();

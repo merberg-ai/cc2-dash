@@ -10,10 +10,10 @@ from typing import Any, Callable, Dict, Optional
 
 import paho.mqtt.client as mqtt
 
-from cc2_dash_lite.config import PrinterConfig
-from cc2_dash_lite.cc2.state import deep_merge, normalize_status
+from cc2_dash.config import PrinterConfig
+from cc2_dash.cc2.state import deep_merge, normalize_status
 
-LOG = logging.getLogger("cc2_dash_lite.cc2.client")
+LOG = logging.getLogger("cc2_dash.cc2.client")
 
 
 class CommandError(RuntimeError):

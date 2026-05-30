@@ -3,9 +3,9 @@ from __future__ import annotations
 import threading
 from typing import Dict, Optional
 
-from cc2_dash_lite.config import PrinterConfig, load_config, printer_dict_to_config
-from cc2_dash_lite.cc2.client import Cc2Client
-from cc2_dash_lite.logger import log
+from cc2_dash.config import PrinterConfig, load_config, printer_dict_to_config
+from cc2_dash.cc2.client import Cc2Client
+from cc2_dash.logger import log
 
 
 class LitePrinterRuntime:

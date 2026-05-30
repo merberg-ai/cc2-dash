@@ -163,7 +163,7 @@ class CameraRelay:
         backoff = 1.0
         buffer_limit = 6_000_000
         headers = {
-            "User-Agent": "cc2-dash-lite-camera-relay/" + __version__,
+            "User-Agent": "cc2-dash-camera-relay/" + __version__,
             "Accept": "multipart/x-mixed-replace,image/jpeg,*/*",
             "Cache-Control": "no-cache",
             "Connection": "close",
@@ -379,7 +379,7 @@ def rewrite_camera_urls(content: str, pcfg: PrinterConfig, printer_id: str | Non
     The stock portal bundle can refer to the CC2 camera by absolute URL, by
     protocol-relative URL, or by simple camera-ish paths. This keeps the portal
     from opening extra upstream camera sockets when it is rendered through
-    cc2-dash-lite.
+    cc2-dash.
     """
     pid = printer_id or pcfg.id
     relay = f"/api/printers/{pid}/camera/stream"

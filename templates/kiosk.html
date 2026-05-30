@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="{{ theme.colors.bg }}" />
-  <title>Kiosk - {{ printer.name if printer else cfg.app.name|default('cc2-dash-lite') }}</title>
+  <title>Kiosk - {{ printer.name if printer else cfg.app.name|default('cc2-dash') }}</title>
   <link rel="stylesheet" href="/static/app.css" />
   <style>
     :root {
@@ -23,7 +23,7 @@
       <a class="kiosk-brand" href="/" title="Back to dashboard">
         <span class="brand-icon kiosk-brand-icon">⬢</span>
         <span class="kiosk-brand-text">
-          <strong>{{ printer.name if printer else cfg.app.name|default('cc2-dash-lite') }}</strong>
+          <strong>{{ printer.name if printer else cfg.app.name|default('cc2-dash') }}</strong>
           <small id="kioskPrinterMeta">{{ printer.host if printer else 'setup required' }}</small>
         </span>
       </a>

@@ -215,7 +215,7 @@ class VisionMonitor:
                 log("warning", f"Camera relay unavailable for vision; falling back to direct camera grab: {exc}", "camera", printer=printer_id or pcfg.id)
 
         headers = {
-            "User-Agent": "cc2-dash-lite-vision",
+            "User-Agent": "cc2-dash-vision",
             "Accept": "multipart/x-mixed-replace,image/jpeg,*/*",
             "Cache-Control": "no-cache",
         }

@@ -71,7 +71,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
 DEFAULT_CONFIG: dict[str, Any] = {
     "config_version": 4,
     "app": {
-        "name": "cc2-dash-lite",
+        "name": "cc2-dash",
         "bind_host": "0.0.0.0",
         "port": 8088,
         "default_printer": None,
@@ -256,7 +256,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "status_dot_pulse": True,
     },
     "advanced": {
-        "adapter": "generic_elegoo_lite",
+        "adapter": "generic_elegoo",
         "request_timeout_seconds": 2.5,
         "portal_proxy_enabled": False,
         "command_endpoints": {},
@@ -389,7 +389,7 @@ def needs_setup(cfg: dict[str, Any] | None = None) -> bool:
     printers = cfg.get("printers") or {}
     if not cfg.get("app", {}).get("setup_complete") or not printers:
         return True
-    # Older cc2-dash-lite builds could save only host/URL. The CC2 MQTT bridge
+    # Older cc2-dash builds could save only host/URL. The CC2 MQTT bridge
     # needs both serial number and PIN/access code, so route back through setup
     # until at least one configured printer has pairing details.
     for p in printers.values():

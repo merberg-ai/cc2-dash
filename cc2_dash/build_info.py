@@ -78,7 +78,7 @@ def get_build_info() -> dict[str, Any]:
             dirty = False
 
     return {
-        "app": "cc2-dash-lite",
+        "app": "cc2-dash",
         "version": __version__,
         "git_commit": commit,
         "git_commit_short": commit_short,

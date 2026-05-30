@@ -10,4 +10,4 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
 fi
 
 cd "$APP_DIR"
-exec "$VENV_DIR/bin/python" -m uvicorn cc2_dash_lite.main:app --host 0.0.0.0 --port "$PORT"
+exec "$VENV_DIR/bin/python" -m uvicorn cc2_dash.main:app --host 0.0.0.0 --port "$PORT"

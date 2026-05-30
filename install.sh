@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cc2-dash-lite"
-SERVICE_NAME="cc2-dash-lite.service"
+APP_NAME="cc2-dash"
+SERVICE_NAME="cc2-dash.service"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$APP_DIR/.venv"
 PORT="${CC2_PORT:-8088}"
@@ -101,7 +101,7 @@ if [[ "$INSTALL_SERVICE" == "1" ]]; then
   stop_existing_service
   sudo tee "/etc/systemd/system/$SERVICE_NAME" >/dev/null <<SERVICE
 [Unit]
-Description=CC2 Dash Lite
+Description=CC2 Dash
 After=network-online.target
 Wants=network-online.target
 
@@ -111,7 +111,7 @@ User=$CURRENT_USER
 WorkingDirectory=$APP_DIR
 Environment=CC2_PORT=$PORT
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$VENV_DIR/bin/python -m uvicorn cc2_dash_lite.main:app --host 0.0.0.0 --port $PORT
+ExecStart=$VENV_DIR/bin/python -m uvicorn cc2_dash.main:app --host 0.0.0.0 --port $PORT
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15

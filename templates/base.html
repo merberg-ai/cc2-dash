@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="{{ theme.colors.bg }}" />
-  <title>{{ cfg.app.name|default('cc2-dash-lite') }}</title>
+  <title>{{ cfg.app.name|default('cc2-dash') }}</title>
   <link rel="stylesheet" href="/static/app.css" />
   <style>
     :root {
@@ -19,11 +19,11 @@
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
   <div class="app-shell">
     <header class="topbar fade-in">
-      <a class="brand" href="/" title="cc2-dash-lite v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_branch and build.git_branch != 'unknown' %} · branch {{ build.git_branch }}{% endif %}{% if build.git_dirty %} · dirty{% endif %}">
+      <a class="brand" href="/" title="cc2-dash v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_branch and build.git_branch != 'unknown' %} · branch {{ build.git_branch }}{% endif %}{% if build.git_dirty %} · dirty{% endif %}">
         <span class="brand-icon">⬢</span>
         <span class="brand-text">
           <span class="brand-title-row">
-            <strong>{{ cfg.app.name|default('cc2-dash-lite') }}</strong>
+            <strong>{{ cfg.app.name|default('cc2-dash') }}</strong>
             <span class="brand-printer">{{ printer.name if printer else 'setup required' }}</span>
           </span>
           <span class="brand-meta" aria-label="Build information">
@@ -56,7 +56,7 @@
 
     {% if cfg.dashboard.show_footer %}
     <footer class="footer fade-in">
-      <span>cc2-dash-lite v{{ version }}</span>
+      <span>cc2-dash v{{ version }}</span>
       <span>•</span>
       <a href="/settings">Settings</a>
       <span>•</span>

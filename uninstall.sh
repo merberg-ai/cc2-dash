@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cc2-dash-lite"
-SERVICE_NAME="cc2-dash-lite.service"
+APP_NAME="cc2-dash"
+SERVICE_NAME="cc2-dash.service"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PURGE=0
 REMOVE_APP=0
@@ -67,9 +67,9 @@ else
 fi
 
 if [[ "$KILL_LEFTOVERS" == "1" ]]; then
-  say "Checking for stray cc2-dash-lite uvicorn processes from this folder"
-  pkill -f "$APP_DIR/.venv/bin/python -m uvicorn cc2_dash_lite.main:app" 2>/dev/null || true
-  pkill -f "uvicorn cc2_dash_lite.main:app.*$APP_DIR" 2>/dev/null || true
+  say "Checking for stray cc2-dash uvicorn processes from this folder"
+  pkill -f "$APP_DIR/.venv/bin/python -m uvicorn cc2_dash.main:app" 2>/dev/null || true
+  pkill -f "uvicorn cc2_dash.main:app.*$APP_DIR" 2>/dev/null || true
   ok "Stray process cleanup attempted"
 fi
 
