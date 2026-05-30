@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.37-blue)
+![Version](https://img.shields.io/badge/version-1.2.38-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.37 dashboard-settings-polish
+1.2.38 layer-progress-unknown-total
 ```
 
 Major current capabilities:
@@ -1117,6 +1117,12 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.38 layer progress unknown-total polish
+
+- Updated dashboard layer display so printers that report current layer but not total layers now show `current/?` instead of only `current`.
+- Added `layer_total_missing` to print metrics/status payloads so the UI/API can clearly distinguish "known current layer, unknown total layer" from a simple single-value layer display.
+- No live AI, printer command, or learning behavior changes in this patch.
 
 ### v1.2.37 dashboard/settings polish
 

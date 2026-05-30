@@ -413,7 +413,7 @@
     const current = toLayerInt(status?.layer_current ?? status?.current_layer ?? status?.currentLayer);
     const total = toLayerInt(status?.layer_total ?? status?.total_layer ?? status?.totalLayers ?? status?.total_layer_count);
     if (current !== null && total !== null && total > 0) return `${current}/${total}`;
-    if (current !== null && current > 0) return String(current);
+    if (current !== null && current > 0) return `${current}/?`;
     if (total !== null && total > 0) return `-/${total}`;
     return status?.layer_progress || '-';
   }

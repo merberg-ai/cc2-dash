@@ -631,7 +631,10 @@ def _format_layer_progress(current: Any, total: Any) -> str:
     if cur is not None and tot is not None and tot > 0:
         return f"{cur}/{tot}"
     if cur is not None and cur > 0:
-        return str(cur)
+        # Firmware sometimes reports the current layer but not total layers.
+        # Show that honestly as current/? instead of making it look like
+        # we intentionally chose the single-layer display.
+        return f"{cur}/?"
     if tot is not None and tot > 0:
         return f"-/{tot}"
     return "-"
@@ -701,6 +704,7 @@ def _extract_print_metrics(snap: dict[str, Any] | None, normalized: dict[str, An
         "layer_total": total_layer,
         "layer_progress": _format_layer_progress(current_layer, total_layer),
         "layer_source": {"current": current_src, "total": total_src},
+        "layer_total_missing": current_layer not in (None, "") and total_layer in (None, ""),
         "filament_used": _format_filament_used(filament_used, filament_src),
         "filament_used_raw": filament_used,
         "filament_used_source": filament_src,
