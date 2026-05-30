@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.44-blue)
+![Version](https://img.shields.io/badge/version-1.2.45-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -38,6 +38,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 - [Portal AI and Ollama vision](#portal-ai-and-ollama-vision)
 - [AI feedback and false-alarm suppression](#ai-feedback-and-false-alarm-suppression)
 - [Persistent AI learning](#persistent-ai-learning)
+- [AI Training review page](#ai-training-review-page)
 - [File Manager](#file-manager)
 - [Filament Manager / CANVAS controls](#filament-manager--canvas-controls)
 - [Stock Elegoo portal bridge](#stock-elegoo-portal-bridge)
@@ -60,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.44 jsonl-feedback-import
+1.2.45 ai-training-review-page
 ```
 
 Major current capabilities:
@@ -74,7 +75,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Portal AI telemetry checks | Working, advisory-only |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, and recent-sample review in Settings |
+| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, recent-sample review, and AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
@@ -644,6 +645,21 @@ Settings → Portal AI now includes **AI Feedback Learning** controls for:
 
 ---
 
+
+## AI Training review page
+
+The `/ai-training` page is a lightweight local review console for Portal AI feedback samples. It is meant to make the SQLite learner inspectable without needing to SSH into the Pi or manually query the database.
+
+Current AI Training tools include:
+
+- Filter feedback samples by printer, label, and interpreted outcome.
+- Review captured feedback frame thumbnails when available.
+- Edit/relabel a sample's feedback label, interpreted outcome, and reason note.
+- Delete bad SQLite training samples while keeping the JSONL audit log and captured frame files intact.
+- Export a ZIP dataset containing public sample metadata, raw JSONL rows, and optionally captured frame files.
+
+The page does **not** train an Ollama model, upload data, or send commands to the printer. It only reviews and cleans local feedback/training records used by cc2-dash's lightweight heuristic learner.
+
 ## File Manager
 
 The File Manager is available but hidden by default.
@@ -1126,6 +1142,15 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.45 AI Training review page
+
+- Added `/ai-training`, a lightweight review/export page for Portal AI feedback samples.
+- Added sample review tools for relabeling feedback label, interpreted outcome, and reason/note.
+- Added SQLite sample deletion from the review set while keeping JSONL audit rows and frame files.
+- Added filtered dataset ZIP export with public metadata, raw JSONL rows, and optional captured frames.
+- Added navigation link for AI Training.
+- No changes to printer commands or AI advisory-only safety behavior.
 
 
 ### v1.2.44 JSONL feedback import

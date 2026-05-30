@@ -2952,6 +2952,197 @@
     }
   }
 
+
+
+  const aiTrainingState = { samples: [], selectedId: null, lastData: null };
+
+  function syncAiTrainingPrinterOptions(printerIds = []) {
+    const select = $('#aiTrainingPrinter');
+    if (!select) return;
+    const current = select.value;
+    const ids = new Set();
+    Object.keys(cfg?.printers || {}).forEach(id => ids.add(id));
+    (printerIds || []).forEach(id => id && ids.add(String(id)));
+    select.innerHTML = '<option value="">All printers</option>' + Array.from(ids).sort().map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+    if (current && ids.has(current)) select.value = current;
+  }
+
+  function sampleStageText(sample) {
+    return [
+      sample.print_stage ? String(sample.print_stage).replaceAll('_', ' ') : '',
+      sample.progress_percent !== null && sample.progress_percent !== undefined ? `${fmtLearningNumber(sample.progress_percent, 1)}%` : '',
+      sample.vision_state ? String(sample.vision_state).replaceAll('_', ' ') : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  function renderAiTrainingSampleCard(sample) {
+    sample = sample || {};
+    const tone = outcomeTone(sample.outcome);
+    const selected = Number(aiTrainingState.selectedId) === Number(sample.id);
+    const flags = Array.isArray(sample.triggered_flags) ? sample.triggered_flags.filter(Boolean).slice(0, 4) : [];
+    const metrics = [
+      sample.risk_score !== null && sample.risk_score !== undefined ? `risk ${fmtLearningNumber(sample.risk_score, 0)}` : '',
+      sample.severity !== null && sample.severity !== undefined ? `sev ${fmtLearningNumber(sample.severity, 0)}` : '',
+      sample.confidence !== null && sample.confidence !== undefined ? `conf ${fmtLearningNumber(sample.confidence, 0)}` : '',
+      sample.dark_luma !== null && sample.dark_luma !== undefined ? `luma ${fmtLearningNumber(sample.dark_luma, 1)}` : '',
+      sample.edge_density !== null && sample.edge_density !== undefined ? `edge ${fmtLearningNumber(sample.edge_density, 3)}` : '',
+    ].filter(Boolean);
+    const thumb = sample.frame_url ? `<span class="ai-training-thumb"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></span>` : '<span class="ai-training-thumb">no frame</span>';
+    const reason = sample.reason || sample.feedback_note || '';
+    return `
+      <button class="ai-training-sample-card ${esc(tone)} ${selected ? 'selected' : ''}" type="button" data-training-sample-id="${esc(sample.id)}">
+        ${thumb}
+        <span class="ai-training-sample-body">
+          <span class="ai-training-sample-head">
+            <span><strong>${esc(labelText(sample.feedback_label))}</strong><small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown')}</small></span>
+            <span class="ai-training-pill ${esc(tone)}">${esc(outcomeText(sample.outcome))}</span>
+          </span>
+          <span class="ai-training-note">${esc(reason || 'No reason note saved.')}</span>
+          <span class="ai-training-meta">${sample.file_name ? `<span>file ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span>${esc(sampleStageText(sample))}</span>` : ''}</span>
+          ${metrics.length ? `<span class="ai-training-metrics">${metrics.map(m => `<span>${esc(m)}</span>`).join('')}</span>` : ''}
+          ${flags.length ? `<span class="ai-training-flags">${flags.map(f => `<span>${esc(f)}</span>`).join('')}</span>` : ''}
+        </span>
+      </button>
+    `;
+  }
+
+  function renderAiTrainingSamples(data) {
+    const grid = $('#aiTrainingSamplesGrid');
+    const summary = $('#aiTrainingSummary');
+    if (!grid) return;
+    syncAiTrainingPrinterOptions(data?.printer_ids || []);
+    aiTrainingState.lastData = data || {};
+    aiTrainingState.samples = data?.samples || [];
+    if (summary) {
+      const filters = data?.filters || {};
+      summary.textContent = `${data?.count || 0}/${data?.total || 0} shown · ${filters.printer_id || 'all printers'}${filters.outcome ? ` · ${outcomeText(filters.outcome)}` : ''}${filters.label ? ` · ${labelText(filters.label)}` : ''}`;
+    }
+    if (!aiTrainingState.samples.length) {
+      grid.innerHTML = '<div class="ai-learning-empty">No feedback samples match these filters yet.</div>';
+      aiTrainingState.selectedId = null;
+      renderAiTrainingSelected(null);
+      return;
+    }
+    if (!aiTrainingState.samples.some(s => Number(s.id) === Number(aiTrainingState.selectedId))) {
+      aiTrainingState.selectedId = aiTrainingState.samples[0].id;
+    }
+    grid.innerHTML = aiTrainingState.samples.map(renderAiTrainingSampleCard).join('');
+    $$('[data-training-sample-id]', grid).forEach(btn => btn.addEventListener('click', () => {
+      aiTrainingState.selectedId = Number(btn.dataset.trainingSampleId);
+      renderAiTrainingSamples(aiTrainingState.lastData);
+      renderAiTrainingSelected(aiTrainingState.samples.find(s => Number(s.id) === Number(aiTrainingState.selectedId)));
+    }));
+    renderAiTrainingSelected(aiTrainingState.samples.find(s => Number(s.id) === Number(aiTrainingState.selectedId)));
+  }
+
+  function renderAiTrainingSelected(sample) {
+    const box = $('#aiTrainingSelected');
+    if (!box) return;
+    const save = $('#aiTrainingSaveReviewButton');
+    const del = $('#aiTrainingDeleteSampleButton');
+    if (!sample) {
+      box.className = 'ai-training-selected empty';
+      box.textContent = 'No sample selected.';
+      if (save) save.disabled = true;
+      if (del) del.disabled = true;
+      return;
+    }
+    if (save) save.disabled = false;
+    if (del) del.disabled = false;
+    box.className = 'ai-training-selected';
+    box.innerHTML = `
+      <div class="ai-feedback-sample-head"><div><strong>${esc(labelText(sample.feedback_label))}</strong><small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown printer')}</small></div><span class="ai-feedback-sample-outcome ${esc(outcomeTone(sample.outcome))}">${esc(outcomeText(sample.outcome))}</span></div>
+      ${sample.frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>` : ''}
+      <div class="ai-feedback-sample-meta"><span><b>ID</b> ${esc(sample.id)}</span>${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span><b>stage</b> ${esc(sampleStageText(sample))}</span>` : ''}</div>
+    `;
+    $('#aiTrainingReviewLabel').value = sample.feedback_label || 'looks_good';
+    $('#aiTrainingReviewOutcome').value = sample.outcome || '';
+    $('#aiTrainingReviewNote').value = sample.reason || sample.feedback_note || '';
+  }
+
+  function aiTrainingParams() {
+    const params = new URLSearchParams();
+    params.set('limit', $('#aiTrainingLimit')?.value || '50');
+    const printerId = $('#aiTrainingPrinter')?.value || '';
+    const outcome = $('#aiTrainingOutcome')?.value || '';
+    const label = $('#aiTrainingLabel')?.value || '';
+    if (printerId) params.set('printer_id', printerId);
+    if (outcome) params.set('outcome', outcome);
+    if (label) params.set('label', label);
+    return params;
+  }
+
+  async function refreshAiTrainingSamples(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    try {
+      const data = await api(`/api/ai/learning/samples?${aiTrainingParams().toString()}`);
+      renderAiTrainingSamples(data);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiTrainingSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function saveAiTrainingReview(button = null) {
+    const id = aiTrainingState.selectedId;
+    if (!id) return toast('Select a sample first.', 'warn');
+    setButtonBusy(button, true, 'Saving...');
+    try {
+      const body = {
+        feedback_label: $('#aiTrainingReviewLabel')?.value || '',
+        outcome: $('#aiTrainingReviewOutcome')?.value || '',
+        feedback_note: $('#aiTrainingReviewNote')?.value || '',
+        rebuild_profile: true,
+      };
+      await api(`/api/ai/learning/samples/${encodeURIComponent(id)}/review`, { method:'POST', body:JSON.stringify(body) });
+      setInlineStatus('aiTrainingReviewStatus', 'Review saved and profile rebuild requested.', 'good');
+      toast('Training sample review saved.', 'success');
+      await refreshAiTrainingSamples();
+    } catch (err) {
+      setInlineStatus('aiTrainingReviewStatus', err.message, 'bad');
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function deleteAiTrainingSample(button = null) {
+    const id = aiTrainingState.selectedId;
+    if (!id) return toast('Select a sample first.', 'warn');
+    if (!confirm(`Delete SQLite training sample ${id}? JSONL audit data and frame files are kept.`)) return;
+    setButtonBusy(button, true, 'Deleting...');
+    try {
+      await api(`/api/ai/learning/samples/${encodeURIComponent(id)}?rebuild_profile=true`, { method:'DELETE' });
+      setInlineStatus('aiTrainingReviewStatus', 'Sample deleted from SQLite learner. JSONL/frame files kept.', 'good');
+      toast('Training sample deleted from SQLite.', 'success');
+      aiTrainingState.selectedId = null;
+      await refreshAiTrainingSamples();
+    } catch (err) {
+      setInlineStatus('aiTrainingReviewStatus', err.message, 'bad');
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function exportAiTrainingDataset() {
+    const params = aiTrainingParams();
+    params.set('include_frames', $('#aiTrainingExportFrames')?.checked ? 'true' : 'false');
+    window.location.href = `/api/ai/learning/export?${params.toString()}`;
+  }
+
+  function initAiTraining() {
+    $('#aiTrainingRefreshButton')?.addEventListener('click', e => refreshAiTrainingSamples(e.currentTarget));
+    $('#aiTrainingExportButton')?.addEventListener('click', exportAiTrainingDataset);
+    $('#aiTrainingSaveReviewButton')?.addEventListener('click', e => saveAiTrainingReview(e.currentTarget));
+    $('#aiTrainingDeleteSampleButton')?.addEventListener('click', e => deleteAiTrainingSample(e.currentTarget));
+    ['aiTrainingPrinter','aiTrainingOutcome','aiTrainingLabel','aiTrainingLimit'].forEach(id => $('#' + id)?.addEventListener('change', () => refreshAiTrainingSamples().catch(()=>{})));
+    renderAiTrainingSelected(null);
+    refreshAiTrainingSamples().catch(err => toast(err.message, 'error'));
+  }
+
+
   function initFiles() {
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
     $('#refreshPrinterFilesButton')?.addEventListener('click', loadPrinterFiles);
@@ -2987,6 +3178,7 @@
   if (page === 'kiosk') initKiosk();
   if (page === 'setup') initSetup();
   if (page === 'settings') initSettings();
+  if (page === 'ai-training') initAiTraining();
   if (page === 'logs') initLogs();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();

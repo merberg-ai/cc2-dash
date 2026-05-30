@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block page_id %}ai-training{% endblock %}
+{% block content %}
+<section class="ai-training-page fade-in">
+  <div class="card ai-training-hero">
+    <div>
+      <p class="eyebrow">Portal AI training review</p>
+      <h1>AI Training</h1>
+      <p>Review recent feedback samples, relabel noisy data, delete bad SQLite samples, and export a lightweight dataset ZIP. JSONL audit logs and captured frame files are kept unless you remove them manually.</p>
+    </div>
+    <div class="ai-training-hero-actions">
+      <button class="button secondary" id="aiTrainingRefreshButton" type="button">Refresh Samples</button>
+      <button class="button primary" id="aiTrainingExportButton" type="button">Export Dataset ZIP</button>
+    </div>
+  </div>
+
+  <div class="card ai-training-toolbar">
+    <label>Printer
+      <select class="input compact-select" id="aiTrainingPrinter"><option value="">All printers</option></select>
+    </label>
+    <label>Outcome
+      <select class="input compact-select" id="aiTrainingOutcome">
+        <option value="">All outcomes</option>
+        <option value="true_positive">True positive</option>
+        <option value="false_positive">False positive</option>
+        <option value="false_negative">False negative</option>
+        <option value="true_negative">True negative</option>
+      </select>
+    </label>
+    <label>Label
+      <select class="input compact-select" id="aiTrainingLabel">
+        <option value="">All labels</option>
+        <option value="looks_good">Looks Good</option>
+        <option value="looks_bad">Looks Bad</option>
+        <option value="false_alarm">False Alarm</option>
+      </select>
+    </label>
+    <label>Count
+      <select class="input compact-select" id="aiTrainingLimit">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+    </label>
+    <label class="small-check"><input type="checkbox" id="aiTrainingExportFrames" checked> include frames in export</label>
+  </div>
+
+  <div class="ai-training-layout">
+    <div class="card ai-training-list-card">
+      <div class="card-header-row">
+        <div>
+          <h2>Samples</h2>
+          <p id="aiTrainingSummary" class="inline-status">Loading feedback samples...</p>
+        </div>
+      </div>
+      <div id="aiTrainingSamplesGrid" class="ai-training-grid">
+        <div class="ai-learning-empty">Loading...</div>
+      </div>
+    </div>
+
+    <aside class="card ai-training-review-card">
+      <h2>Review selected sample</h2>
+      <p class="ai-training-help">Select a sample to relabel, add/edit a reason note, or remove it from the SQLite learner. Deleting here does not delete the JSONL audit event or frame file.</p>
+      <div id="aiTrainingSelected" class="ai-training-selected empty">No sample selected.</div>
+      <div class="ai-training-review-form">
+        <label>Feedback label
+          <select class="input" id="aiTrainingReviewLabel">
+            <option value="looks_good">Looks Good</option>
+            <option value="looks_bad">Looks Bad</option>
+            <option value="false_alarm">False Alarm</option>
+          </select>
+        </label>
+        <label>Outcome
+          <select class="input" id="aiTrainingReviewOutcome">
+            <option value="">Auto from label + AI state</option>
+            <option value="true_positive">True positive</option>
+            <option value="false_positive">False positive</option>
+            <option value="false_negative">False negative</option>
+            <option value="true_negative">True negative</option>
+          </select>
+        </label>
+        <label>Reason / note
+          <textarea class="input" id="aiTrainingReviewNote" rows="4" placeholder="Optional reason or correction note"></textarea>
+        </label>
+        <div class="ai-training-review-actions">
+          <button class="button primary" id="aiTrainingSaveReviewButton" type="button">Save review</button>
+          <button class="button danger" id="aiTrainingDeleteSampleButton" type="button">Delete SQLite sample</button>
+        </div>
+        <p id="aiTrainingReviewStatus" class="inline-status"></p>
+      </div>
+    </aside>
+  </div>
+</section>
+{% endblock %}

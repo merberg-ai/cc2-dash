@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import ipaddress
 import json
 import shutil
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, quote, urlparse
@@ -1089,6 +1091,14 @@ class LearningImportRequest(BaseModel):
     limit: Optional[int] = None
 
 
+class LearningSampleReviewRequest(BaseModel):
+    feedback_label: Optional[str] = None
+    outcome: Optional[str] = None
+    feedback_note: Optional[str] = None
+    reason_key: Optional[str] = None
+    rebuild_profile: bool = True
+
+
 class OllamaPullRequest(BaseModel):
     model: str
     base_url: Optional[str] = None
@@ -1307,6 +1317,14 @@ async def setup(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings(request: Request):
     return templates.TemplateResponse("settings.html", view_context(request))
+
+
+@app.get("/ai-training", response_class=HTMLResponse)
+async def ai_training_page(request: Request):
+    cfg = load_config()
+    if needs_setup(cfg):
+        return RedirectResponse("/setup")
+    return templates.TemplateResponse("ai_training.html", view_context(request))
 
 
 @app.get("/logs", response_class=HTMLResponse)
@@ -2310,6 +2328,43 @@ def _clean_sample_filter(value: str | None, allowed: set[str] | None = None) -> 
     return text if allowed is None or text in allowed else None
 
 
+def _export_safe_name(value: Any, fallback: str = "sample") -> str:
+    text = str(value or fallback).strip().replace("\\", "_").replace("/", "_")
+    text = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in text)
+    return text[:90] or fallback
+
+
+def _training_export_zip(rows: list[dict[str, Any]], include_frames: bool = True) -> bytes:
+    buf = io.BytesIO()
+    public_rows = [_public_learning_sample(r) for r in rows]
+    manifest = {
+        "schema": "cc2-ai-training-export-v1",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "sample_count": len(public_rows),
+        "frames_included": bool(include_frames),
+        "note": "SQLite training review export. JSONL audit log remains stored separately on the device.",
+    }
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
+        zf.writestr("samples_public.json", json.dumps(public_rows, indent=2, ensure_ascii=False, default=str))
+        jsonl = "\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows) + ("\n" if rows else "")
+        zf.writestr("samples_raw.jsonl", jsonl)
+        if include_frames:
+            seen: set[str] = set()
+            for row in rows:
+                sample_id = int(row.get("id") or 0)
+                path = _feedback_frame_path(row.get("frame_path"))
+                if not path:
+                    continue
+                resolved = str(path.resolve())
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                suffix = path.suffix.lower() or ".jpg"
+                zf.write(path, f"frames/{sample_id}_{_export_safe_name(path.stem)}{suffix}")
+    return buf.getvalue()
+
+
 @app.get("/api/ai/learning/status")
 async def api_ai_learning_status():
     cfg = load_config()
@@ -2413,6 +2468,75 @@ async def api_ai_learning_sample_frame(sample_id: int):
         raise HTTPException(status_code=404, detail="Feedback frame not found")
     media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
     return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
+
+
+
+
+@app.post("/api/ai/learning/samples/{sample_id}/review")
+async def api_ai_learning_sample_review(sample_id: int, body: LearningSampleReviewRequest):
+    result = await asyncio.to_thread(
+        ai_learning_db.update_sample_review,
+        sample_id,
+        body.feedback_label,
+        body.outcome,
+        body.feedback_note,
+        body.reason_key,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Feedback sample not found")
+    if body.rebuild_profile:
+        sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+        printer_id = str((sample or {}).get("printer_id") or result.get("printer_id") or "")
+        if printer_id:
+            try:
+                await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, load_config())
+            except Exception as exc:
+                log("warning", f"AI learning profile rebuild after review failed: {exc}", "portal_ai", printer=printer_id)
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    return {"ok": True, "result": result, "sample": _public_learning_sample(sample or {})}
+
+
+@app.delete("/api/ai/learning/samples/{sample_id}")
+async def api_ai_learning_sample_delete(sample_id: int, rebuild_profile: bool = Query(True)):
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Feedback sample not found")
+    printer_id = str(sample.get("printer_id") or "")
+    result = await asyncio.to_thread(ai_learning_db.delete_sample, sample_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Feedback sample not found")
+    if rebuild_profile and printer_id:
+        try:
+            await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, load_config())
+        except Exception as exc:
+            log("warning", f"AI learning profile rebuild after sample delete failed: {exc}", "portal_ai", printer=printer_id)
+    return {"ok": True, "result": result}
+
+
+@app.get("/api/ai/learning/export")
+async def api_ai_learning_export(
+    limit: int = Query(5000, ge=1, le=5000),
+    printer_id: str | None = None,
+    outcome: str | None = None,
+    label: str | None = None,
+    include_frames: bool = Query(True),
+):
+    cfg = load_config()
+    known = set(ai_learning.known_printer_ids(cfg))
+    pid = _clean_sample_filter(printer_id)
+    if pid and pid not in known:
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    outcome_filter = _clean_sample_filter(outcome, {"true_positive", "false_positive", "false_negative", "true_negative"})
+    label_filter = _clean_sample_filter(label, {"looks_good", "looks_bad", "false_alarm"})
+    rows = await asyncio.to_thread(ai_learning_db.fetch_recent_samples, pid, limit, 0, outcome_filter, label_filter)
+    payload = await asyncio.to_thread(_training_export_zip, rows, include_frames)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    filename = f"cc2-dash-ai-training-{stamp}.zip"
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/printers/{printer_id}/ai/learning/samples")

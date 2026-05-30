@@ -460,6 +460,117 @@ def get_sample(sample_id: int, printer_id: str | None = None) -> dict[str, Any] 
     return row_to_dict(row)
 
 
+
+def _learning_outcome_for_label(label: str, ai_was_warning: bool) -> tuple[str, bool]:
+    label = str(label or "").strip().lower()
+    user_says_failure = label == "looks_bad"
+    if ai_was_warning and user_says_failure:
+        return "true_positive", user_says_failure
+    if ai_was_warning and not user_says_failure:
+        return "false_positive", user_says_failure
+    if not ai_was_warning and user_says_failure:
+        return "false_negative", user_says_failure
+    return "true_negative", user_says_failure
+
+
+def update_sample_review(
+    sample_id: int,
+    feedback_label: str | None = None,
+    outcome: str | None = None,
+    feedback_note: str | None = None,
+    reason_key: str | None = None,
+) -> dict[str, Any]:
+    """Relabel or annotate one training sample from the AI Training review UI."""
+    ensure_database()
+    allowed_labels = {"looks_good", "looks_bad", "false_alarm"}
+    allowed_outcomes = {"true_positive", "false_positive", "false_negative", "true_negative"}
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM feedback_samples WHERE id=? LIMIT 1", (int(sample_id),)).fetchone()
+        if row is None:
+            return {"ok": False, "updated": False, "error": "sample_not_found"}
+        current = row_to_dict(row) or {}
+        label = str(feedback_label or current.get("feedback_label") or "").strip().lower()
+        if label not in allowed_labels:
+            label = str(current.get("feedback_label") or "unknown")
+        ai_was_warning = bool(current.get("ai_was_warning"))
+        user_says_failure = bool(current.get("user_says_failure"))
+        if outcome and str(outcome).strip().lower() in allowed_outcomes:
+            new_outcome = str(outcome).strip().lower()
+            user_says_failure = label == "looks_bad"
+        else:
+            new_outcome, user_says_failure = _learning_outcome_for_label(label, ai_was_warning)
+
+        note = current.get("feedback_note") or ""
+        if feedback_note is not None:
+            note = str(feedback_note or "").strip()[:240]
+        reason_key = str(reason_key or "").strip()[:80]
+
+        raw = current.get("raw_json")
+        try:
+            raw_obj = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
+        except Exception:
+            raw_obj = {"raw_json_parse_error": True, "raw_json_previous": raw}
+        if not isinstance(raw_obj, dict):
+            raw_obj = {"raw_json_previous": raw_obj}
+        raw_obj["label"] = label
+        raw_obj["note"] = note
+        raw_obj["reason"] = note
+        if reason_key:
+            raw_obj["reason_key"] = reason_key
+        raw_obj["review_updated_at"] = _now_iso()
+        snapshot = raw_obj.get("snapshot")
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+            raw_obj["snapshot"] = snapshot
+        snapshot["label"] = label
+        snapshot["note"] = note
+        snapshot["reason"] = note
+        if reason_key:
+            snapshot["reason_key"] = reason_key
+        interp = snapshot.get("interpretation")
+        if not isinstance(interp, dict):
+            interp = {}
+            snapshot["interpretation"] = interp
+        interp["outcome"] = new_outcome
+        interp["ai_was_warning"] = ai_was_warning
+        interp["user_says_failure"] = user_says_failure
+
+        conn.execute(
+            """
+            UPDATE feedback_samples
+            SET feedback_label=?, feedback_note=?, outcome=?, user_says_failure=?, raw_json=?
+            WHERE id=?
+            """,
+            (label, note, new_outcome, 1 if user_says_failure else 0, json.dumps(raw_obj, ensure_ascii=False, default=str), int(sample_id)),
+        )
+        log_event(
+            "feedback_sample_reviewed",
+            printer_id=str(current.get("printer_id") or ""),
+            message=f"Feedback sample {int(sample_id)} reviewed/relabelled.",
+            conn=conn,
+            raw={"id": int(sample_id), "label": label, "outcome": new_outcome, "reason_key": reason_key, "note": note},
+        )
+        return {"ok": True, "updated": True, "id": int(sample_id), "feedback_label": label, "outcome": new_outcome, "feedback_note": note}
+
+
+def delete_sample(sample_id: int) -> dict[str, Any]:
+    """Delete one structured SQLite sample. JSONL audit log and frame files are intentionally kept."""
+    ensure_database()
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM feedback_samples WHERE id=? LIMIT 1", (int(sample_id),)).fetchone()
+        if row is None:
+            return {"ok": False, "deleted": False, "error": "sample_not_found"}
+        data = row_to_dict(row) or {}
+        conn.execute("DELETE FROM feedback_samples WHERE id=?", (int(sample_id),))
+        log_event(
+            "feedback_sample_deleted",
+            printer_id=str(data.get("printer_id") or ""),
+            message=f"Feedback sample {int(sample_id)} deleted from SQLite review set.",
+            conn=conn,
+            raw={"id": int(sample_id), "label": data.get("feedback_label"), "outcome": data.get("outcome"), "jsonl_kept": True, "frame_kept": True},
+        )
+        return {"ok": True, "deleted": True, "id": int(sample_id), "printer_id": data.get("printer_id")}
+
 def list_printer_ids() -> list[str]:
     ensure_database()
     with connect() as conn:
