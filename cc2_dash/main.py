@@ -84,9 +84,10 @@ from .cc2.commands import (
 # Import CommandError from the client module explicitly for clarity.
 from .cc2.client import CommandError
 from .cc2.discovery import discover
-from .cc2.runtime import LitePrinterRuntime
+from .cc2.runtime import Cc2PrinterRuntime
 from .cc2.state import seconds_to_hms
 from .ai import portal_ai
+from . import ai_learning
 from .build_info import get_build_info
 from .camera_proxy import camera_proxy_config, camera_relays, rewrite_camera_urls
 from .feedback_learning import (
@@ -103,7 +104,7 @@ ELEGEEGO_WEB_DIR = Path(__file__).resolve().parent / "elegoo_web"
 if ELEGEEGO_WEB_DIR.exists():
     app.mount("/elegoo", StaticFiles(directory=str(ELEGEEGO_WEB_DIR), html=True), name="elegoo")
 templates = Jinja2Templates(directory=str(APP_ROOT / "templates"))
-runtime = LitePrinterRuntime()
+runtime = Cc2PrinterRuntime()
 _AI_MONITOR_TASK: asyncio.Task | None = None
 _AI_MONITOR_STATE: dict[str, Any] = {
     "running": False,
@@ -896,6 +897,10 @@ class AIFeedbackRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class LearningResetRequest(BaseModel):
+    delete_samples: bool = False
+
+
 class OllamaPullRequest(BaseModel):
     model: str
     base_url: Optional[str] = None
@@ -1029,6 +1034,10 @@ async def _ai_monitor_loop() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    try:
+        ai_learning.ensure_database()
+    except Exception as exc:
+        log("warning", f"AI learning database initialization failed: {exc}", "portal_ai")
     runtime.start_all()
     camera_relays.configure_from_config(load_config())
     _start_ai_monitor()
@@ -1285,7 +1294,15 @@ async def mqtt_websocket_bridge(websocket: WebSocket, printer_id: str) -> None:
 @app.get("/health")
 async def health():
     cfg = load_config()
-    return {"ok": True, "version": __version__, "build": get_build_info(), "setup_required": needs_setup(cfg), "printers": len(cfg.get("printers") or {}), "camera_relays": camera_relays.status_all()}
+    return {
+        "ok": True,
+        "version": __version__,
+        "build": get_build_info(),
+        "setup_required": needs_setup(cfg),
+        "printers": len(cfg.get("printers") or {}),
+        "camera_relays": camera_relays.status_all(),
+        "ai_learning": ai_learning.db_health(),
+    }
 
 
 
@@ -1962,6 +1979,23 @@ def _read_feedback_rows(limit: int = 200) -> list[dict[str, Any]]:
     return rows
 
 
+async def _run_learning_rebuild(printer_id: str, cfg: dict[str, Any]) -> None:
+    try:
+        await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, cfg)
+    except Exception as exc:
+        log("warning", f"AI learning profile rebuild failed: {exc}", "portal_ai", printer=printer_id)
+
+
+def _schedule_learning_rebuild(printer_id: str, cfg: dict[str, Any]) -> None:
+    try:
+        asyncio.create_task(_run_learning_rebuild(printer_id, cfg))
+    except RuntimeError:
+        try:
+            ai_learning.rebuild_profile(printer_id, cfg)
+        except Exception as exc:
+            log("warning", f"AI learning profile rebuild failed: {exc}", "portal_ai", printer=printer_id)
+
+
 @app.get("/api/ai/feedback/recent")
 async def api_ai_feedback_recent(limit: int = Query(50, ge=1, le=500)):
     rows = _read_feedback_rows(limit)
@@ -1994,6 +2028,66 @@ async def api_ai_feedback_stats(limit: int = Query(500, ge=1, le=2000)):
 async def api_ai_feedback_suppressions(printer_id: str | None = None):
     items = current_suppressions(printer_id)
     return {"ok": True, "count": len(items), "suppressions": items}
+
+
+@app.get("/api/ai/learning/status")
+async def api_ai_learning_status():
+    cfg = load_config()
+    return await asyncio.to_thread(ai_learning.global_status, cfg)
+
+
+@app.post("/api/ai/learning/rebuild")
+async def api_ai_learning_rebuild():
+    cfg = load_config()
+    results = []
+    for pid in ai_learning.known_printer_ids(cfg):
+        results.append(await asyncio.to_thread(ai_learning.rebuild_profile, pid, cfg))
+    return {"ok": True, "count": len(results), "profiles": results}
+
+
+@app.post("/api/ai/learning/reset")
+async def api_ai_learning_reset(body: LearningResetRequest | None = None):
+    delete_samples = bool(body.delete_samples) if body else False
+    result = await asyncio.to_thread(ai_learning.reset_profile, None, delete_samples)
+    status = await asyncio.to_thread(ai_learning.global_status, load_config())
+    return {"ok": True, "result": result, "status": status}
+
+
+@app.get("/api/printers/{printer_id}/ai/learning")
+async def api_printer_ai_learning(printer_id: str):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    return await asyncio.to_thread(ai_learning.profile_status, printer_id, cfg)
+
+
+@app.post("/api/printers/{printer_id}/ai/learning/rebuild")
+async def api_printer_ai_learning_rebuild(printer_id: str):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    return await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, cfg)
+
+
+@app.post("/api/printers/{printer_id}/ai/learning/reset")
+async def api_printer_ai_learning_reset(printer_id: str, body: LearningResetRequest | None = None):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    delete_samples = bool(body.delete_samples) if body else False
+    result = await asyncio.to_thread(ai_learning.reset_profile, printer_id, delete_samples)
+    profile = await asyncio.to_thread(ai_learning.profile_status, printer_id, cfg)
+    return {"ok": True, "result": result, "profile": profile}
+
+
+@app.get("/api/printers/{printer_id}/ai/learning/samples")
+async def api_printer_ai_learning_samples(printer_id: str, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    from . import ai_learning_db
+    samples = await asyncio.to_thread(ai_learning_db.fetch_recent_samples, printer_id, limit, offset)
+    return {"ok": True, "printer_id": printer_id, "count": len(samples), "limit": limit, "offset": offset, "samples": samples}
 
 @app.post("/api/printers/{printer_id}/ai/feedback")
 async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
@@ -2050,10 +2144,21 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
         },
     }
     row = portal_ai.feedback(printer_id, body.label, body.note, training_snapshot)
+    learning_result: dict[str, Any] = {"enabled": False, "inserted": False}
+    if bool(ai_cfg.get("ai_feedback_learning_enabled", True)):
+        try:
+            learning_result = await asyncio.to_thread(ai_learning.record_feedback_row, row)
+            learning_result["enabled"] = True
+            if bool(ai_cfg.get("ai_learning_rebuild_on_feedback", True)) and learning_result.get("inserted"):
+                _schedule_learning_rebuild(printer_id, cfg)
+        except Exception as exc:
+            learning_result = {"enabled": True, "inserted": False, "error": str(exc)}
+            log("warning", f"AI learning feedback mirror failed: {exc}", "portal_ai", printer=printer_id)
     outcome = interpretation.get("outcome")
     sup_msg = "; suppression=active" if suppression else ""
-    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
-    return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression}
+    learn_msg = "; learning=sqlite" if learning_result.get("inserted") else ""
+    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
+    return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
 
 
 @app.get("/api/printers/{printer_id}/status")

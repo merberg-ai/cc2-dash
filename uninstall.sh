@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_NAME="cc2-dash"
 SERVICE_NAME="cc2-dash.service"
+LEGACY_SERVICE_NAME="cc2-dash-lite.service"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PURGE=0
 REMOVE_APP=0
@@ -35,36 +36,47 @@ ok() { printf '\033[1;32m[ok]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 have_systemctl() { command -v systemctl >/dev/null 2>&1; }
 unit_file_paths() {
+  local svc="${1:-$SERVICE_NAME}"
   printf '%s\n' \
-    "/etc/systemd/system/$SERVICE_NAME" \
-    "/lib/systemd/system/$SERVICE_NAME" \
-    "/usr/lib/systemd/system/$SERVICE_NAME"
+    "/etc/systemd/system/$svc" \
+    "/lib/systemd/system/$svc" \
+    "/usr/lib/systemd/system/$svc"
 }
 service_exists() {
   have_systemctl && systemctl list-unit-files --full --all "$SERVICE_NAME" 2>/dev/null | grep -q "^$SERVICE_NAME" && return 0
   have_systemctl && systemctl list-units --full --all "$SERVICE_NAME" 2>/dev/null | grep -q "^$SERVICE_NAME" && return 0
-  for p in $(unit_file_paths); do [[ -e "$p" ]] && return 0; done
+  for p in $(unit_file_paths "$SERVICE_NAME"); do [[ -e "$p" ]] && return 0; done
   [[ -e "/etc/systemd/system/multi-user.target.wants/$SERVICE_NAME" ]] && return 0
   return 1
+}
+
+remove_named_service() {
+  local svc="$1"
+  if have_systemctl; then
+    sudo systemctl stop "$svc" 2>/dev/null || true
+    sudo systemctl disable "$svc" 2>/dev/null || true
+    sudo systemctl reset-failed "$svc" 2>/dev/null || true
+  fi
+  sudo rm -f "/etc/systemd/system/$svc" "/etc/systemd/system/multi-user.target.wants/$svc"
+  sudo rm -f "/lib/systemd/system/$svc" "/usr/lib/systemd/system/$svc" 2>/dev/null || true
 }
 
 say "Removing $SERVICE_NAME if present"
 if service_exists; then
   if have_systemctl; then
-    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-    sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
-    sudo systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+    remove_named_service "$SERVICE_NAME"
   fi
-  sudo rm -f "/etc/systemd/system/$SERVICE_NAME"
-  sudo rm -f "/etc/systemd/system/multi-user.target.wants/$SERVICE_NAME"
-  # Do not usually write to /lib or /usr/lib, but remove stale copies if an older manual install did.
-  sudo rm -f "/lib/systemd/system/$SERVICE_NAME" "/usr/lib/systemd/system/$SERVICE_NAME" 2>/dev/null || true
   have_systemctl && sudo systemctl daemon-reload || true
   have_systemctl && sudo systemctl reset-failed || true
   ok "Systemd service removed"
 else
   warn "No systemd service file was found"
 fi
+
+say "Removing legacy $LEGACY_SERVICE_NAME if present"
+remove_named_service "$LEGACY_SERVICE_NAME"
+have_systemctl && sudo systemctl daemon-reload || true
+have_systemctl && sudo systemctl reset-failed || true
 
 if [[ "$KILL_LEFTOVERS" == "1" ]]; then
   say "Checking for stray cc2-dash uvicorn processes from this folder"

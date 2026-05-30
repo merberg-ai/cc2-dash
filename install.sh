@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_NAME="cc2-dash"
 SERVICE_NAME="cc2-dash.service"
+LEGACY_SERVICE_NAME="cc2-dash-lite.service"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$APP_DIR/.venv"
 PORT="${CC2_PORT:-8088}"
@@ -37,14 +38,15 @@ warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[fail]\033[0m %s\n' "$*"; exit 1; }
 have_systemctl() { command -v systemctl >/dev/null 2>&1; }
 unit_file_paths() {
+  local svc="${1:-$SERVICE_NAME}"
   printf '%s\n' \
-    "/etc/systemd/system/$SERVICE_NAME" \
-    "/lib/systemd/system/$SERVICE_NAME" \
-    "/usr/lib/systemd/system/$SERVICE_NAME"
+    "/etc/systemd/system/$svc" \
+    "/lib/systemd/system/$svc" \
+    "/usr/lib/systemd/system/$svc"
 }
 service_exists() {
   have_systemctl && systemctl list-unit-files --full --all "$SERVICE_NAME" 2>/dev/null | grep -q "^$SERVICE_NAME" && return 0
-  for p in $(unit_file_paths); do [[ -e "$p" ]] && return 0; done
+  for p in $(unit_file_paths "$SERVICE_NAME"); do [[ -e "$p" ]] && return 0; done
   [[ -e "/etc/systemd/system/multi-user.target.wants/$SERVICE_NAME" ]] && return 0
   return 1
 }
@@ -57,7 +59,25 @@ stop_existing_service() {
   fi
 }
 
+remove_legacy_service() {
+  if ! have_systemctl; then
+    return 0
+  fi
+  if systemctl list-unit-files --full --all "$LEGACY_SERVICE_NAME" 2>/dev/null | grep -q "^$LEGACY_SERVICE_NAME" \
+    || systemctl list-units --full --all "$LEGACY_SERVICE_NAME" 2>/dev/null | grep -q "^$LEGACY_SERVICE_NAME" \
+    || [[ -e "/etc/systemd/system/$LEGACY_SERVICE_NAME" ]]; then
+    warn "Removing legacy $LEGACY_SERVICE_NAME so it cannot fight $SERVICE_NAME for the same port"
+    sudo systemctl stop "$LEGACY_SERVICE_NAME" 2>/dev/null || true
+    sudo systemctl disable "$LEGACY_SERVICE_NAME" 2>/dev/null || true
+    sudo systemctl reset-failed "$LEGACY_SERVICE_NAME" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/$LEGACY_SERVICE_NAME" "/etc/systemd/system/multi-user.target.wants/$LEGACY_SERVICE_NAME"
+    sudo rm -f "/lib/systemd/system/$LEGACY_SERVICE_NAME" "/usr/lib/systemd/system/$LEGACY_SERVICE_NAME" 2>/dev/null || true
+    sudo systemctl daemon-reload || true
+  fi
+}
+
 say "Installing $APP_NAME in $APP_DIR"
+remove_legacy_service
 
 if ! command -v python3 >/dev/null 2>&1; then
   fail "python3 is required. Install Python 3 first."

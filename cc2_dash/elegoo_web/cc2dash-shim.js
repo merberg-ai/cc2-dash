@@ -73,7 +73,7 @@
       connectStatus: 0,
       printerStatus: 0,
       authMode: d.token_status === 1 ? 2 : 2,
-      accessCode: d.token_status === 1 ? '' : '123456',
+      accessCode: d.token_status === 1 ? '' : '',
       isAdded: false,
       hostType: 'ip'
     };
@@ -114,7 +114,7 @@
           name: pr.printerName || 'Centauri Carbon 2',
           host: pr.host,
           serial: pr.serialNumber || pr.printerId || pr.host,
-          access_code: pr.accessCode || pr.pinCode || '123456',
+          access_code: pr.accessCode || pr.pinCode || '',
           enabled: true,
           allow_commands: false,
           allow_dangerous_commands: false
@@ -143,7 +143,7 @@
         const pr = (params && params.printer) || {};
         const list = await fetchJson('/api/printers');
         const cfg = (list.configured || []).find(c => c.id === params.printerId) || {};
-        Object.assign(cfg, { id: params.printerId, name: pr.printerName || cfg.name, host: pr.host || cfg.host, serial: pr.serialNumber || cfg.serial, access_code: pr.accessCode || cfg.access_code || '123456' });
+        Object.assign(cfg, { id: params.printerId, name: pr.printerName || cfg.name, host: pr.host || cfg.host, serial: pr.serialNumber || cfg.serial, access_code: pr.accessCode || cfg.access_code || '' });
         return fetchJson('/api/printers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
       }
       case 'request_cancel_add_printer': return { ok: true };

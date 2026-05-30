@@ -19,7 +19,7 @@ class PrinterConfig:
     name: str
     host: str
     serial: str
-    access_code: str = "123456"
+    access_code: str = ""
     port: int = 1883
     enabled: bool = True
     allow_commands: bool = True
@@ -47,7 +47,7 @@ def printer_dict_to_config(printer_id: str, data: dict[str, Any]) -> PrinterConf
         name=str(data.get("name") or data.get("host_name") or "Centauri Carbon 2"),
         host=str(host),
         serial=str(serial),
-        access_code=str(data.get("access_code") or data.get("pin") or "123456"),
+        access_code=str(data.get("access_code") or data.get("pin") or ""),
         port=int(data.get("port") or 1883),
         enabled=bool(data.get("enabled", True)),
         allow_commands=bool(data.get("allow_commands", True)),
@@ -170,6 +170,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "feedback_suppression_max_severity": 65,
         "feedback_suppression_include_camera": False,
         "feedback_threshold_auto_tuning_enabled": False,
+        "ai_feedback_learning_enabled": True,
+        "ai_feedback_learning_mode": "suggest_only",
+        "ai_learning_min_samples": 8,
+        "ai_learning_min_false_positives": 4,
+        "ai_learning_min_false_negatives": 2,
+        "ai_learning_max_dark_luma_adjustment": 8,
+        "ai_learning_max_edge_density_adjustment": 0.05,
+        "ai_learning_max_required_bad_checks_adjustment": 1,
+        "ai_learning_apply_dark_luma": True,
+        "ai_learning_apply_edge_density": True,
+        "ai_learning_apply_required_bad_checks": True,
+        "ai_learning_rebuild_on_feedback": True,
+        "ai_learning_keep_jsonl_audit_log": True,
         "auto_pause_enabled": False,
         "auto_pause_threshold": 90,
         "require_multiple_bad_checks": 3
@@ -344,6 +357,25 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         ai.setdefault("feedback_suppression_max_severity", 65)
         ai.setdefault("feedback_suppression_include_camera", False)
         ai.setdefault("feedback_threshold_auto_tuning_enabled", False)
+        ai.setdefault("ai_feedback_learning_enabled", True)
+        ai.setdefault("ai_feedback_learning_mode", "suggest_only")
+        ai.setdefault("ai_learning_min_samples", 8)
+        ai.setdefault("ai_learning_min_false_positives", 4)
+        ai.setdefault("ai_learning_min_false_negatives", 2)
+        ai.setdefault("ai_learning_max_dark_luma_adjustment", 8)
+        ai.setdefault("ai_learning_max_edge_density_adjustment", 0.05)
+        ai.setdefault("ai_learning_max_required_bad_checks_adjustment", 1)
+        ai.setdefault("ai_learning_apply_dark_luma", True)
+        ai.setdefault("ai_learning_apply_edge_density", True)
+        ai.setdefault("ai_learning_apply_required_bad_checks", True)
+        ai.setdefault("ai_learning_rebuild_on_feedback", True)
+        ai.setdefault("ai_learning_keep_jsonl_audit_log", True)
+        mode = str(ai.get("ai_feedback_learning_mode") or "suggest_only").strip().lower()
+        if mode not in {"off", "suggest_only", "auto_adjust_safe"}:
+            ai["ai_feedback_learning_mode"] = "suggest_only"
+        app_cfg = cfg.setdefault("app", {})
+        if app_cfg.get("name") == "cc2-dash-lite":
+            app_cfg["name"] = "cc2-dash"
         old_prompt = "You are monitoring a 3D printer camera image. Return JSON only with visual_state, failure_types, confidence, severity, summary, and recommended_action. Be conservative and do not treat normal supports, purge towers, brims, skirts, infill, filament swaps, or multicolor purge waste as failure unless clearly abnormal."
         current_prompt = str(ai.get("vision_prompt") or "").strip()
         if not current_prompt or current_prompt == old_prompt:
