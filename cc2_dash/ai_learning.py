@@ -338,6 +338,164 @@ def db_health() -> dict[str, Any]:
     return db.health()
 
 
+def import_jsonl_feedback(
+    jsonl_path: str | None = None,
+    cfg: dict[str, Any] | None = None,
+    rebuild_profiles: bool = True,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Import/backfill the JSONL feedback audit log into SQLite.
+
+    This is intentionally explicit and event-driven: it does not run on every
+    startup. Main feedback rows become structured samples; optional reason-update
+    events are replayed as note updates when they can be matched by timestamp,
+    printer, and label. Duplicate sample rows are skipped by the DB layer.
+    """
+    from pathlib import Path
+
+    cfg = cfg or {}
+    path = Path(jsonl_path) if jsonl_path else db.DB_PATH.parent / "ai_feedback.jsonl"
+    ensure_database()
+    summary: dict[str, Any] = {
+        "ok": True,
+        "path": str(path),
+        "exists": path.exists(),
+        "scanned": 0,
+        "imported": 0,
+        "duplicates": 0,
+        "reason_updates": 0,
+        "reason_update_misses": 0,
+        "skipped": 0,
+        "malformed": 0,
+        "missing_fields": 0,
+        "errors": [],
+        "rebuild_profiles": bool(rebuild_profiles),
+        "rebuilt_profiles": 0,
+        "profiles": [],
+        "printer_ids": [],
+    }
+    if not path.exists():
+        summary["ok"] = False
+        summary["error"] = "feedback_jsonl_not_found"
+        db.log_event(
+            "jsonl_import_missing",
+            printer_id=None,
+            level="warning",
+            message=f"AI feedback JSONL not found: {path}",
+            raw={"path": str(path)},
+        )
+        return summary
+
+    limit_val = None
+    try:
+        if limit is not None:
+            limit_val = max(1, int(limit))
+    except Exception:
+        limit_val = None
+
+    imported_printers: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line_no, line in enumerate(fh, start=1):
+                if limit_val is not None and summary["scanned"] >= limit_val:
+                    break
+                raw = line.strip()
+                if not raw:
+                    continue
+                summary["scanned"] += 1
+                try:
+                    row = json.loads(raw)
+                except Exception as exc:
+                    summary["malformed"] += 1
+                    if len(summary["errors"]) < 10:
+                        summary["errors"].append({"line": line_no, "error": f"json_parse: {exc}"})
+                    continue
+                if not isinstance(row, dict):
+                    summary["malformed"] += 1
+                    if len(summary["errors"]) < 10:
+                        summary["errors"].append({"line": line_no, "error": "not_a_json_object"})
+                    continue
+
+                kind = str(row.get("kind") or row.get("schema") or "").lower()
+                if kind == "feedback_reason_update" or str(row.get("schema") or "").startswith("cc2-ai-feedback-reason"):
+                    printer_id = str(row.get("printer_id") or "unknown")
+                    reason = str(row.get("reason") or "").strip()
+                    if not reason:
+                        summary["skipped"] += 1
+                        continue
+                    result = db.update_feedback_reason(
+                        None,
+                        printer_id,
+                        reason,
+                        reason_key=str(row.get("reason_key") or ""),
+                        label=str(row.get("label") or ""),
+                        feedback_timestamp=_as_float(row.get("feedback_timestamp"), None),
+                    )
+                    if result.get("updated"):
+                        summary["reason_updates"] += 1
+                        imported_printers.add(printer_id)
+                    else:
+                        summary["reason_update_misses"] += 1
+                    continue
+
+                # Only import actual feedback rows. Older/newer feedback rows should
+                # at least have printer_id, label, timestamp, or a snapshot object.
+                if not row.get("printer_id") and not isinstance(row.get("snapshot"), dict):
+                    summary["missing_fields"] += 1
+                if not row.get("label") and not ((row.get("snapshot") or {}).get("label") if isinstance(row.get("snapshot"), dict) else None):
+                    summary["missing_fields"] += 1
+
+                try:
+                    result = record_feedback_row(row)
+                except Exception as exc:
+                    summary["skipped"] += 1
+                    if len(summary["errors"]) < 10:
+                        summary["errors"].append({"line": line_no, "error": str(exc)})
+                    continue
+                pid = str(sample_from_feedback_row(row).get("printer_id") or "unknown")
+                if result.get("inserted"):
+                    summary["imported"] += 1
+                    imported_printers.add(pid)
+                elif result.get("duplicate"):
+                    summary["duplicates"] += 1
+                    imported_printers.add(pid)
+                else:
+                    summary["skipped"] += 1
+    except Exception as exc:
+        summary["ok"] = False
+        summary["error"] = str(exc)
+        db.log_event(
+            "jsonl_import_failed",
+            printer_id=None,
+            level="error",
+            message=f"AI feedback JSONL import failed: {exc}",
+            raw=summary,
+        )
+        return summary
+
+    summary["printer_ids"] = sorted(imported_printers)
+    if rebuild_profiles and imported_printers:
+        for printer_id in sorted(imported_printers):
+            try:
+                profile = rebuild_profile(printer_id, cfg)
+                summary["profiles"].append(profile)
+                summary["rebuilt_profiles"] += 1
+            except Exception as exc:
+                if len(summary["errors"]) < 10:
+                    summary["errors"].append({"printer_id": printer_id, "error": f"rebuild: {exc}"})
+
+    db.log_event(
+        "jsonl_import_complete",
+        printer_id=None,
+        message=(
+            f"AI feedback JSONL import scanned {summary['scanned']} rows, "
+            f"imported {summary['imported']}, skipped {summary['duplicates']} duplicates."
+        ),
+        raw={k: v for k, v in summary.items() if k != "profiles"},
+    )
+    return summary
+
+
 def get_effective_ai_thresholds(printer_id: str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return manual, suggested, applied, and effective AI thresholds.
 

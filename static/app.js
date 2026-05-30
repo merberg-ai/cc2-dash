@@ -1362,6 +1362,43 @@
     }
   }
 
+  function renderAiLearningImportSummary(result) {
+    const summary = $('#aiLearningImportSummary');
+    if (!summary) return;
+    const imp = result?.import || result || {};
+    if (!imp.exists) {
+      setInlineStatus('aiLearningImportSummary', 'No data/ai_feedback.jsonl file found to import.', 'bad');
+      return;
+    }
+    const bits = [
+      `scanned ${imp.scanned || 0}`,
+      `imported ${imp.imported || 0}`,
+      `duplicates ${imp.duplicates || 0}`,
+      `reason updates ${imp.reason_updates || 0}`,
+      `malformed ${imp.malformed || 0}`,
+      `rebuilt ${imp.rebuilt_profiles || 0}`,
+    ];
+    setInlineStatus('aiLearningImportSummary', bits.join(' · '), imp.ok === false ? 'bad' : 'good');
+  }
+
+  async function importAiLearningJsonl(button = null) {
+    const rebuild = $('#aiLearningImportRebuild')?.checked !== false;
+    setButtonBusy(button, true, 'Importing...');
+    try {
+      const data = await api('/api/ai/learning/import-jsonl', { method:'POST', body:JSON.stringify({ rebuild_profiles: rebuild }) });
+      renderAiLearningImportSummary(data);
+      if (data.status) renderAiLearningStatus(data.status);
+      await refreshAiFeedbackSamples().catch(() => {});
+      toast(`Imported ${data.import?.imported || 0} sample(s), skipped ${data.import?.duplicates || 0} duplicate(s).`, 'success', 9000);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiLearningImportSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
 
   function fmtFeedbackTime(value) {
     if (!value) return '-';
@@ -1895,6 +1932,13 @@
       } finally {
         setButtonBusy(resetAiLearning, false);
       }
+    });
+
+    const importAiLearningJsonlButton = $('#importAiLearningJsonlButton');
+    if (importAiLearningJsonlButton) importAiLearningJsonlButton.addEventListener('click', async () => {
+      if (!confirm('Import data/ai_feedback.jsonl into SQLite now? Existing samples will be skipped as duplicates.')) return;
+      try { await importAiLearningJsonl(importAiLearningJsonlButton); }
+      catch (err) { toast(err.message, 'error', 9000); }
     });
 
     const refreshAiFeedbackSamplesButton = $('#refreshAiFeedbackSamplesButton');

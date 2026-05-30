@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.43-blue)
+![Version](https://img.shields.io/badge/version-1.2.44-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.43 dashboard-learning-badge
+1.2.44 jsonl-feedback-import
 ```
 
 Major current capabilities:
@@ -74,7 +74,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Portal AI telemetry checks | Working, advisory-only |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror, outcome interpretation, and recent-sample review in Settings |
+| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, and recent-sample review in Settings |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
@@ -573,6 +573,7 @@ GET /api/ai/feedback/stats
 GET /api/ai/feedback/suppressions
 GET /api/ai/learning/samples
 GET /api/ai/learning/samples/<sample_id>/frame
+POST /api/ai/learning/import-jsonl
 GET /api/printers/<printer_id>/ai/learning/samples
 POST /api/printers/<printer_id>/ai/feedback/reason
 ```
@@ -635,7 +636,8 @@ Settings → Portal AI now includes **AI Feedback Learning** controls for:
 - rebuilding profiles;
 - resetting learned tuning without deleting JSONL feedback;
 - viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds;
-- reviewing recent feedback samples with filters for printer, label, outcome, metrics, reasons, and captured feedback frames.
+- reviewing recent feedback samples with filters for printer, label, outcome, metrics, reasons, and captured feedback frames;
+- importing/backfilling older `data/ai_feedback.jsonl` audit rows into SQLite with duplicate skipping and optional profile rebuild.
 
 > [!IMPORTANT]
 > Learned effective thresholds are wired into live vision checks only when `auto_adjust_safe` is explicitly selected. `off` and `suggest_only` remain advisory/no-op for live scoring. Feedback reason chips enrich future samples but still do not let AI control print jobs automatically.
@@ -934,6 +936,7 @@ GET  /api/ai/feedback/suppressions
 GET  /api/ai/learning/status
 POST /api/ai/learning/rebuild
 POST /api/ai/learning/reset
+POST /api/ai/learning/import-jsonl
 GET  /api/printers/<printer_id>/ai/learning
 POST /api/printers/<printer_id>/ai/learning/rebuild
 POST /api/printers/<printer_id>/ai/learning/reset
@@ -1124,6 +1127,15 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.44 JSONL feedback import
+
+- Added explicit JSONL feedback import/backfill from `data/ai_feedback.jsonl` into the SQLite learning database.
+- Added `POST /api/ai/learning/import-jsonl` with duplicate skipping, malformed-line counts, reason-update replay, and optional profile rebuild.
+- Added Settings → Portal AI → Import old JSONL feedback controls with import summary output.
+- Import is manual/on-demand only and does not run on every startup.
+- Keeps JSONL as the human-readable audit log and stores images on disk only.
+- No changes to printer commands, advisory-only AI safety behavior, or automatic print control.
 
 ### v1.2.43 dashboard learning badge
 

@@ -1084,6 +1084,11 @@ class LearningResetRequest(BaseModel):
     delete_samples: bool = False
 
 
+class LearningImportRequest(BaseModel):
+    rebuild_profiles: bool = True
+    limit: Optional[int] = None
+
+
 class OllamaPullRequest(BaseModel):
     model: str
     base_url: Optional[str] = None
@@ -2326,6 +2331,16 @@ async def api_ai_learning_reset(body: LearningResetRequest | None = None):
     result = await asyncio.to_thread(ai_learning.reset_profile, None, delete_samples)
     status = await asyncio.to_thread(ai_learning.global_status, load_config())
     return {"ok": True, "result": result, "status": status}
+
+
+@app.post("/api/ai/learning/import-jsonl")
+async def api_ai_learning_import_jsonl(body: LearningImportRequest | None = None):
+    cfg = load_config()
+    rebuild_profiles = bool(body.rebuild_profiles) if body else True
+    limit = body.limit if body else None
+    result = await asyncio.to_thread(ai_learning.import_jsonl_feedback, None, cfg, rebuild_profiles, limit)
+    status = await asyncio.to_thread(ai_learning.global_status, cfg)
+    return {"ok": bool(result.get("ok", True)), "import": result, "status": status}
 
 
 @app.get("/api/printers/{printer_id}/ai/learning")

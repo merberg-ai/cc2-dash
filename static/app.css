@@ -1663,3 +1663,13 @@ body.kiosk-page .camera-placeholder span:last-child {
   .ai-feedback-sample-card { grid-template-columns:4.4rem minmax(0, 1fr); }
   .ai-feedback-sample-head { flex-direction:column; align-items:flex-start; }
 }
+
+/* v1.2.44: JSONL feedback import controls */
+.small-check {
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  color:var(--cc2-muted);
+  font-size:.82rem;
+  white-space:nowrap;
+}

@@ -400,6 +400,14 @@
       </div>
 
       <div class="setting-row tall ai-learning-warning-row">
+        <div><strong>Import old JSONL feedback</strong><small id="aiLearningImportSummary">Backfill existing data/ai_feedback.jsonl rows into SQLite with duplicate skipping.</small></div>
+        <div class="setting-controls learning-action-controls">
+          <label class="small-check"><input id="aiLearningImportRebuild" class="toggle" type="checkbox" checked> rebuild after import</label>
+          <button id="importAiLearningJsonlButton" class="button secondary tiny" type="button">Import JSONL</button>
+        </div>
+      </div>
+
+      <div class="setting-row tall ai-learning-warning-row">
         <div><strong>Recent AI feedback samples</strong><small id="aiFeedbackSamplesSummary">Recent feedback samples have not been loaded yet.</small></div>
         <div class="setting-controls ai-feedback-sample-controls">
           <select id="aiFeedbackSamplesPrinter" class="input compact-select">
