@@ -4,7 +4,7 @@
 <section class="files-stack fade-in">
   <article class="card hero-card">
     <h1>File Manager</h1>
-    <p>Browse system G-code files separately from the stock-portal-style timelapse Video List.</p>
+    <p>Stock-portal-style access to printer files, USB drive files, print history, and the separate timelapse Video List.</p>
     {% if printer %}
     <div class="mini-note">Active printer: <strong>{{ printer.name }}</strong> · {{ printer.host }}</div>
     {% else %}
@@ -13,45 +13,61 @@
   </article>
 
   <article class="card file-manager-card">
-    <div class="tabbar" role="tablist" aria-label="File manager sections">
-      <button class="tab-button active" id="tabGcode" data-file-tab="gcode" type="button">G-code Files</button>
-      <button class="tab-button" id="tabTimelapse" data-file-tab="timelapse" type="button">Timelapse Videos</button>
+    <div class="tabbar file-tabbar" role="tablist" aria-label="File manager sections">
+      <button class="tab-button active" id="tabPrinterFiles" data-file-tab="printer" type="button">Printer Files</button>
+      <button class="tab-button" id="tabUsbFiles" data-file-tab="usb" type="button">USB Drive</button>
+      <button class="tab-button" id="tabHistory" data-file-tab="history" type="button">Print History</button>
+      <button class="tab-button" id="tabVideos" data-file-tab="videos" type="button">Video List</button>
     </div>
 
-    <section class="file-panel active" id="panelGcode" data-panel="gcode">
+    <section class="file-panel active" id="panelPrinterFiles" data-panel="printer">
       <div class="card-title-row file-title-row">
         <div>
-          <h2>System G-code files</h2>
-          <p>List local or USB files, inspect details, start a print, or delete files when safety settings allow it.</p>
+          <h2>Printer files</h2>
+          <p>Local files stored on the printer. Uses the same local storage selector as the stock portal.</p>
         </div>
-        <button class="button secondary tiny" id="refreshFilesButton" type="button"><span class="button-label">Refresh</span></button>
+        <button class="button secondary tiny" id="refreshPrinterFilesButton" type="button"><span class="button-label">Refresh</span></button>
       </div>
-
-      <div class="toolbar-row">
-        <label class="field-label inline-field">Storage
-          <select class="input" id="fileStorage">
-            <option value="local">Local</option>
-            <option value="u-disk">USB Drive</option>
-          </select>
-        </label>
-        <label class="field-label inline-field grow">Path
-          <input class="input" id="filePath" value="/" placeholder="/" autocomplete="off" />
-        </label>
-      </div>
-
-      <div id="fileLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading files...</span></div>
-      <div id="fileList" class="file-list empty">Tap Refresh to load printer files.</div>
+      <div id="printerFileLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading printer files...</span></div>
+      <div id="printerFileList" class="file-list empty">Tap Refresh to load printer files.</div>
     </section>
 
-    <section class="file-panel" id="panelTimelapse" data-panel="timelapse">
+    <section class="file-panel" id="panelUsbFiles" data-panel="usb">
       <div class="card-title-row file-title-row">
         <div>
-          <h2>Timelapse videos</h2>
-          <p>Loads the same kind of Video List shown by the stock Elegoo portal: history rows with timelapse status, size, creation time, and duration.</p>
+          <h2>USB drive files</h2>
+          <p>Files and folders from the attached USB drive. The stock portal sends <code>storage_media: u-disk</code> plus the current directory.</p>
+        </div>
+        <div class="button-row compact-actions">
+          <button class="button secondary tiny" id="usbBackButton" type="button">Back</button>
+          <button class="button secondary tiny" id="refreshUsbFilesButton" type="button"><span class="button-label">Refresh</span></button>
+        </div>
+      </div>
+      <div class="path-pill">Path: <strong id="usbPathLabel">/</strong></div>
+      <div id="usbFileLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading USB files...</span></div>
+      <div id="usbFileList" class="file-list empty">Tap Refresh to load USB files.</div>
+    </section>
+
+    <section class="file-panel" id="panelHistory" data-panel="history">
+      <div class="card-title-row file-title-row">
+        <div>
+          <h2>Print history</h2>
+          <p>History rows from the stock portal history endpoint. G-code tasks can be inspected, deleted, or reprinted if the source file is still available.</p>
+        </div>
+        <button class="button secondary tiny" id="refreshHistoryButton" type="button"><span class="button-label">Refresh</span></button>
+      </div>
+      <div id="historyLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading print history...</span></div>
+      <div id="historyList" class="file-list empty">Tap Refresh to load print history.</div>
+    </section>
+
+    <section class="file-panel" id="panelVideos" data-panel="videos">
+      <div class="card-title-row file-title-row">
+        <div>
+          <h2>Video List</h2>
+          <p>Stock-style timelapse list derived from print history rows with timelapse status/URL data. Export asks the printer to generate or expose the video.</p>
         </div>
         <button class="button secondary tiny" id="refreshTimelapseButton" type="button"><span class="button-label">Refresh</span></button>
       </div>
-
       <div id="timelapseLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading timelapse records...</span></div>
       <div id="timelapseList" class="file-list empty">Tap Refresh to load timelapse records.</div>
     </section>

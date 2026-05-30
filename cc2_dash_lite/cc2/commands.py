@@ -14,6 +14,11 @@ GET_FILE_THUMBNAIL = 1045
 GET_FILE_DETAIL = 1046
 GET_DISK_INFO = 1048
 GET_TIME_LAPSE_VIDEO_LIST = 1051
+SET_MONO_FILAMENT_INFO = 1055
+GET_MONO_FILAMENT_INFO = 1061
+LOAD_FILAMENT = 2001
+UNLOAD_FILAMENT = 2002
+SET_FILAMENT_INFO = 2003
 GET_CANVAS_STATUS = 2005
 
 # Semi-safe / peripheral methods
@@ -46,6 +51,7 @@ SAFE_METHODS = {
     GET_DISK_INFO,
     GET_TIME_LAPSE_VIDEO_LIST,
     GET_CANVAS_STATUS,
+    GET_MONO_FILAMENT_INFO,
     SET_LIGHT,
     ENABLE_WEBCAM,
     START_VIDEO_STREAM,
@@ -59,6 +65,10 @@ SEMI_SAFE_METHODS = {
     SET_FAN_SPEED,
     SET_PRINT_SPEED,
     SET_AUTO_REFILL,
+    SET_MONO_FILAMENT_INFO,
+    LOAD_FILAMENT,
+    UNLOAD_FILAMENT,
+    SET_FILAMENT_INFO,
 }
 
 DANGEROUS_METHODS = {
@@ -81,40 +91,75 @@ def method_allowed(method: int, allow_commands: bool, allow_dangerous: bool) -> 
     return allow_commands and allow_dangerous
 
 
+def normalize_storage_media(storage_media: str | None = "local") -> str:
+    """Return the stock Elegoo portal storage-media token.
+
+    The local portal bundle uses exactly ``local`` and ``u-disk`` for the
+    printer file APIs.  Sending friendly aliases is convenient from cc2-dash,
+    but the outgoing command should stay stock-shaped because some firmware
+    builds reject unknown/extra parameters.
+    """
+    value = str(storage_media or "local").strip().lower().replace("_", "-")
+    if value in {"usb", "udisk", "u-disk", "u disk", "drive", "usb-drive"}:
+        return "u-disk"
+    if value in {"sd", "sdcard", "sd-card"}:
+        return "sd-card"
+    return "local"
+
+
+def normalize_file_dir(path: str | None = "/") -> str:
+    value = str(path or "/").strip() or "/"
+    if not value.startswith("/"):
+        value = "/" + value
+    # Stock portal keeps USB directory paths as slash-terminated folder paths.
+    if value != "/" and not value.endswith("/"):
+        value += "/"
+    return value
+
+
+def _prefix_udisk_file(filename: str, storage_media: str) -> str:
+    name = str(filename or "")
+    if normalize_storage_media(storage_media) == "u-disk" and name and not name.startswith("/"):
+        return "/" + name
+    return name
+
+
 def file_list_params(path: str = "/", storage_media: str = "local", page: int = 1, page_size: int = 50, offset: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, Any]:
-    # The stock Elegoo portal sends dir/offset/limit. Older cc2-dash builds sent
-    # path/page/page_size. Send both shapes to be forgiving across firmware builds.
+    # Stock portal shape: {storage_media, optional dir, offset, limit}.
+    # Do not send path/page/page_size aliases here; strict firmware builds can
+    # answer InvalidParameter when extra keys are present.
+    media = normalize_storage_media(storage_media)
     if offset is None:
-        offset = max(0, (page - 1) * page_size)
+        offset = max(0, (int(page or 1) - 1) * int(page_size or 50))
     if limit is None:
-        limit = page_size
+        limit = int(page_size or 50)
     params: Dict[str, Any] = {
-        "storage_media": storage_media,
-        "path": path,
-        "dir": path,
-        "page": page,
-        "page_size": page_size,
-        "offset": offset,
-        "limit": limit,
+        "storage_media": media,
+        "offset": int(offset or 0),
+        "limit": int(limit or page_size or 50),
     }
-    if path in ("/", ""):
-        params.pop("dir", None)
+    dir_path = normalize_file_dir(path)
+    if media == "u-disk":
+        params["dir"] = dir_path
     return params
 
 
 def file_detail_params(filename: str, storage_media: str = "local", directory: Optional[str] = None) -> Dict[str, Any]:
-    params = {"storage_media": storage_media, "filename": filename}
-    if directory:
-        params["dir"] = directory
+    media = normalize_storage_media(storage_media)
+    params = {"storage_media": media, "filename": _prefix_udisk_file(filename, media)}
+    if directory and normalize_file_dir(directory) != "/":
+        params["dir"] = normalize_file_dir(directory)
     return params
 
 
 def file_thumbnail_params(filename: str, storage_media: str = "local") -> Dict[str, Any]:
-    return {"storage_media": storage_media, "file_name": filename}
+    media = normalize_storage_media(storage_media)
+    return {"storage_media": media, "file_name": _prefix_udisk_file(filename, media)}
 
 
 def delete_file_params(file_path: str, storage_media: str = "local") -> Dict[str, Any]:
-    return {"storage_media": storage_media, "file_path": file_path}
+    media = normalize_storage_media(storage_media)
+    return {"storage_media": media, "file_path": _prefix_udisk_file(file_path, media)}
 
 
 def start_print_params(
@@ -192,18 +237,64 @@ def print_speed_params(mode: int) -> Dict[str, Any]:
 
 
 def auto_refill_params(enabled: bool) -> Dict[str, Any]:
-    value = 1 if enabled else 0
-    # Firmware builds have used slightly different field names for the same
-    # switch. Send the known/obvious aliases; the printer ignores unknown keys.
+    # Stock local portal shape for method 2004:
+    # { auto_refill: <boolean> }
+    # Keep this deliberately strict; CC2 firmware has proven picky about
+    # friendly alias fields on other stock-portal commands.
+    return {"auto_refill": bool(enabled)}
+
+
+
+def _clean_filament_color(value: Any, fallback: str = "#8b8f9a") -> str:
+    color = str(value or fallback).strip() or fallback
+    if not color.startswith("#") and len(color) in (3, 6):
+        color = "#" + color
+    return color
+
+
+def filament_motion_params(canvas_id: int | str = 0, tray_id: int | str = 0) -> Dict[str, Any]:
+    # Stock local portal shape for method 2001/2002:
+    # { canvas_id: <number>, tray_id: <number> }
     return {
-        "enable": bool(enabled),
-        "enabled": bool(enabled),
-        "auto_refill": value,
-        "autoRefill": value,
-        "status": value,
-        "switch": value,
+        "canvas_id": int(canvas_id or 0),
+        "tray_id": int(tray_id or 0),
     }
 
+
+def filament_info_params(data: Dict[str, Any]) -> Dict[str, Any]:
+    # Stock local portal shape for method 2003:
+    # { canvas_id, tray_id, brand, filament_type, filament_name, filament_code,
+    #   filament_color, filament_min_temp, filament_max_temp }
+    name = str(data.get("filament_name") or data.get("filamentName") or data.get("name") or "PLA").strip() or "PLA"
+    ftype = str(data.get("filament_type") or data.get("filamentType") or data.get("type") or name.split()[0] or "PLA").strip()
+    color = _clean_filament_color(data.get("filament_color") or data.get("filamentColor") or data.get("color"))
+    brand = str(data.get("brand") or data.get("vendor") or "ELEGOO").strip() or "ELEGOO"
+    try:
+        min_temp = int(data.get("filament_min_temp") or data.get("min_nozzle_temp") or data.get("minNozzleTemp") or 190)
+    except Exception:
+        min_temp = 190
+    try:
+        max_temp = int(data.get("filament_max_temp") or data.get("max_nozzle_temp") or data.get("maxNozzleTemp") or 230)
+    except Exception:
+        max_temp = 230
+    return {
+        "canvas_id": int(data.get("canvas_id") or data.get("canvasId") or 0),
+        "tray_id": int(data.get("tray_id") or data.get("trayId") or 0),
+        "brand": brand,
+        "filament_type": ftype,
+        "filament_name": name,
+        "filament_code": str(data.get("filament_code") or data.get("filamentCode") or data.get("setting_id") or data.get("settingId") or ""),
+        "filament_color": color,
+        "filament_min_temp": min_temp,
+        "filament_max_temp": max_temp,
+    }
+
+
+def mono_filament_info_params(data: Dict[str, Any]) -> Dict[str, Any]:
+    out = filament_info_params(data)
+    out["canvas_id"] = 0
+    out["tray_id"] = 0
+    return out
 
 def history_detail_params(task_ids: list[str] | list[int] | str | int) -> Dict[str, Any]:
     if not isinstance(task_ids, list):
@@ -214,7 +305,10 @@ def history_detail_params(task_ids: list[str] | list[int] | str | int) -> Dict[s
 
 
 def timelapse_export_params(url: str) -> Dict[str, Any]:
-    return {"url": url}
+    # Stock local-websocket method 1051 (GetTimeLapseVideoList) sends lowercase
+    # {url: <TimeLapseVideoUrl>}. The separate SDCP command 323 used {Url}, but
+    # this app talks to method 1051 here, so keep the payload exact/picky.
+    return {"url": str(url or "")}
 
 
 def history_delete_params(task_ids: list[str] | list[int]) -> Dict[str, Any]:

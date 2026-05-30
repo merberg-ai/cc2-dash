@@ -19,12 +19,18 @@
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
   <div class="app-shell">
     <header class="topbar fade-in">
-      <a class="brand" href="/" title="cc2-dash-lite v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_branch and build.git_branch != 'unknown' %} · {{ build.git_branch }}{% endif %}{% if build.git_dirty %} · dirty{% endif %}">
+      <a class="brand" href="/" title="cc2-dash-lite v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_branch and build.git_branch != 'unknown' %} · branch {{ build.git_branch }}{% endif %}{% if build.git_dirty %} · dirty{% endif %}">
         <span class="brand-icon">⬢</span>
         <span class="brand-text">
-          <strong>{{ cfg.app.name|default('cc2-dash-lite') }}</strong>
-          <span class="brand-build">v{{ build.version }} · commit {{ build.git_commit_short }}{% if build.git_dirty %}*{% endif %}</span>
-          <small>{{ printer.name if printer else 'setup required' }}</small>
+          <span class="brand-title-row">
+            <strong>{{ cfg.app.name|default('cc2-dash-lite') }}</strong>
+            <span class="brand-printer">{{ printer.name if printer else 'setup required' }}</span>
+          </span>
+          <span class="brand-meta" aria-label="Build information">
+            <span>v{{ build.version }}</span>
+            {% if build.git_branch and build.git_branch != 'unknown' %}<span>{{ build.git_branch }}</span>{% endif %}
+            <span>{{ build.git_commit_short }}{% if build.git_dirty %}*{% endif %}</span>
+          </span>
         </span>
       </a>
       <nav class="topnav">
@@ -36,6 +42,9 @@
         {% endif %}
         {% if cfg.features.file_manager_enabled %}<a href="/files" class="navlink">Files</a>{% endif %}
         {% if cfg.features.filament_manager_enabled %}<a href="/filaments" class="navlink">Filament</a>{% endif %}
+        {% if cfg.features.kiosk_enabled|default(true) %}
+          {% if printer %}<a href="{{ printer.kiosk_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open Kiosk camera view in a new tab">Kiosk</a>{% else %}<a href="/setup" class="navlink">Kiosk</a>{% endif %}
+        {% endif %}
         <a href="/settings" class="navlink">Settings</a>
         <a href="/logs" class="navlink">Logs</a>
       </nav>

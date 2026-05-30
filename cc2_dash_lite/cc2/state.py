@@ -21,9 +21,11 @@ MACHINE_STATUS = {
     13: "extruder operating",
     14: "emergency stop",
     15: "power loss recovery",
+    16: "completed",
 }
 
 SUB_STATUS = {
+    0: "idle",
     1041: "idle in print",
     1045: "extruder preheating",
     1096: "extruder preheating",
@@ -60,6 +62,23 @@ def deep_merge(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
         else:
             dst[key] = deepcopy(value)
     return dst
+
+
+
+
+def boolish(value: Any) -> Optional[bool]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled", "enable", "filament", "detected", "present", "loaded"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled", "disable", "none", "empty", "no_filament", "nofilament", "/"}:
+        return False
+    return None
 
 
 def get_path(data: Dict[str, Any], *paths: str, default: Any = None) -> Any:
@@ -164,8 +183,30 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
             },
         },
         "filament": {
-            "sensor_enabled": get_path(full_status, "extruder.filament_detect_enable"),
-            "detected": get_path(full_status, "extruder.filament_detected"),
+            "sensor_enabled": boolish(get_path(
+                full_status,
+                "extruder.filament_detect_enable",
+                "extruder.filament_detect_enabled",
+                "deviceStatus.extruder.filament_detect_enable",
+                "deviceStatus.extruder.filament_detect_enabled",
+                "device_status.extruder.filament_detect_enable",
+                "device_status.extruder.filament_detect_enabled",
+                "filament_sensor.enabled",
+                "filamentSensor.enabled",
+            )),
+            "detected": boolish(get_path(
+                full_status,
+                "extruder.filament_detected",
+                "extruder.filament_detect",
+                "deviceStatus.extruder.filament_detected",
+                "deviceStatus.extruder.filament_detect",
+                "device_status.extruder.filament_detected",
+                "device_status.extruder.filament_detect",
+                "filament_sensor.detected",
+                "filament_sensor.status",
+                "filamentSensor.detected",
+                "filamentSensor.status",
+            )),
         },
         "fans": {},
         "position": {

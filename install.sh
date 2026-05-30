@@ -22,7 +22,7 @@ Usage:
   ./install.sh [--service] [--port=8088] [--no-system-deps]
 
 Options:
-  --service          Install and start a systemd service.
+  --service          Install/update and start the systemd service.
   --port=PORT       Port for the service unit. Default: 8088.
   --no-system-deps  Skip apt install for python3-venv/python3-pip.
 HELP
@@ -35,6 +35,27 @@ say() { printf '\033[1;36m[cc2]\033[0m %s\n' "$*"; }
 ok() { printf '\033[1;32m[ok]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[fail]\033[0m %s\n' "$*"; exit 1; }
+have_systemctl() { command -v systemctl >/dev/null 2>&1; }
+unit_file_paths() {
+  printf '%s\n' \
+    "/etc/systemd/system/$SERVICE_NAME" \
+    "/lib/systemd/system/$SERVICE_NAME" \
+    "/usr/lib/systemd/system/$SERVICE_NAME"
+}
+service_exists() {
+  have_systemctl && systemctl list-unit-files --full --all "$SERVICE_NAME" 2>/dev/null | grep -q "^$SERVICE_NAME" && return 0
+  for p in $(unit_file_paths); do [[ -e "$p" ]] && return 0; done
+  [[ -e "/etc/systemd/system/multi-user.target.wants/$SERVICE_NAME" ]] && return 0
+  return 1
+}
+stop_existing_service() {
+  if service_exists; then
+    say "Stopping existing $SERVICE_NAME before updating it"
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+    sudo systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+  fi
+}
 
 say "Installing $APP_NAME in $APP_DIR"
 
@@ -72,8 +93,12 @@ chmod +x "$APP_DIR/run.sh" "$APP_DIR/uninstall.sh" || true
 ok "Install complete"
 
 if [[ "$INSTALL_SERVICE" == "1" ]]; then
-  say "Installing systemd service on port $PORT"
+  if ! have_systemctl; then
+    fail "systemctl was not found. Run manually with ./run.sh instead."
+  fi
+  say "Installing/updating systemd service on port $PORT"
   CURRENT_USER="${SUDO_USER:-$USER}"
+  stop_existing_service
   sudo tee "/etc/systemd/system/$SERVICE_NAME" >/dev/null <<SERVICE
 [Unit]
 Description=CC2 Dash Lite
@@ -89,13 +114,17 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=$VENV_DIR/bin/python -m uvicorn cc2_dash_lite.main:app --host 0.0.0.0 --port $PORT
 Restart=on-failure
 RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGINT
 
 [Install]
 WantedBy=multi-user.target
 SERVICE
   sudo systemctl daemon-reload
-  sudo systemctl enable --now "$SERVICE_NAME"
+  sudo systemctl enable "$SERVICE_NAME"
+  sudo systemctl restart "$SERVICE_NAME"
   ok "Service installed and started: $SERVICE_NAME"
+  say "Status: sudo systemctl status $SERVICE_NAME --no-pager"
   say "Open: http://<this-pi-ip>:$PORT/"
 else
   say "Run manually with: ./run.sh"

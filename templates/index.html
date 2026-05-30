@@ -4,123 +4,185 @@
 <section class="dashboard" id="dashboard">
   {% for card in cards %}
     {% if card.enabled and card.id == 'camera_status' %}
-    <article class="card dashboard-card fade-in" data-card="camera_status" style="order: {{ card.order }}">
-      <div class="camera-wrap" id="cameraWrap">
-        <div class="camera-placeholder" id="cameraPlaceholder">
-          <span class="spinner"></span>
-          <span>Loading camera stream...</span>
+    <details class="card dashboard-card dashboard-accordion fade-in" data-card="camera" style="order: {{ card.order }}" open>
+      <summary class="settings-summary dashboard-summary"><span class="dashboard-summary-title">Camera</span></summary>
+      <div class="dashboard-panel-body">
+        <div class="camera-wrap" id="cameraWrap">
+          <div class="camera-placeholder" id="cameraPlaceholder">
+            <span class="spinner"></span>
+            <span>Loading camera stream...</span>
+          </div>
+          {% if printer and cfg.dashboard.camera_autoload %}
+            <img id="cameraStream" class="camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}" onerror="window.cc2CameraFailed && window.cc2CameraFailed()" />
+          {% else %}
+            <img id="cameraStream" class="camera-stream hidden" alt="Printer camera stream" />
+          {% endif %}
+          <span id="cameraRelayBadge" class="live-badge"><span id="cameraRelayDot" class="dot warn"></span><span id="cameraRelayText">RELAY</span></span>
         </div>
-        {% if printer and cfg.dashboard.camera_autoload %}
-          <img id="cameraStream" class="camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}" onerror="window.cc2CameraFailed && window.cc2CameraFailed()" />
-        {% else %}
-          <img id="cameraStream" class="camera-stream hidden" alt="Printer camera stream" />
-        {% endif %}
-        <span id="cameraRelayBadge" class="live-badge"><span id="cameraRelayDot" class="dot warn"></span><span id="cameraRelayText">RELAY</span></span>
+        <div id="cameraRelayStatus" class="camera-relay-status">Camera relay warming up...</div>
       </div>
-      <div id="cameraRelayStatus" class="camera-relay-status">Camera relay warming up...</div>
+    </details>
 
-      <div class="progress-shell">
-        <div id="progressBar" class="progress-bar" style="width:0%"></div>
-        <span id="progressText" class="progress-text">0.0%</span>
-      </div>
-
-      <div class="status-grid two">
-        <div>
-          <strong>Status</strong>
-          <span id="statusText" class="warn-text">Loading...</span>
-          <small class="telemetry-subline">Speed: <span id="currentSpeedBrief">-</span></small>
+    <details class="card dashboard-card dashboard-accordion fade-in" data-card="print_status" style="order: {{ card.order }}" open>
+      <summary id="printStatusSummary" class="settings-summary dashboard-summary print-status-summary idle">
+        <span class="dashboard-summary-title">Print Status</span>
+        <span class="summary-progress" aria-label="Print progress">
+          <span class="summary-progress-track"><span id="summaryProgressBar" class="summary-progress-bar" style="width:0%"></span></span>
+          <span id="summaryProgressText" class="summary-progress-text">0.0%</span>
+        </span>
+        <span id="summaryPrintState" class="summary-print-state idle" aria-label="Print state">IDLE</span>
+      </summary>
+      <div class="dashboard-panel-body">
+        <div class="progress-shell">
+          <div id="progressBar" class="progress-bar" style="width:0%"></div>
+          <span id="progressText" class="progress-text">0.0%</span>
         </div>
-        <div class="portal-ai-brief">
-          <strong>Portal AI 🤖</strong>
-          <span id="assistantText">Standing By</span>
-          <small id="assistantReason" class="ai-reason">Telemetry rules warming up...</small>
+
+        <div class="status-grid two">
+          <div>
+            <strong>Status</strong>
+            <span id="statusText" class="warn-text">Loading...</span>
+            <small class="telemetry-subline">Speed: <span id="currentSpeedBrief">-</span></small>
+          </div>
+          <div>
+            <strong>Completion</strong>
+            <span id="completion">-</span>
+            <small class="telemetry-subline">Updated: <span id="lastUpdate">Waiting...</span></small>
+          </div>
+        </div>
+
+        <hr />
+
+        <div class="status-grid five">
+          <div><strong>Print Time</strong><span id="printTime">-</span></div>
+          <div><strong>Time Left</strong><span id="timeLeft">-</span></div>
+          <div><strong>Layer</strong><span id="layerProgress">-</span></div>
+          <div><strong>Filament Used</strong><span id="filamentUsed">-</span></div>
+          <div><strong>Speed</strong><span id="currentSpeed">-</span></div>
+        </div>
+
+        <hr />
+
+        <div class="status-grid three">
+          <div><strong>Hotend</strong><span id="hotendTemp">- / off</span></div>
+          <div><strong>Bed</strong><span id="bedTemp">- / off</span></div>
+          <div><strong>API</strong><span id="apiState">Checking...</span></div>
+        </div>
+
+        <hr />
+
+        <div class="file-line">
+          <strong>File</strong>
+          <span id="fileName">-</span>
+        </div>
+
+        <div id="gcodeThumbnailCard" class="gcode-thumbnail-card hidden" aria-live="polite">
+          <div class="gcode-thumbnail-header">
+            <strong>G-code Thumbnail</strong>
+            <small>Tap to enlarge</small>
+          </div>
+          <button id="gcodeThumbnailButton" class="gcode-thumbnail-button" type="button" aria-label="Open larger G-code thumbnail">
+            <img id="gcodeThumbnailImg" class="gcode-thumbnail-img" alt="G-code thumbnail preview" />
+          </button>
+        </div>
+
+        <a class="button primary full" id="portalButton" href="{{ printer.portal_url if printer else '/setup' }}" target="_blank" rel="noreferrer">Go To Elegoo Web Portal</a>
+      </div>
+    </details>
+
+    <details class="card dashboard-card dashboard-accordion fade-in" data-card="ai_info" style="order: {{ card.order }}" open>
+      <summary class="settings-summary dashboard-summary ai-info-summary">
+        <span class="dashboard-summary-title">AI Info</span>
+        <span id="aiSummaryPill" class="summary-ai-status good" aria-label="AI status">Looks Good</span>
+      </summary>
+      <div class="dashboard-panel-body">
+        <div class="status-grid two ai-status-grid">
+          <div>
+            <strong>Portal AI 🤖</strong>
+            <span id="assistantText">Standing By</span>
+            <small id="assistantReason" class="ai-reason">Telemetry rules warming up...</small>
+          </div>
+          <div>
+            <strong>Risk</strong>
+            <span id="aiLevelBrief">LOW · 0%</span>
+            <small id="aiLastCheckBrief">checking...</small>
+          </div>
+        </div>
+
+        <div class="ai-panel" id="aiPanel">
+          <div class="ai-risk-row">
+            <span id="aiLevel" class="ai-pill low">Low</span>
+            <span id="aiLastCheck">checking...</span>
+          </div>
+          <div class="ai-risk-meter" aria-label="Portal AI risk score"><div id="aiRiskBar" class="ai-risk-bar" style="width:0%"></div></div>
+          <ul id="aiReasons" class="ai-reasons"><li>No warning rules are currently triggered.</li></ul>
+          {% if cfg.portal_ai.vision_ai_enabled|default(false) %}
+          <div id="aiVisionBox" class="ai-vision-box pending"><div><strong>Vision: pending</strong><span>Waiting for the first camera analysis.</span></div></div>
+          {% endif %}
+          <div class="ai-feedback" id="aiFeedbackButtons">
+            <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_good">Looks Good</button>
+            <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_bad">Looks Bad</button>
+            <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="false_alarm">False Alarm</button>
+          </div>
         </div>
       </div>
-
-      <div class="ai-panel" id="aiPanel">
-        <div class="ai-risk-row">
-          <span id="aiLevel" class="ai-pill low">Low</span>
-          <span id="aiLastCheck">checking...</span>
-        </div>
-        <div class="ai-risk-meter" aria-label="Portal AI risk score"><div id="aiRiskBar" class="ai-risk-bar" style="width:0%"></div></div>
-        <ul id="aiReasons" class="ai-reasons"><li>No warning rules are currently triggered.</li></ul>
-        {% if cfg.portal_ai.vision_ai_enabled|default(false) %}
-        <div id="aiVisionBox" class="ai-vision-box pending"><div><strong>Vision: pending</strong><span>Waiting for the first camera analysis.</span></div></div>
-        {% endif %}
-        <div class="ai-feedback" id="aiFeedbackButtons">
-          <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_good">Looks Good</button>
-          <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_bad">Looks Bad</button>
-          <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="false_alarm">False Alarm</button>
-        </div>
-      </div>
-
-      <hr />
-
-      <div class="status-grid four">
-        <div><strong>Print Time</strong><span id="printTime">-</span></div>
-        <div><strong>Time Left</strong><span id="timeLeft">-</span></div>
-        <div><strong>Completion</strong><span id="completion">-</span></div>
-        <div><strong>Speed</strong><span id="currentSpeed">-</span></div>
-      </div>
-
-      <hr />
-
-      <div class="status-grid three">
-        <div><strong>Filament Used</strong><span id="filamentUsed">-</span></div>
-        <div><strong>Hotend</strong><span id="hotendTemp">- / off</span></div>
-        <div><strong>Bed</strong><span id="bedTemp">- / off</span></div>
-      </div>
-
-      <hr />
-
-      <div class="file-line">
-        <strong>File</strong>
-        <span id="fileName">-</span>
-      </div>
-
-      <a class="button primary full" id="portalButton" href="{{ printer.portal_url if printer else '/setup' }}" target="_blank" rel="noreferrer">Go To Elegoo Web Portal</a>
-    </article>
+    </details>
     {% elif card.enabled and card.id == 'quick_actions' %}
-    <article class="card dashboard-card fade-in" data-card="quick_actions" style="order: {{ card.order }}">
-      <h2>Quick Actions</h2>
-      <div class="button-stack">
-      {% for action_id, action in actions %}
-        {% if action.visible %}
-          {% if action_id == 'set_speed_preset' %}
-          <div class="quick-action-row speed-action-row">
-            <select class="input speed-preset-select" aria-label="Speed preset for {{ action.label }}">
-              <option value="0">Silent</option>
-              <option value="1" selected>Balanced</option>
-              <option value="2">Sport</option>
-              <option value="3">Ludicrous</option>
-            </select>
+    <details class="card dashboard-card dashboard-accordion fade-in" data-card="quick_actions" style="order: {{ card.order }}">
+      <summary class="settings-summary dashboard-summary"><span class="dashboard-summary-title">Quick Actions</span></summary>
+      <div class="dashboard-panel-body">
+        <div class="button-stack">
+        {% for action_id, action in actions %}
+          {% if action.visible %}
+            {% if action_id == 'set_speed_preset' %}
+            <div class="quick-action-row speed-action-row">
+              <select class="input speed-preset-select" aria-label="Speed preset for {{ action.label }}">
+                <option value="0">Silent</option>
+                <option value="1" selected>Balanced</option>
+                <option value="2">Sport</option>
+                <option value="3">Ludicrous</option>
+              </select>
+              <button class="button {{ action.style|default('primary') }} action-button" data-action="{{ action_id }}" data-confirm="{{ action.confirm_text }}" data-requires-confirm="{{ 'true' if action.requires_confirm else 'false' }}" data-spinner-text="{{ action.spinner_text }}">
+                <span class="button-label">{{ action.label }}</span>
+              </button>
+            </div>
+            {% else %}
             <button class="button {{ action.style|default('primary') }} action-button" data-action="{{ action_id }}" data-confirm="{{ action.confirm_text }}" data-requires-confirm="{{ 'true' if action.requires_confirm else 'false' }}" data-spinner-text="{{ action.spinner_text }}">
               <span class="button-label">{{ action.label }}</span>
             </button>
-          </div>
-          {% else %}
-          <button class="button {{ action.style|default('primary') }} action-button" data-action="{{ action_id }}" data-confirm="{{ action.confirm_text }}" data-requires-confirm="{{ 'true' if action.requires_confirm else 'false' }}" data-spinner-text="{{ action.spinner_text }}">
-            <span class="button-label">{{ action.label }}</span>
-          </button>
+            {% endif %}
           {% endif %}
-        {% endif %}
-      {% endfor %}
+        {% endfor %}
+        </div>
       </div>
-    </article>
+    </details>
     {% elif card.enabled and card.id == 'connection_info' %}
-    <article class="card dashboard-card fade-in" data-card="connection_info" style="order: {{ card.order }}">
-      <div class="card-title-row">
-        <h2>Connection</h2>
-        <span class="pill" id="lastUpdate">Waiting...</span>
+    <details class="card dashboard-card dashboard-accordion fade-in" data-card="connection_info" style="order: {{ card.order }}" open>
+      <summary class="settings-summary dashboard-summary"><span class="dashboard-summary-title">Connection</span></summary>
+      <div class="dashboard-panel-body">
+        <div class="info-list">
+          <div><span>Printer IP</span><strong id="printerHost">{{ printer.host if printer else '-' }}</strong></div>
+          <div><span>Portal</span><strong id="portalState">{{ printer.portal_url if printer else '-' }}</strong></div>
+          <div><span>Camera</span><strong id="cameraState">{{ printer.camera_url if printer else '-' }}</strong></div>
+        </div>
       </div>
-      <div class="info-list">
-        <div><span>Printer IP</span><strong id="printerHost">{{ printer.host if printer else '-' }}</strong></div>
-        <div><span>API</span><strong id="apiState">Checking...</strong></div>
-        <div><span>Portal</span><strong id="portalState">{{ printer.portal_url if printer else '-' }}</strong></div>
-        <div><span>Camera</span><strong id="cameraState">{{ printer.camera_url if printer else '-' }}</strong></div>
-      </div>
-    </article>
+    </details>
     {% endif %}
   {% endfor %}
 </section>
+
+<div id="gcodeThumbnailModal" class="modal-backdrop thumbnail-modal hidden" role="dialog" aria-modal="true" aria-labelledby="gcodeThumbnailModalTitle">
+  <div class="modal-card thumbnail-modal-card">
+    <div class="modal-header">
+      <div>
+        <h2 id="gcodeThumbnailModalTitle">G-code Thumbnail</h2>
+        <p id="gcodeThumbnailModalFile">Current print preview</p>
+      </div>
+      <button id="gcodeThumbnailModalClose" class="icon-button" type="button" aria-label="Close">×</button>
+    </div>
+    <div class="thumbnail-modal-body">
+      <img id="gcodeThumbnailModalImg" class="thumbnail-modal-img" alt="Large G-code thumbnail preview" />
+    </div>
+  </div>
+</div>
 {% endblock %}

@@ -59,6 +59,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     data = asdict(cfg)
     data["portal_url"] = f"/portal-fullscreen?printer={cfg.id}"
     data["portal_chrome_url"] = f"/portal?printer={cfg.id}"
+    data["kiosk_url"] = f"/kiosk?printer={cfg.id}"
     data["direct_portal_url"] = f"http://{cfg.host}/"
     data["camera_url"] = f"/api/printers/{cfg.id}/camera/stream"
     data["direct_camera_url"] = f"http://{cfg.host}:8080/"
@@ -68,7 +69,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     return data
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "config_version": 1,
+    "config_version": 4,
     "app": {
         "name": "cc2-dash-lite",
         "bind_host": "0.0.0.0",
@@ -98,8 +99,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "printers": {},
     "features": {
-        "file_manager_enabled": True,
-        "filament_manager_enabled": True,
+        "file_manager_enabled": False,
+        "filament_manager_enabled": False,
+        "kiosk_enabled": True,
+    },
+    "kiosk": {
+        "refresh_interval_seconds": 3,
+        "camera_fit": "contain",
+        "show_top_nav": True,
+        "show_printer_name": True,
+        "show_camera_badge": True,
+        "show_progress": True,
+        "show_ai_status": True,
+        "show_time_left": True,
+        "show_print_status": True,
     },
     "camera_proxy": {
         "enabled": True,
@@ -119,6 +132,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "check_interval_seconds": 30,
         "background_log_changes": True,
         "background_min_log_level": "watch",
+        "monitor_active_prints_only": True,
         "telemetry_rules_enabled": True,
         "camera_rules_enabled": True,
         "opencv_rules_enabled": False,
@@ -142,12 +156,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "vision_required_bad_checks": 2,
         "vision_store_suspicious_only": True,
         "vision_max_saved_frames": 50,
-        "vision_prompt": "You are monitoring a 3D printer camera image. Return JSON only with visual_state, failure_types, confidence, severity, summary, and recommended_action. Be conservative and do not treat normal supports, purge towers, brims, skirts, infill, filament swaps, or multicolor purge waste as failure unless clearly abnormal.",
+        "vision_treat_benign_uncertain_as_ok": True,
+        "vision_benign_uncertain_max_severity": 25,
+        "vision_uncertain_risk_severity_threshold": 35,
+        "vision_prompt": "You are monitoring a 3D printer camera image. Return JSON only with visual_state, failure_types, confidence, severity, summary, and recommended_action. If the print appears normal and you do not see a visible problem, return visual_state ok, not uncertain. Only return uncertain when the image is genuinely ambiguous, blurry, blocked, too dark, or shows something unclear that could be a failure. If you return uncertain, explain what is ambiguous. Be conservative and do not treat normal supports, purge towers, brims, skirts, infill, filament swaps, multicolor purge waste, reflections, or ordinary filament color changes as failure unless clearly abnormal.",
         "progress_stuck_minutes": 8,
         "multi_color_mode": "auto",
         "multi_color_progress_stuck_minutes": 30,
         "stale_status_seconds": 75,
         "feedback_enabled": True,
+        "feedback_suppression_enabled": True,
+        "feedback_suppression_ttl_hours": 18,
+        "feedback_suppression_max_severity": 65,
+        "feedback_suppression_include_camera": False,
+        "feedback_threshold_auto_tuning_enabled": False,
         "auto_pause_enabled": False,
         "auto_pause_threshold": 90,
         "require_multiple_bad_checks": 3
@@ -157,6 +179,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "camera_autoload": True,
         "show_footer": True,
         "compact_mode": False,
+        "show_gcode_thumbnail": True,
         "cards": [
             {"id": "camera_status", "label": "Camera + Status", "enabled": True, "order": 10},
             {"id": "quick_actions", "label": "Quick Actions", "enabled": True, "order": 20},
@@ -254,6 +277,27 @@ def deep_merge(defaults: Any, loaded: Any) -> Any:
 def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Small compatibility fixes for older saved config files."""
     try:
+        old_version = int(cfg.get("config_version") or 1)
+    except Exception:
+        old_version = 1
+    try:
+        # v1.2.26: keep the experimental File Manager route available, but hide
+        # its top-nav entry by default. Older saved configs inherited the prior
+        # True default, so migrate once; users can re-enable it from Settings.
+        features = cfg.setdefault("features", {})
+        if old_version < 2:
+            features["file_manager_enabled"] = False
+        # v1.2.28: Filament Manager is still experimental. Keep the route and
+        # settings available, but hide the top-nav entry by default until the
+        # filament/CANVAS support is ready for normal use.
+        if old_version < 3:
+            features["filament_manager_enabled"] = False
+        dashboard = cfg.setdefault("dashboard", {})
+        dashboard.setdefault("show_gcode_thumbnail", True)
+        cfg["config_version"] = 4
+    except Exception:
+        pass
+    try:
         speed = ((cfg.get("actions") or {}).get("set_speed_preset") or {})
         speed.pop("preset_mode", None)
         speed.pop("preset_name", None)
@@ -272,6 +316,38 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         if ai.get("vision_dark_contrast_threshold") in (None, 18, 18.0):
             ai["vision_dark_contrast_threshold"] = 22
         ai.setdefault("vision_dark_relative_drop_threshold", 18)
+    except Exception:
+        pass
+    try:
+        features = cfg.setdefault("features", {})
+        features.setdefault("kiosk_enabled", True)
+        kiosk = cfg.setdefault("kiosk", {})
+        kiosk.setdefault("refresh_interval_seconds", 3)
+        kiosk.setdefault("camera_fit", "contain")
+        kiosk.setdefault("show_top_nav", True)
+        kiosk.setdefault("show_printer_name", True)
+        kiosk.setdefault("show_camera_badge", True)
+        kiosk.setdefault("show_progress", True)
+        kiosk.setdefault("show_ai_status", True)
+        kiosk.setdefault("show_time_left", True)
+        kiosk.setdefault("show_print_status", True)
+    except Exception:
+        pass
+    try:
+        ai = cfg.setdefault("portal_ai", {})
+        ai.setdefault("monitor_active_prints_only", True)
+        ai.setdefault("vision_treat_benign_uncertain_as_ok", True)
+        ai.setdefault("vision_benign_uncertain_max_severity", 25)
+        ai.setdefault("vision_uncertain_risk_severity_threshold", 35)
+        ai.setdefault("feedback_suppression_enabled", True)
+        ai.setdefault("feedback_suppression_ttl_hours", 18)
+        ai.setdefault("feedback_suppression_max_severity", 65)
+        ai.setdefault("feedback_suppression_include_camera", False)
+        ai.setdefault("feedback_threshold_auto_tuning_enabled", False)
+        old_prompt = "You are monitoring a 3D printer camera image. Return JSON only with visual_state, failure_types, confidence, severity, summary, and recommended_action. Be conservative and do not treat normal supports, purge towers, brims, skirts, infill, filament swaps, or multicolor purge waste as failure unless clearly abnormal."
+        current_prompt = str(ai.get("vision_prompt") or "").strip()
+        if not current_prompt or current_prompt == old_prompt:
+            ai["vision_prompt"] = str(DEFAULT_CONFIG["portal_ai"]["vision_prompt"])
     except Exception:
         pass
     return cfg

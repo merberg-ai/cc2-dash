@@ -3,25 +3,16 @@
 {% block content %}
 <section class="setup-wizard fade-in" data-current-step="0">
   <div class="setup-wizard-shell">
-    <div class="setup-progress-card card">
-      <div class="setup-progress-top">
-        <div>
-          <span class="eyebrow">First-run setup</span>
-          <h1>Let’s wire up cc2-dash-lite</h1>
-          <p>One card at a time: discover the printer, optionally add it manually, tune the UI, lock down access, configure Portal AI, then launch the dashboard.</p>
-        </div>
-        <span id="setupStepPill" class="pill">Step 1 / 6</span>
-      </div>
+    <div class="setup-progress-card card" aria-label="Configure cc2-dash setup progress">
       <div class="setup-progress-track"><span id="setupProgressBar" style="width:16.6%"></span></div>
-      <div id="setupStepLabel" class="mini-note">Scan for verified Centauri printers.</div>
     </div>
 
-    <article class="card setup-card active" data-setup-card="scan" data-step-title="Scan for verified Centauri printers">
-      <div class="step-title"><span class="step-badge">1</span><h2>Scan for printers</h2></div>
-      <p class="muted">We’ll only show devices that answer the Centauri discovery probe. Routers and unrelated LAN devices stay hidden.</p>
+    <article class="card setup-card active" data-setup-card="scan" data-step-title="Find printers">
+      <div class="step-title"><span class="step-badge">1</span><h2>Find printers</h2></div>
+      <p class="muted">Find printers.</p>
       <label class="field-label" for="scanSubnet">Subnet or host</label>
       <input id="scanSubnet" class="input" value="{{ default_subnet }}" placeholder="192.168.1.0/24 or 192.168.1.x" />
-      <button id="scanButton" class="button primary full"><span class="button-label">Scan / Discover Printers</span></button>
+      <button id="scanButton" class="button primary full"><span class="button-label">Find Printers</span></button>
       <div id="scanStatus" class="scan-status hidden"><span class="spinner"></span><span>Scanning...</span></div>
       <div id="scanResults" class="result-list"></div>
       <div class="setup-nav-row">
@@ -39,7 +30,7 @@
       <label class="field-label" for="manualSerial">Serial number</label>
       <input id="manualSerial" class="input" placeholder="Printer serial / SN" />
       <label class="field-label" for="manualPin">Printer PIN / access code</label>
-      <input id="manualPin" class="input" type="password" inputmode="numeric" value="123456" placeholder="123456" />
+      <input id="manualPin" class="input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Printer PIN / access code" />
       <button id="manualAddButton" class="button primary full"><span class="button-label">Pair / Save Manual Printer</span></button>
       <div class="setup-nav-row">
         <button class="button secondary setup-back" type="button"><span class="button-label">Back</span></button>
@@ -56,6 +47,20 @@
         <option value="{{ id }}" {% if cfg.app.theme == id %}selected{% endif %}>{{ t.name }}</option>
         {% endfor %}
       </select>
+      <div class="theme-preview-grid" data-theme-target="setupTheme" aria-label="Theme previews">
+        {% for id, t in themes.items() %}
+        <button type="button" class="theme-preview-card {% if cfg.app.theme == id %}active{% endif %}" data-theme-choice="{{ id }}" style="--preview-bg: {{ t.colors.bg }}; --preview-bg2: {{ t.colors.bg2 }}; --preview-card: {{ t.colors.card }}; --preview-primary: {{ t.colors.primary }}; --preview-text: {{ t.colors.text }}; --preview-muted: {{ t.colors.muted }}; --preview-border: {{ t.colors.border }}; --preview-success: {{ t.colors.success }}; --preview-warning: {{ t.colors.warning }}; --preview-danger: {{ t.colors.danger }};">
+          <span class="theme-preview-surface">
+            <span class="theme-preview-dot primary"></span>
+            <span class="theme-preview-dot success"></span>
+            <span class="theme-preview-dot warning"></span>
+            <span class="theme-preview-line long"></span>
+            <span class="theme-preview-line short"></span>
+          </span>
+          <span class="theme-preview-name">{{ t.name }}</span>
+        </button>
+        {% endfor %}
+      </div>
       <div class="grid-2 gap setup-field-grid">
         <div>
           <label class="field-label" for="setupBaseFont">Base font</label>

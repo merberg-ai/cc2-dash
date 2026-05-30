@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="{{ theme.colors.bg }}" />
+  <title>Kiosk - {{ printer.name if printer else cfg.app.name|default('cc2-dash-lite') }}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    :root {
+      {{ theme_vars|safe }}
+    }
+    {% if theme.effects.scanlines %}
+    body::after { content:""; pointer-events:none; position:fixed; inset:0; background:linear-gradient(rgba(255,255,255,.035) 50%, rgba(0,0,0,.04) 50%); background-size:100% 4px; opacity:.18; z-index:9999; }
+    {% endif %}
+  </style>
+</head>
+<body class="kiosk-page" data-page="kiosk" data-printer-id="{{ printer_id or '' }}">
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+  <div class="kiosk-shell">
+    {% if cfg.kiosk.show_top_nav|default(true) %}
+    <header class="kiosk-topbar fade-in">
+      <a class="kiosk-brand" href="/" title="Back to dashboard">
+        <span class="brand-icon kiosk-brand-icon">⬢</span>
+        <span class="kiosk-brand-text">
+          <strong>{{ printer.name if printer else cfg.app.name|default('cc2-dash-lite') }}</strong>
+          <small id="kioskPrinterMeta">{{ printer.host if printer else 'setup required' }}</small>
+        </span>
+      </a>
+      <nav class="kiosk-nav" aria-label="Kiosk navigation">
+        <a href="/" class="navlink">Dash</a>
+        {% if printer %}<a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer">Portal</a>{% endif %}
+        <a href="/settings" class="navlink">Settings</a>
+        <a href="/logs" class="navlink">Logs</a>
+      </nav>
+    </header>
+    {% endif %}
+
+    <main class="kiosk-main {% if not cfg.kiosk.show_top_nav|default(true) %}no-topbar{% endif %}">
+      <section class="kiosk-camera-card fade-in" aria-label="Kiosk camera stream">
+        <div id="kioskCameraFrame" class="kiosk-camera-frame camera-fit-{{ cfg.kiosk.camera_fit|default('contain') }}">
+          <div class="camera-placeholder" id="kioskCameraPlaceholder">
+            <span class="spinner"></span>
+            <span>Loading camera relay...</span>
+          </div>
+          {% if printer %}
+          <img id="kioskCameraStream" class="kiosk-camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}?kiosk=1" data-stream-src="{{ printer.camera_url }}" onload="window.cc2KioskCameraLoaded && window.cc2KioskCameraLoaded()" onerror="window.cc2KioskCameraFailed && window.cc2KioskCameraFailed()" />
+          {% endif %}
+
+          <div class="kiosk-overlay-stack" aria-label="Kiosk print status overlay">
+            {% if cfg.kiosk.show_camera_badge|default(true) %}
+            <span id="kioskRelayBadge" class="kiosk-overlay-pill relay"><span id="kioskRelayDot" class="dot warn"></span><span id="kioskRelayText">Relay</span></span>
+            {% endif %}
+            {% if cfg.kiosk.show_ai_status|default(true) and cfg.portal_ai.enabled|default(true) %}
+            <span id="kioskAiBadge" class="kiosk-overlay-pill ai good">Looks Good</span>
+            {% endif %}
+            {% if cfg.kiosk.show_progress|default(true) %}
+            <div class="kiosk-progress-overlay" aria-label="Print progress">
+              <div class="kiosk-progress-track"><div id="kioskProgressBar" class="kiosk-progress-bar" style="width:0%"></div></div>
+              <span id="kioskProgressText" class="kiosk-progress-text">0.0%</span>
+            </div>
+            {% endif %}
+            {% if cfg.kiosk.show_print_status|default(true) %}
+            <span id="kioskStatusBadge" class="kiosk-overlay-pill status">Status: -</span>
+            {% endif %}
+            {% if cfg.kiosk.show_time_left|default(true) %}
+            <span id="kioskTimeLeftBadge" class="kiosk-overlay-pill time">Left: -</span>
+            {% endif %}
+          </div>
+
+          {% if cfg.kiosk.show_printer_name|default(true) %}
+          <div class="kiosk-printer-overlay">
+            <strong id="kioskPrinterName">{{ printer.name if printer else 'No printer' }}</strong>
+            <span id="kioskFileName">-</span>
+          </div>
+          {% endif %}
+        </div>
+      </section>
+    </main>
+  </div>
+  <script id="bootConfig" type="application/json">{{ cfg|tojson }}</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
