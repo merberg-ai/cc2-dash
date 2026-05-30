@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.35-blue)
+![Version](https://img.shields.io/badge/version-1.2.36-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -60,7 +60,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.35 learning-settings-ui
+1.2.36 safe-auto-thresholds
 ```
 
 Major current capabilities:
@@ -76,7 +76,7 @@ Major current capabilities:
 | Ollama vision checks | Working, active-print-only by default |
 | AI feedback dataset | Working, includes fresh-frame capture, JSONL audit log, SQLite mirror, and outcome interpretation |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
-| Persistent AI learning | Working foundation plus Settings UI visibility: SQLite samples, profiles, manual/suggested/applied/effective thresholds, rebuild/reset controls |
+| Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
 | Filament Manager / CANVAS | Available but hidden by default while command behavior is tested on real firmware |
 | Themes | Built-in theme library with preview cards |
@@ -597,8 +597,9 @@ How it works in this version:
 4. Rebuild endpoints calculate per-printer learning profiles, outcome counts, normal baselines, and suggested threshold modifiers.
 5. Settings → Portal AI shows the AI Feedback Learning controls and profile cards.
 6. Manual threshold settings are not overwritten.
-7. Default mode is `suggest_only`, so learned modifiers are calculated but not applied to live detection.
-8. Portal AI remains advisory-only and does not pause, cancel, resume, load/unload filament, or control jobs automatically.
+7. Default mode is `suggest_only`, so learned modifiers are calculated and shown but not applied to live detection unless you explicitly switch to `auto_adjust_safe`.
+8. In `auto_adjust_safe`, bounded learned modifiers are applied only to the live in-memory vision check thresholds; your manual settings are still not overwritten.
+9. Portal AI remains advisory-only and does not pause, cancel, resume, load/unload filament, or control jobs automatically.
 
 Learning modes under `portal_ai` config:
 
@@ -632,7 +633,7 @@ Settings → Portal AI now includes **AI Feedback Learning** controls for:
 - viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds.
 
 > [!IMPORTANT]
-> v1.2.35 makes learning visible and configurable in Settings. Live effective-threshold integration and feedback reason chips are still planned follow-up work.
+> v1.2.36 wires learned effective thresholds into live vision checks only when `auto_adjust_safe` is explicitly selected. `off` and `suggest_only` remain advisory/no-op for live scoring. Feedback reason chips are still planned follow-up work.
 
 ---
 
@@ -1116,6 +1117,17 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.36 safe auto thresholds
+
+- Wired persistent AI learning effective thresholds into the live vision monitor.
+- In `off` and `suggest_only` modes, live vision continues to use the manual threshold values exactly as before.
+- In `auto_adjust_safe` mode, live vision uses bounded effective values for dark luma, fine-edge density, and required bad checks.
+- Manual settings are still never overwritten; learned values are applied only to the in-memory vision check configuration.
+- Vision API results now include `learning_thresholds` and `learning_applied` so the dashboard/logs can explain when bounded modifiers were used.
+- Added dashboard Vision metadata showing learning mode and applied modifiers during live checks.
+- Added low-noise warning fallback: if the learning database/config lookup fails, vision monitoring falls back to manual thresholds instead of failing the check.
+- Portal AI remains advisory-only and still does not pause/cancel/control print jobs automatically.
 
 ### v1.2.35 learning settings UI
 

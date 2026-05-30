@@ -335,26 +335,44 @@ def db_health() -> dict[str, Any]:
 
 
 def get_effective_ai_thresholds(printer_id: str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return manual, suggested, applied, and effective AI thresholds.
+
+    Live scoring only consumes the effective values when learning is explicitly in
+    auto_adjust_safe mode. The stored manual config values are never overwritten.
+    """
     cfg = cfg or {}
     ai_cfg = cfg.get("portal_ai", {}) if isinstance(cfg.get("portal_ai"), dict) else {}
     manual = _manual_thresholds(ai_cfg)
     profile = db.get_profile(printer_id) or {}
     mode = _mode(ai_cfg)
     enabled = _is_enabled(ai_cfg)
+
+    max_dark = abs(float(_as_float(ai_cfg.get("ai_learning_max_dark_luma_adjustment"), 8.0) or 8.0))
+    max_edge = abs(float(_as_float(ai_cfg.get("ai_learning_max_edge_density_adjustment"), 0.05) or 0.05))
+    max_bad_checks = max(0, min(_as_int(ai_cfg.get("ai_learning_max_required_bad_checks_adjustment"), 1), 3))
+
     suggested = {
-        "dark_luma_modifier": _as_float(profile.get("suggested_dark_luma_modifier"), 0.0) or 0.0,
-        "edge_density_modifier": _as_float(profile.get("suggested_edge_density_modifier"), 0.0) or 0.0,
-        "required_bad_checks_modifier": _as_int(profile.get("suggested_required_bad_checks_modifier"), 0),
+        "dark_luma_modifier": round(_clamp(_as_float(profile.get("suggested_dark_luma_modifier"), 0.0) or 0.0, -max_dark, max_dark), 4),
+        "edge_density_modifier": round(_clamp(_as_float(profile.get("suggested_edge_density_modifier"), 0.0) or 0.0, -max_edge, max_edge), 4),
+        "required_bad_checks_modifier": max(0, min(max_bad_checks, _as_int(profile.get("suggested_required_bad_checks_modifier"), 0))),
     }
     if enabled and mode == "auto_adjust_safe":
-        applied = dict(suggested)
+        applied = {
+            "dark_luma_modifier": suggested["dark_luma_modifier"] if bool(ai_cfg.get("ai_learning_apply_dark_luma", True)) else 0.0,
+            "edge_density_modifier": suggested["edge_density_modifier"] if bool(ai_cfg.get("ai_learning_apply_edge_density", True)) else 0.0,
+            "required_bad_checks_modifier": suggested["required_bad_checks_modifier"] if bool(ai_cfg.get("ai_learning_apply_required_bad_checks", True)) else 0,
+        }
     else:
         applied = {"dark_luma_modifier": 0.0, "edge_density_modifier": 0.0, "required_bad_checks_modifier": 0}
+
     effective = {
-        "dark_luma": round(float(manual["dark_luma"] or 0) + float(applied["dark_luma_modifier"]), 4),
-        "edge_density": round(float(manual["edge_density"] or 0) + float(applied["edge_density_modifier"]), 4),
+        "dark_luma": round(max(0.0, float(manual["dark_luma"] or 0) + float(applied["dark_luma_modifier"])), 4),
+        "edge_density": round(max(0.0, float(manual["edge_density"] or 0) + float(applied["edge_density_modifier"])), 4),
         "required_bad_checks": max(1, int(manual["required_bad_checks"] or 1) + int(applied["required_bad_checks_modifier"] or 0)),
     }
+    active = enabled and mode == "auto_adjust_safe" and any(
+        abs(float(applied.get(k) or 0)) > 0 for k in ("dark_luma_modifier", "edge_density_modifier", "required_bad_checks_modifier")
+    )
     return {
         "manual": manual,
         "suggested": suggested,
@@ -362,9 +380,31 @@ def get_effective_ai_thresholds(printer_id: str, cfg: dict[str, Any] | None = No
         "effective": effective,
         "mode": mode,
         "enabled": enabled,
+        "active": active,
         "confidence": profile.get("confidence") or "none",
         "sample_count": int(profile.get("sample_count") or 0),
     }
+
+
+def effective_ai_config(printer_id: str, cfg: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a copy of portal_ai config with safe learned thresholds applied.
+
+    This is intentionally a copy. It lets the live vision path use effective
+    values without mutating or saving the user's manual settings.
+    """
+    cfg = cfg or {}
+    base_ai_cfg = cfg.get("portal_ai", {}) if isinstance(cfg.get("portal_ai"), dict) else {}
+    ai_cfg = dict(base_ai_cfg)
+    thresholds = get_effective_ai_thresholds(printer_id, cfg)
+    effective = thresholds.get("effective") or {}
+    ai_cfg["vision_dark_mean_threshold"] = effective.get("dark_luma", ai_cfg.get("vision_dark_mean_threshold"))
+    ai_cfg["vision_stringing_edge_density_threshold"] = effective.get("edge_density", ai_cfg.get("vision_stringing_edge_density_threshold"))
+    ai_cfg["vision_required_bad_checks"] = effective.get("required_bad_checks", ai_cfg.get("vision_required_bad_checks"))
+    # The vision path carries this through to API/UI/log output so the user can
+    # see when learned values affected the check. Underscore keeps it clearly
+    # internal to cc2-dash config plumbing.
+    ai_cfg["_ai_learning_thresholds"] = thresholds
+    return ai_cfg, thresholds
 
 
 def _profile_raw(profile: dict[str, Any] | None) -> dict[str, Any]:

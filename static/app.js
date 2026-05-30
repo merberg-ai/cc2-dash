@@ -132,6 +132,16 @@
       const heur = vision.heuristics || {};
       const heurWarnings = Array.isArray(heur.warnings) && heur.warnings.length ? `flags ${heur.warnings.join(', ')}` : '';
       const heurMetrics = Number.isFinite(Number(heur.mean_luma)) ? `luma ${Number(heur.mean_luma).toFixed(0)} · contrast ${Number(heur.contrast || 0).toFixed(0)} · edge ${Number(heur.edge_density || 0).toFixed(3)}` : '';
+      const learning = vision.learning_thresholds || {};
+      const applied = learning.applied || {};
+      const appliedBits = Object.entries(applied)
+        .filter(([, value]) => Math.abs(Number(value || 0)) > 0)
+        .map(([key, value]) => `${key.replace(/_modifier$/, '').replace(/_/g, ' ')} ${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(key.includes('edge') ? 3 : 0)}`);
+      const learningMeta = learning.mode
+        ? (vision.learning_applied || learning.active
+          ? `learning auto · ${appliedBits.join(', ') || 'bounded modifiers active'}`
+          : `learning ${String(learning.mode).replace(/_/g, ' ')}`)
+        : '';
       const vMeta = [
         vision.model ? `model ${vision.model}` : '',
         vision.last_check ? `checked ${vision.last_check}` : '',
@@ -139,7 +149,8 @@
         Number.isFinite(Number(vision.severity)) ? `severity ${Number(vision.severity)}%` : '',
         vision.consecutive_bad ? `${vision.consecutive_bad}/${vision.required_bad_checks || '?'} bad` : '',
         heurWarnings,
-        heurMetrics
+        heurMetrics,
+        learningMeta
       ].filter(Boolean).join(' · ');
       const img = vision.frame?.latest_url ? `<img class="vision-thumb" src="${esc(vision.frame.latest_url)}" alt="Latest vision frame" loading="lazy">` : '';
       const vClass = [String(vState), vision.benign_uncertainty || vision.normalized_from === 'uncertain' ? 'benign_uncertain' : ''].filter(Boolean).join(' ');

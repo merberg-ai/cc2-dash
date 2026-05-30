@@ -197,6 +197,23 @@ class VisionMonitor:
         else:
             self._state.clear()
 
+    def _effective_ai_cfg(self, printer_id: str, cfg: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return portal_ai config with learned safe-auto thresholds applied."""
+        base_ai_cfg = dict((cfg or {}).get("portal_ai", {}) or {})
+        try:
+            from .ai_learning import effective_ai_config
+
+            return effective_ai_config(printer_id, cfg)
+        except Exception as exc:
+            # Learning should never break basic vision monitoring. Fall back to
+            # the saved manual settings and log a low-noise warning.
+            state = self._state.setdefault(printer_id, {})
+            now = time.time()
+            if now - _as_float(state.get("last_learning_cfg_error_epoch"), 0.0) > 300:
+                state["last_learning_cfg_error_epoch"] = now
+                log("warning", f"AI learning threshold lookup failed; using manual vision thresholds: {exc}", "vision", printer=printer_id)
+            return base_ai_cfg, {"enabled": False, "mode": str(base_ai_cfg.get("ai_feedback_learning_mode") or "suggest_only"), "error": str(exc)}
+
     def latest_frame_path(self, printer_id: str) -> Path:
         return DATA_DIR / "vision" / printer_id / "latest.jpg"
 
@@ -606,6 +623,17 @@ class VisionMonitor:
             bits.append(f"severity={result.get('severity')}%")
         if result.get("consecutive_bad"):
             bits.append(f"bad={result.get('consecutive_bad')}/{result.get('required_bad_checks')}")
+        learning = result.get("learning_thresholds") if isinstance(result.get("learning_thresholds"), dict) else {}
+        if result.get("learning_applied"):
+            applied = learning.get("applied") if isinstance(learning.get("applied"), dict) else {}
+            bits.append(
+                "learning="
+                + ",".join(
+                    f"{k}={v}"
+                    for k, v in applied.items()
+                    if abs(_as_float(v, 0.0)) > 0
+                )
+            )
         msg = f"Vision {visual_state}: {result.get('summary') or 'No summary'}"
         if bits:
             msg += " (" + " · ".join(bits) + ")"
@@ -711,15 +739,16 @@ class VisionMonitor:
         }
 
     def check(self, printer_id: str, pcfg: PrinterConfig, cfg: dict[str, Any], status: dict[str, Any] | None = None, force: bool = False) -> dict[str, Any]:
-        ai_cfg = cfg.get("portal_ai", {}) or {}
         now = time.time()
         state = self._state.setdefault(printer_id, {"consecutive_bad": 0})
+        ai_cfg, learning_thresholds = self._effective_ai_cfg(printer_id, cfg)
         enabled = bool(ai_cfg.get("vision_ai_enabled", False))
         if not enabled:
             result = {
                 "enabled": False,
                 "visual_state": "disabled",
                 "summary": "Vision AI is disabled.",
+                "learning_thresholds": learning_thresholds,
                 "last_check_epoch": now,
                 "last_check": time.strftime("%H:%M:%S"),
             }
@@ -742,6 +771,7 @@ class VisionMonitor:
                     "skipped": True,
                     "visual_state": "standby",
                     "summary": "No active print; vision check skipped.",
+                    "learning_thresholds": learning_thresholds,
                     "consecutive_bad": 0,
                     "last_check_epoch": now,
                     "last_check": time.strftime("%H:%M:%S"),
@@ -818,6 +848,8 @@ class VisionMonitor:
                     "bad_confirmed": int(state.get("consecutive_bad") or 0) >= required,
                     "consecutive_bad": int(state.get("consecutive_bad") or 0),
                     "required_bad_checks": required,
+                    "learning_thresholds": learning_thresholds,
+                    "learning_applied": bool((learning_thresholds or {}).get("active")),
                     "frame": frame_info,
                     "last_check_epoch": now,
                     "last_check": time.strftime("%H:%M:%S"),
@@ -840,6 +872,8 @@ class VisionMonitor:
                 "bad_confirmed": int(state.get("consecutive_bad") or 0) >= required,
                 "consecutive_bad": int(state.get("consecutive_bad") or 0),
                 "required_bad_checks": required,
+                "learning_thresholds": learning_thresholds,
+                "learning_applied": bool((learning_thresholds or {}).get("active")),
                 "frame": frame_info,
                 "last_error": str(exc),
                 "last_check_epoch": now,
