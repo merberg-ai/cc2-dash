@@ -55,6 +55,34 @@
     return `${c} / ${t}`;
   }
 
+  function niceStatusLabel(value, fallback = 'Unknown') {
+    const raw = String(value || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!raw) return fallback;
+    if (raw === raw.toUpperCase() || raw === raw.toLowerCase()) {
+      return raw.toLowerCase().replace(/\b[a-z]/g, ch => ch.toUpperCase());
+    }
+    return raw;
+  }
+
+  function printSummaryState(status, activePrint, progress) {
+    const st = status || {};
+    const phase = st.print_phase && typeof st.print_phase === 'object' ? st.print_phase : {};
+    const preparing = !!phase.is_preparing;
+    const rawLabel = preparing
+      ? (phase.label || st.status_text || st.state || 'Preparing')
+      : (st.status_text || st.state || (activePrint ? 'Printing' : 'Idle'));
+    const label = niceStatusLabel(rawLabel, activePrint ? 'Printing' : 'Idle');
+    const rawState = `${st.status_text || ''} ${st.state || ''} ${label}`.toLowerCase();
+    const errored = !st.reachable || /error|fail|fault|offline|disconnect|lost/.test(rawState);
+    const tone = errored ? 'error' : (preparing ? 'preparing' : (activePrint ? 'printing' : 'idle'));
+    const busy = !!(activePrint || preparing);
+    const pct = Number.isFinite(Number(progress)) ? Number(progress).toFixed(1) : '0.0';
+    const title = errored
+      ? `${label} · printer needs attention`
+      : (busy ? `${label} · ${pct}% complete` : label);
+    return { label, tone, busy, preparing, title };
+  }
+
   function setText(id, value) {
     const el = $('#' + id);
     if (el) el.textContent = value ?? '-';
@@ -432,16 +460,18 @@
         : (/print|printing|running|pause|paused|filament operating/i.test(`${st.status_text || ''} ${st.state || ''}`) && !/idle|ready|standby|complete|finished/i.test(`${st.status_text || ''} ${st.state || ''}`));
       const printSummary = $('#printStatusSummary');
       const printStatePill = $('#summaryPrintState');
+      const summaryState = printSummaryState(st, activePrint, progress);
       if (printSummary) {
-        printSummary.classList.toggle('printing', !!activePrint);
-        printSummary.classList.toggle('idle', !activePrint);
+        printSummary.classList.toggle('printing', summaryState.tone === 'printing');
+        printSummary.classList.toggle('preparing', summaryState.tone === 'preparing');
+        printSummary.classList.toggle('error', summaryState.tone === 'error');
+        printSummary.classList.toggle('idle', summaryState.tone === 'idle');
+        printSummary.classList.toggle('busy', !!summaryState.busy);
       }
       if (printStatePill) {
-        printStatePill.className = `summary-print-state ${activePrint ? 'printing' : 'idle'}`;
-        printStatePill.textContent = activePrint ? 'PRINTING' : 'IDLE';
-        printStatePill.title = activePrint
-          ? `Active print · ${progress.toFixed(1)}% complete`
-          : 'Printer idle';
+        printStatePill.className = `summary-print-state ${summaryState.tone}`;
+        printStatePill.textContent = summaryState.label;
+        printStatePill.title = summaryState.title;
       }
 
       setText('statusText', st.status_text || st.state || 'Unknown');

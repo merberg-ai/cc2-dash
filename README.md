@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.47-blue)
+![Version](https://img.shields.io/badge/version-1.2.48-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.47 print-prep-ai-guard
+1.2.48 collapsed-status-summary
 ```
 
 Major current capabilities:
@@ -1143,6 +1143,12 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.48 collapsed status summary
+
+- Updated the collapsed Print Status card to show the printer telemetry status label, such as Bed Preheating, Extruder Preheating, Homing, Printing, or Idle, instead of always showing PRINTING during active/prep states.
+- The collapsed summary now keeps the progress bar visible for active print-preparation phases and uses warning-colored styling for preparation states, green for real printing, muted for idle, and red for error/offline states.
+- No changes to Portal AI scoring, print-prep guards, printer commands, or advisory-only behavior.
 
 ### v1.2.47 print-prep AI guard
 
