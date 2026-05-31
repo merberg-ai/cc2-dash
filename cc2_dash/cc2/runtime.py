@@ -8,7 +8,7 @@ from cc2_dash.cc2.client import Cc2Client
 from cc2_dash.logger import log
 
 
-class LitePrinterRuntime:
+class Cc2PrinterRuntime:
     """Small in-process MQTT client manager for configured CC2 printers."""
 
     def __init__(self) -> None:

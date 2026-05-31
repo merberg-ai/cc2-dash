@@ -18,7 +18,7 @@
     </div>
   </div>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Theme + Fonts</span>
       <small>Theme, typography, and visual polish.</small>
@@ -67,7 +67,7 @@
     </div>
   </details>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Dashboard Layout</span>
       <small>Choose dashboard cards and their order.</small>
@@ -89,18 +89,27 @@
     </div>
   </details>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Menu / Features</span>
       <small>Show or hide top navigation features.</small>
     </summary>
     <div class="settings-panel-body">
-    <p class="muted">Hide unfinished or experimental sections from the top navigation without deleting their config.</p>
+    <p class="muted">Dash and Settings stay pinned. Every other top navigation item can be shown or hidden here; hidden pages remain available by direct URL for testing.</p>
     <div class="settings-list">
       <div class="setting-row">
         <div>
+          <strong>Portal menu option</strong>
+          <small>Shows or hides the stock Elegoo Portal link in the top navigation.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="portalMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.portal_menu_enabled|default(true) %}checked{% endif %}> show</label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div>
           <strong>File Manager menu option</strong>
-          <small>Shows or hides the Files link in the top Dash / Portal / Settings / Logs menu.</small>
+          <small>Shows or hides the Files link. The page remains available directly for testing.</small>
         </div>
         <div class="setting-controls">
           <label><input id="fileManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.file_manager_enabled %}checked{% endif %}> show</label>
@@ -124,12 +133,30 @@
           <label><input id="kioskMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.kiosk_enabled|default(true) %}checked{% endif %}> show</label>
         </div>
       </div>
+      <div class="setting-row">
+        <div>
+          <strong>AI Training menu option</strong>
+          <small>Shows or hides the AI Training review/export page link.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="aiTrainingMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.ai_training_menu_enabled|default(true) %}checked{% endif %}> show</label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Logs menu option</strong>
+          <small>Shows or hides the Logs/Console diagnostics link.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="logsMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.logs_menu_enabled|default(true) %}checked{% endif %}> show</label>
+        </div>
+      </div>
     </div>
     </div>
   </details>
 
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Kiosk Mode</span>
       <small>Minimal camera view with optional print and AI overlays.</small>
@@ -182,7 +209,7 @@
     </div>
   </details>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Camera Relay / Stream Protection</span>
       <small>One camera upstream connection with local fanout.</small>
@@ -226,7 +253,7 @@
     </div>
   </details>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Portal AI 🤖</span>
       <small>Telemetry, watchdog, Ollama vision, and failure detection.</small>
@@ -356,6 +383,94 @@
         <div><strong>Suppression limits</strong><small>Hours before a same-print suppression expires, and max severity allowed to be suppressed.</small></div>
         <div class="setting-controls compact-inline"><input id="aiFeedbackSuppressionTtlHours" class="input" type="number" min="0.5" max="72" step="0.5" value="{{ cfg.portal_ai.feedback_suppression_ttl_hours|default(18) }}"><input id="aiFeedbackSuppressionMaxSeverity" class="input" type="number" min="10" max="95" step="5" value="{{ cfg.portal_ai.feedback_suppression_max_severity|default(65) }}"></div>
       </div>
+      <div class="setting-row ai-learning-warning-row">
+        <div><strong>Persistent AI learning</strong><small>Stores feedback in SQLite, builds per-printer profiles, and explains suggested heuristic tuning. Manual thresholds stay untouched.</small></div>
+        <div class="setting-controls"><label><input id="aiLearningEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.ai_feedback_learning_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Learning mode</strong><small>Suggest only is safest: it calculates modifiers without changing live detection. Auto-adjust is reserved for bounded effective-threshold use.</small></div>
+        <div class="setting-controls">
+          <select id="aiLearningMode" class="input">
+            <option value="off" {% if (cfg.portal_ai.ai_feedback_learning_mode|default('suggest_only')) == 'off' %}selected{% endif %}>Off</option>
+            <option value="suggest_only" {% if (cfg.portal_ai.ai_feedback_learning_mode|default('suggest_only')) == 'suggest_only' %}selected{% endif %}>Suggest only</option>
+            <option value="auto_adjust_safe" {% if (cfg.portal_ai.ai_feedback_learning_mode|default('suggest_only')) == 'auto_adjust_safe' %}selected{% endif %}>Auto-adjust safely</option>
+          </select>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Minimum learning samples</strong><small>Total samples, false positives, and false negatives required before suggestions become meaningful.</small></div>
+        <div class="setting-controls compact-inline"><input id="aiLearningMinSamples" class="input" type="number" min="1" max="500" step="1" value="{{ cfg.portal_ai.ai_learning_min_samples|default(8) }}"><input id="aiLearningMinFalsePositives" class="input" type="number" min="0" max="100" step="1" value="{{ cfg.portal_ai.ai_learning_min_false_positives|default(4) }}"><input id="aiLearningMinFalseNegatives" class="input" type="number" min="0" max="100" step="1" value="{{ cfg.portal_ai.ai_learning_min_false_negatives|default(2) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Maximum learned adjustments</strong><small>Clamp limits for dark luma, fine-edge density, and required bad checks. Tiny guardrails, not chaos knobs.</small></div>
+        <div class="setting-controls compact-inline"><input id="aiLearningMaxDarkLuma" class="input" type="number" min="0" max="40" step="1" value="{{ cfg.portal_ai.ai_learning_max_dark_luma_adjustment|default(8) }}"><input id="aiLearningMaxEdgeDensity" class="input" type="number" min="0" max="0.25" step="0.005" value="{{ cfg.portal_ai.ai_learning_max_edge_density_adjustment|default(0.05) }}"><input id="aiLearningMaxBadChecks" class="input" type="number" min="0" max="3" step="1" value="{{ cfg.portal_ai.ai_learning_max_required_bad_checks_adjustment|default(1) }}"></div>
+      </div>
+      <div class="setting-row tall">
+        <div><strong>Allowed learned modifier types</strong><small>Turn individual suggestion types on/off without deleting stored feedback.</small></div>
+        <div class="setting-controls learning-apply-controls">
+          <label><input id="aiLearningApplyDarkLuma" class="toggle" type="checkbox" {% if cfg.portal_ai.ai_learning_apply_dark_luma|default(true) %}checked{% endif %}> dark luma</label>
+          <label><input id="aiLearningApplyEdgeDensity" class="toggle" type="checkbox" {% if cfg.portal_ai.ai_learning_apply_edge_density|default(true) %}checked{% endif %}> edge density</label>
+          <label><input id="aiLearningApplyBadChecks" class="toggle" type="checkbox" {% if cfg.portal_ai.ai_learning_apply_required_bad_checks|default(true) %}checked{% endif %}> bad checks</label>
+          <label><input id="aiLearningRebuildOnFeedback" class="toggle" type="checkbox" {% if cfg.portal_ai.ai_learning_rebuild_on_feedback|default(true) %}checked{% endif %}> rebuild after feedback</label>
+        </div>
+      </div>
+      <div class="setting-row tall ai-learning-warning-row">
+        <div><strong>AI learning status</strong><small id="aiLearningStatusSummary">Learning status has not been loaded yet.</small></div>
+        <div class="setting-controls learning-action-controls">
+          <button id="refreshAiLearningButton" class="button secondary tiny" type="button">Refresh</button>
+          <button id="rebuildAiLearningButton" class="button secondary tiny" type="button">Rebuild Profiles</button>
+          <button id="resetAiLearningButton" class="button danger tiny" type="button">Reset Learned Tuning</button>
+        </div>
+      </div>
+      <div class="ai-learning-panel" id="aiLearningPanel">
+        <div class="ai-learning-empty">Loading AI learning profiles...</div>
+      </div>
+
+      <div class="setting-row tall ai-learning-warning-row">
+        <div><strong>Import old JSONL feedback</strong><small id="aiLearningImportSummary">Backfill existing data/ai_feedback.jsonl rows into SQLite with duplicate skipping.</small></div>
+        <div class="setting-controls learning-action-controls">
+          <label class="small-check"><input id="aiLearningImportRebuild" class="toggle" type="checkbox" checked> rebuild after import</label>
+          <button id="importAiLearningJsonlButton" class="button secondary tiny" type="button">Import JSONL</button>
+        </div>
+      </div>
+
+      <div class="setting-row tall ai-learning-warning-row">
+        <div><strong>Recent AI feedback samples</strong><small id="aiFeedbackSamplesSummary">Recent feedback samples have not been loaded yet.</small></div>
+        <div class="setting-controls ai-feedback-sample-controls">
+          <select id="aiFeedbackSamplesPrinter" class="input compact-select">
+            <option value="">All printers</option>
+          </select>
+          <select id="aiFeedbackSamplesOutcome" class="input compact-select">
+            <option value="">All outcomes</option>
+            <option value="true_positive">True positive</option>
+            <option value="false_positive">False positive</option>
+            <option value="false_negative">False negative</option>
+            <option value="true_negative">True negative</option>
+          </select>
+          <select id="aiFeedbackSamplesLabel" class="input compact-select">
+            <option value="">All labels</option>
+            <option value="looks_good">Looks Good</option>
+            <option value="looks_bad">Looks Bad</option>
+            <option value="false_alarm">False Alarm</option>
+          </select>
+          <select id="aiFeedbackSamplesLimit" class="input compact-select">
+            <option value="10">Last 10</option>
+            <option value="25" selected>Last 25</option>
+            <option value="50">Last 50</option>
+          </select>
+          <button id="refreshAiFeedbackSamplesButton" class="button secondary tiny" type="button">Refresh Samples</button>
+        </div>
+      </div>
+      <div class="ai-feedback-samples-panel" id="aiFeedbackSamplesPanel">
+        <div class="ai-learning-empty">Loading recent feedback samples...</div>
+      </div>
+      <div class="ai-learning-safety-note ai-feedback-samples-note">
+        Recent samples are a lightweight review view for labels, reasons, outcomes, metrics, and captured feedback frames. Images stay on disk; SQLite stores paths and metrics only.
+      </div>
+
+      <div class="ai-learning-safety-note">
+        <strong>Safety limits:</strong> learning does not change your manual threshold settings. Suggest-only mode does not alter live detection. Save All before rebuilding if you changed learning limits/mode. Portal AI remains advisory and will not pause, cancel, resume, load/unload filament, or control jobs automatically.
+      </div>
       <div class="setting-row">
         <div><strong>Auto-pause</strong><small>Planned safety action. Stored in config, but this build does not auto-pause yet.</small></div>
         <div class="setting-controls"><label><input id="aiAutoPauseEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.auto_pause_enabled %}checked{% endif %}> armed</label></div>
@@ -368,7 +483,7 @@
     </div>
   </details>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Buttons / Quick Actions</span>
       <small>Rename, order, show, and confirm dashboard actions.</small>
@@ -379,7 +494,7 @@
     </div>
   </details>
 
-  <details class="card settings-panel printer-manager-card" open>
+  <details class="card settings-panel printer-manager-card">
     <summary class="settings-summary">
       <span>Printer Manager</span>
       <small>Scan, add, edit, and remove configured printers.</small>
@@ -418,7 +533,7 @@
     </div>
   </details>
 
-  <details class="card settings-panel" open>
+  <details class="card settings-panel">
     <summary class="settings-summary">
       <span>Network Access</span>
       <small>Allowed LAN subnets and hosts.</small>

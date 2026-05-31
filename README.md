@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.33-blue)
+![Version](https://img.shields.io/badge/version-1.2.46-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -37,6 +37,8 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 - [Kiosk mode](#kiosk-mode)
 - [Portal AI and Ollama vision](#portal-ai-and-ollama-vision)
 - [AI feedback and false-alarm suppression](#ai-feedback-and-false-alarm-suppression)
+- [Persistent AI learning](#persistent-ai-learning)
+- [AI Training review page](#ai-training-review-page)
 - [File Manager](#file-manager)
 - [Filament Manager / CANVAS controls](#filament-manager--canvas-controls)
 - [Stock Elegoo portal bridge](#stock-elegoo-portal-bridge)
@@ -59,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.33 dashboard-metrics-thumbnail
+1.2.46 configurable-navigation
 ```
 
 Major current capabilities:
@@ -73,8 +75,9 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Portal AI telemetry checks | Working, advisory-only |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture and outcome interpretation |
+| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, recent-sample review, and AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
+| Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
 | Filament Manager / CANVAS | Available but hidden by default while command behavior is tested on real firmware |
 | Themes | Built-in theme library with preview cards |
@@ -114,6 +117,7 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Collapsible dashboard sections.
 - Saved dashboard accordion state per printer.
 - Compact build/version chips in the header.
+- Configurable top navigation visibility for Portal, Files, Filament, Kiosk, AI Training, and Logs.
 - `/health` and `/api/version` diagnostics.
 
 ### Printer discovery and pairing
@@ -224,17 +228,11 @@ sudo apt install -y git python3 python3-venv python3-pip
 
 ### 2. Clone the repository
 
-Replace the URL below with your actual GitHub repository URL if different:
+Clone the current project repository:
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-USER/cc2-dash.git
+git clone https://github.com/merberg-ai/cc2-dash.git
 cd cc2-dash
-```
-
-Example if you cloned from your own fork:
-
-```bash
-git clone https://github.com/YOUR-GITHUB-USER/cc2-dash.git
 ```
 
 ### 3. Make helper scripts executable
@@ -347,7 +345,9 @@ If running manually, stop the old process and restart:
 ./run.sh
 ```
 
-Your local runtime data lives in `data/`. Do not delete it unless you want to reset printers, logs, AI feedback, and settings.
+Your local runtime data lives in `data/`. Do not delete it unless you want to reset printers, logs, AI feedback, learned AI profiles, and settings.
+
+If you previously installed the older `cc2-dash-lite.service`, the installer now attempts to stop, disable, and remove that legacy service so it does not compete with `cc2-dash.service` for the same port.
 
 ---
 
@@ -551,9 +551,10 @@ Feedback records are saved to:
 data/ai_feedback.jsonl
 data/ai_feedback_frames/<printer_id>/
 data/ai_feedback_suppressions.json
+data/ai_learning.sqlite3
 ```
 
-When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame.
+When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame. After the fast click is saved, an optional reason-chip panel can tag why the feedback was given, such as normal supports, purge tower, spaghetti/stringing, detached print, low light but visible, or a custom note.
 
 Feedback is interpreted against what Portal AI believed at the time:
 
@@ -572,11 +573,93 @@ Review endpoints:
 GET /api/ai/feedback/recent
 GET /api/ai/feedback/stats
 GET /api/ai/feedback/suppressions
+GET /api/ai/learning/samples
+GET /api/ai/learning/samples/<sample_id>/frame
+POST /api/ai/learning/import-jsonl
+GET /api/printers/<printer_id>/ai/learning/samples
+POST /api/printers/<printer_id>/ai/feedback/reason
 ```
 
 Manual threshold values remain manual. Feedback suppression does not silently rewrite your dark-frame or fine-edge thresholds.
 
 ---
+
+## Persistent AI learning
+
+cc2-dash now includes a lightweight SQLite-backed learning foundation for Portal AI feedback. The goal is long-term tuning without turning the Pi into a tiny screaming database furnace.
+
+Files used:
+
+```text
+data/ai_feedback.jsonl
+data/ai_feedback_frames/<printer_id>/
+data/ai_learning.sqlite3
+```
+
+How it works in this version:
+
+1. Feedback is still written to the human-readable JSONL audit log.
+2. The same feedback is mirrored into `data/ai_learning.sqlite3` as structured samples.
+3. Samples are grouped per printer.
+4. Rebuild endpoints calculate per-printer learning profiles, outcome counts, normal baselines, and suggested threshold modifiers.
+5. Settings → Portal AI shows the AI Feedback Learning controls and profile cards.
+6. Manual threshold settings are not overwritten.
+7. Default mode is `suggest_only`, so learned modifiers are calculated and shown but not applied to live detection unless you explicitly switch to `auto_adjust_safe`.
+8. In `auto_adjust_safe`, bounded learned modifiers are applied only to the live in-memory vision check thresholds; your manual settings are still not overwritten.
+9. Portal AI remains advisory-only and does not pause, cancel, resume, load/unload filament, or control jobs automatically.
+
+Learning modes under `portal_ai` config:
+
+| Mode | Behavior |
+|---|---|
+| `off` | Store feedback but ignore learning suggestions. |
+| `suggest_only` | Calculate suggested modifiers and expose them through the API; live detection uses manual settings. |
+| `auto_adjust_safe` | Apply small bounded modifiers to live thresholds. Manual settings remain unchanged. |
+
+Current bounds/defaults:
+
+| Setting | Default |
+|---|---:|
+| `ai_learning_min_samples` | `8` |
+| `ai_learning_min_false_positives` | `4` |
+| `ai_learning_min_false_negatives` | `2` |
+| `ai_learning_max_dark_luma_adjustment` | `8` |
+| `ai_learning_max_edge_density_adjustment` | `0.05` |
+| `ai_learning_max_required_bad_checks_adjustment` | `1` |
+
+The learning database uses Python's built-in `sqlite3` module with WAL mode, normal sync, a short busy timeout, and no image blobs. Images stay on disk; SQLite stores paths and metrics only.
+
+Settings → Portal AI now includes **AI Feedback Learning** controls for:
+
+- enabling/disabling persistent learning;
+- switching between `off`, `suggest_only`, and `auto_adjust_safe`;
+- tuning minimum sample requirements and clamp bounds;
+- choosing which modifier types may be suggested;
+- rebuilding profiles;
+- resetting learned tuning without deleting JSONL feedback;
+- viewing per-printer sample counts, outcomes, baselines, reasons, and manual/suggested/applied/effective thresholds;
+- reviewing recent feedback samples with filters for printer, label, outcome, metrics, reasons, and captured feedback frames;
+- importing/backfilling older `data/ai_feedback.jsonl` audit rows into SQLite with duplicate skipping and optional profile rebuild.
+
+> [!IMPORTANT]
+> Learned effective thresholds are wired into live vision checks only when `auto_adjust_safe` is explicitly selected. `off` and `suggest_only` remain advisory/no-op for live scoring. Feedback reason chips enrich future samples but still do not let AI control print jobs automatically.
+
+---
+
+
+## AI Training review page
+
+The `/ai-training` page is a lightweight local review console for Portal AI feedback samples. It is meant to make the SQLite learner inspectable without needing to SSH into the Pi or manually query the database.
+
+Current AI Training tools include:
+
+- Filter feedback samples by printer, label, and interpreted outcome.
+- Review captured feedback frame thumbnails when available.
+- Edit/relabel a sample's feedback label, interpreted outcome, and reason note.
+- Delete bad SQLite training samples while keeping the JSONL audit log and captured frame files intact.
+- Export a ZIP dataset containing public sample metadata, raw JSONL rows, and optionally captured frame files.
+
+The page does **not** train an Ollama model, upload data, or send commands to the printer. It only reviews and cleans local feedback/training records used by cc2-dash's lightweight heuristic learner.
 
 ## File Manager
 
@@ -814,6 +897,7 @@ data/vision/<printer_id>/latest.jpg
 data/ai_feedback.jsonl
 data/ai_feedback_frames/<printer_id>/
 data/ai_feedback_suppressions.json
+data/ai_learning.sqlite3
 ```
 
 Useful environment variables:
@@ -862,9 +946,18 @@ GET  /api/ai/monitor
 GET  /api/printers/<printer_id>/ai/status
 POST /api/printers/<printer_id>/ai/check-now
 POST /api/printers/<printer_id>/ai/feedback
+POST /api/printers/<printer_id>/ai/feedback/reason
 GET  /api/ai/feedback/recent
 GET  /api/ai/feedback/stats
 GET  /api/ai/feedback/suppressions
+GET  /api/ai/learning/status
+POST /api/ai/learning/rebuild
+POST /api/ai/learning/reset
+POST /api/ai/learning/import-jsonl
+GET  /api/printers/<printer_id>/ai/learning
+POST /api/printers/<printer_id>/ai/learning/rebuild
+POST /api/printers/<printer_id>/ai/learning/reset
+GET  /api/printers/<printer_id>/ai/learning/samples
 GET  /api/printers/<printer_id>/vision/status
 POST /api/printers/<printer_id>/vision/check-now
 GET  /api/printers/<printer_id>/vision/latest.jpg
@@ -1050,6 +1143,124 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.46 configurable navigation
+
+- Added Menu / Features toggles for every top navigation item except Dash and Settings.
+- Portal, Files, Filament, Kiosk, AI Training, and Logs can now be shown or hidden from Settings without disabling their underlying routes.
+- Dash and Settings remain pinned so the dashboard and configuration page cannot be hidden accidentally.
+- Kiosk top-nav Portal/Logs links now respect the same navigation visibility settings.
+- Footer Console link now respects the Logs visibility setting.
+- Updated config defaults/migration to preserve existing File Manager and Filament Manager hidden-by-default behavior.
+- No AI scoring, learning, printer command, or safety behavior changes.
+
+### v1.2.45 AI Training review page
+
+- Added `/ai-training`, a lightweight review/export page for Portal AI feedback samples.
+- Added sample review tools for relabeling feedback label, interpreted outcome, and reason/note.
+- Added SQLite sample deletion from the review set while keeping JSONL audit rows and frame files.
+- Added filtered dataset ZIP export with public metadata, raw JSONL rows, and optional captured frames.
+- Added navigation link for AI Training.
+- No changes to printer commands or AI advisory-only safety behavior.
+
+
+### v1.2.44 JSONL feedback import
+
+- Added explicit JSONL feedback import/backfill from `data/ai_feedback.jsonl` into the SQLite learning database.
+- Added `POST /api/ai/learning/import-jsonl` with duplicate skipping, malformed-line counts, reason-update replay, and optional profile rebuild.
+- Added Settings → Portal AI → Import old JSONL feedback controls with import summary output.
+- Import is manual/on-demand only and does not run on every startup.
+- Keeps JSONL as the human-readable audit log and stores images on disk only.
+- No changes to printer commands, advisory-only AI safety behavior, or automatic print control.
+
+### v1.2.43 dashboard learning badge
+
+- Adds a compact AI learning badge/details panel to the dashboard Portal AI card.
+- Shows whether learning is off, suggesting, or auto-adjusting safely.
+- Surfaces sample count, confidence, and manual/suggested/applied/effective thresholds when threshold data is available from the live vision path.
+- Clarifies whether learned modifiers are being applied live or only suggested.
+- Changes the feedback custom “Save note” button to a theme-safe success/green style instead of danger red.
+- Keeps manual thresholds unchanged and Portal AI advisory-only.
+
+### v1.2.42 feedback UI polish
+
+- Fixed optional Portal AI feedback training reason controls so they remain readable across themes instead of appearing as white-on-white buttons.
+- Reason chips, skip, and custom note save controls now use a dark red danger-style treatment with white text.
+- Printer Manager in Settings now loads collapsed by default, matching the other Settings panels.
+- No AI scoring, learning, printer command, or safety behavior changes.
+
+### v1.2.41 recent feedback samples
+
+- Added a lightweight Recent AI Feedback Samples review panel under Settings → Portal AI.
+- Added filters for printer, interpreted outcome, feedback label, and sample count.
+- Shows timestamp, printer, label, optional reason/note, outcome, file/stage/progress, risk/severity/confidence, local heuristic metrics, triggered flags, and captured feedback frame thumbnails/links when available.
+- Added global `GET /api/ai/learning/samples` with pagination/filter query parameters.
+- Enhanced `GET /api/printers/<printer_id>/ai/learning/samples` with the same lightweight public sample shape and filters.
+- Added `GET /api/ai/learning/samples/<sample_id>/frame` to safely serve captured feedback frames from `data/ai_feedback_frames/`.
+- Does not store image blobs in SQLite and does not change live AI scoring or printer-control behavior.
+
+### v1.2.40 feedback reason chips
+
+- Added optional reason chips after fast Portal AI feedback clicks.
+- Feedback buttons still save immediately; reason selection is a second, optional training-quality step.
+- Looks Bad reasons include spaghetti/stringing, detached print, blob/nozzle buildup, first-layer issue, layer shift, filament issue, camera bad/unclear, and custom notes.
+- False Alarm reasons include normal supports, purge tower, infill pattern, reflection/glare, low light but visible, multicolor purge mess, camera angle, and custom notes.
+- Looks Good reasons include normal print, normal idle, normal purge/supports, and custom notes.
+- Reason updates are appended to `data/ai_feedback.jsonl` and attached to the matching SQLite feedback sample when available.
+- This improves future learning/review data without changing live AI scoring, thresholds, or printer-control safety behavior.
+
+### v1.2.39 active-file layer total lookup
+
+- Improved dashboard layer progress when the live printer status only reports the current layer.
+- cc2-dash now mirrors the stock Elegoo portal behavior more closely by looking up the active G-code file metadata for total layers when live telemetry omits it.
+- Layer progress now prefers `current/total` from file metadata, falling back to `current/?` only when the file lookup cannot find a total layer count.
+- File metadata lookups are cached so the dashboard poll loop does not hammer the printer.
+- No printer-control, Portal AI, or learning behavior changes.
+
+### v1.2.38 layer progress unknown-total polish
+
+- Updated dashboard layer display so printers that report current layer but not total layers now show `current/?` instead of only `current`.
+- Added `layer_total_missing` to print metrics/status payloads so the UI/API can clearly distinguish "known current layer, unknown total layer" from a simple single-value layer display.
+- No live AI, printer command, or learning behavior changes in this patch.
+
+### v1.2.37 dashboard/settings polish
+
+- Settings panels now load collapsed by default so the Portal AI / learning controls are not buried under a forever-scroll wall.
+- Removed the unreliable **Filament Used** field from the dashboard Print Status card.
+- Updated the dashboard Layer display to prefer current/total layer values such as `18/250`.
+- Removed the small **API Reachable** status field from the dashboard Print Status card to reduce noise.
+- Live AI learning behavior is unchanged from v1.2.36.
+
+### v1.2.36 safe auto thresholds
+
+- Wired persistent AI learning effective thresholds into the live vision monitor.
+- In `off` and `suggest_only` modes, live vision continues to use the manual threshold values exactly as before.
+- In `auto_adjust_safe` mode, live vision uses bounded effective values for dark luma, fine-edge density, and required bad checks.
+- Manual settings are still never overwritten; learned values are applied only to the in-memory vision check configuration.
+- Vision API results now include `learning_thresholds` and `learning_applied` so the dashboard/logs can explain when bounded modifiers were used.
+- Added dashboard Vision metadata showing learning mode and applied modifiers during live checks.
+- Added low-noise warning fallback: if the learning database/config lookup fails, vision monitoring falls back to manual thresholds instead of failing the check.
+- Portal AI remains advisory-only and still does not pause/cancel/control print jobs automatically.
+
+### v1.2.35 learning settings UI
+
+- Added a Settings → Portal AI → AI Feedback Learning section.
+- Added controls for persistent learning enablement, learning mode, minimum sample counts, maximum learned adjustment bounds, modifier-type toggles, and rebuild-on-feedback behavior.
+- Added per-printer learning profile cards showing sample counts, true/false positive/negative outcomes, manual/suggested/applied/effective thresholds, normal baselines, confidence, and explanation reasons.
+- Added Settings buttons to refresh learning status, rebuild all profiles, and reset learned tuning while keeping feedback samples and JSONL audit logs.
+- Kept live AI scoring unchanged in this version; suggest-only mode remains the default and Portal AI remains advisory-only.
+
+### v1.2.34 persistent AI learning foundation
+
+- Added `cc2_dash/ai_learning_db.py` for lightweight SQLite setup, schema creation, feedback sample inserts, profile storage, event logging, reset helpers, and health checks.
+- Added `cc2_dash/ai_learning.py` for structured sample extraction, outcome counts, per-printer profile rebuilds, normal baseline calculations, suggested modifier calculations, and effective-threshold summaries.
+- Added `data/ai_learning.sqlite3` as a sidecar learning database. JSONL feedback logging remains intact.
+- Feedback clicks now mirror structured samples into SQLite while preserving the existing JSONL audit trail and same-print false-alarm suppression behavior.
+- Added learning status/rebuild/reset/sample APIs for global and per-printer use.
+- Added `/health` AI learning database status.
+- Added `portal_ai` config defaults for persistent learning, defaulting to `suggest_only`.
+- Kept Portal AI advisory-only; no automatic pause/cancel/control behavior was added.
+- Folded in project cleanup: README clone URL now points to `https://github.com/merberg-ai/cc2-dash.git`, internal runtime class renamed to `Cc2PrinterRuntime`, old `cc2-dash-lite.service` cleanup added, and backend `123456` access-code fallbacks removed.
 
 ### v1.2.33 dashboard metrics and G-code thumbnails
 

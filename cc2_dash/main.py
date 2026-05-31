@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import ipaddress
 import json
 import shutil
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, quote, urlparse
@@ -84,9 +86,11 @@ from .cc2.commands import (
 # Import CommandError from the client module explicitly for clarity.
 from .cc2.client import CommandError
 from .cc2.discovery import discover
-from .cc2.runtime import LitePrinterRuntime
+from .cc2.runtime import Cc2PrinterRuntime
 from .cc2.state import seconds_to_hms
 from .ai import portal_ai
+from . import ai_learning
+from . import ai_learning_db
 from .build_info import get_build_info
 from .camera_proxy import camera_proxy_config, camera_relays, rewrite_camera_urls
 from .feedback_learning import (
@@ -103,7 +107,7 @@ ELEGEEGO_WEB_DIR = Path(__file__).resolve().parent / "elegoo_web"
 if ELEGEEGO_WEB_DIR.exists():
     app.mount("/elegoo", StaticFiles(directory=str(ELEGEEGO_WEB_DIR), html=True), name="elegoo")
 templates = Jinja2Templates(directory=str(APP_ROOT / "templates"))
-runtime = LitePrinterRuntime()
+runtime = Cc2PrinterRuntime()
 _AI_MONITOR_TASK: asyncio.Task | None = None
 _AI_MONITOR_STATE: dict[str, Any] = {
     "running": False,
@@ -113,6 +117,9 @@ _AI_MONITOR_STATE: dict[str, Any] = {
     "last_error": None,
 }
 _AI_MONITOR_LAST_LOGGED: dict[str, dict[str, Any]] = {}
+_LAYER_TOTAL_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+_LAYER_TOTAL_CACHE_TTL_SEC = 300.0
+_LAYER_TOTAL_MISS_TTL_SEC = 90.0
 
 SPEED_PRESETS = {
     0: "Silent",
@@ -630,10 +637,180 @@ def _format_layer_progress(current: Any, total: Any) -> str:
     if cur is not None and tot is not None and tot > 0:
         return f"{cur}/{tot}"
     if cur is not None and cur > 0:
-        return str(cur)
+        # Firmware sometimes reports the current layer but not total layers.
+        # Show that honestly as current/? instead of making it look like
+        # we intentionally chose the single-layer display.
+        return f"{cur}/?"
     if tot is not None and tot > 0:
         return f"-/{tot}"
     return "-"
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        number = int(float(value))
+        return number if number > 0 else None
+    except Exception:
+        return None
+
+
+def _same_file_name(left: Any, right: Any) -> bool:
+    a = _basename_from_path(left).lower()
+    b = _basename_from_path(right).lower()
+    return bool(a and b and a == b)
+
+
+def _find_total_layer_in_payload(payload: Any, filename: str | None = None) -> tuple[int | None, str | None]:
+    """Find a stock-portal-style total layer value in file-list/detail data.
+
+    The live printer status currently reports print_status.current_layer but not
+    total layers. The stock Elegoo portal gets total layers from cached file list
+    rows or from the file-detail command, where the field may be named Layer,
+    TotalLayer, or TotalLayers depending on firmware/build. Keep this helper
+    scoped to file metadata payloads so a generic ``Layer`` field is interpreted
+    as total layers, not the live current layer.
+    """
+    wanted = str(filename or "").strip()
+    total_keys = {
+        "totallayers", "total_layers", "totallayer", "total_layer",
+        "layercount", "layer_count", "layer", "layers",
+    }
+    name_keys = {"filename", "file_name", "filename", "name", "taskname", "task_name", "filepath", "file_path", "path"}
+
+    def record_name(d: dict[str, Any]) -> str:
+        for key, value in d.items():
+            if str(key).replace("-", "_").lower() in name_keys and value not in (None, ""):
+                return str(value)
+        return ""
+
+    def scan(obj: Any, path: str = "") -> tuple[int | None, str | None]:
+        if isinstance(obj, dict):
+            # Prefer an object that explicitly belongs to the current filename.
+            if wanted:
+                rec = record_name(obj)
+                if rec and not _same_file_name(rec, wanted):
+                    # Still scan nested containers; just don't use this row's own
+                    # scalar fields as the answer for a different file.
+                    for key, value in obj.items():
+                        if isinstance(value, (dict, list)):
+                            found, src = scan(value, f"{path}.{key}" if path else str(key))
+                            if found is not None:
+                                return found, src
+                    return None, None
+            for key, value in obj.items():
+                norm = str(key).replace("-", "_").lower()
+                if norm in total_keys:
+                    number = _positive_int(value)
+                    if number is not None:
+                        return number, f"file_metadata.{path + '.' if path else ''}{key}"
+            for key, value in obj.items():
+                if isinstance(value, (dict, list)):
+                    found, src = scan(value, f"{path}.{key}" if path else str(key))
+                    if found is not None:
+                        return found, src
+        elif isinstance(obj, list):
+            # If filename is provided, prioritize matching file rows.
+            if wanted:
+                for idx, item in enumerate(obj):
+                    if isinstance(item, dict) and _same_file_name(record_name(item), wanted):
+                        found, src = scan(item, f"{path}[{idx}]")
+                        if found is not None:
+                            return found, src
+            for idx, item in enumerate(obj):
+                found, src = scan(item, f"{path}[{idx}]")
+                if found is not None:
+                    return found, src
+        return None, None
+
+    root = _unwrap_command_payload(payload)
+    return scan(root)
+
+
+def _cache_layer_total(printer_id: str, filename: str, storage_media: str, total: int | None, source: str | None) -> None:
+    key = (str(printer_id), _basename_from_path(filename).lower(), normalize_storage_media(storage_media))
+    _LAYER_TOTAL_CACHE[key] = {
+        "time": time.time(),
+        "total": total,
+        "source": source,
+    }
+
+
+def _cached_layer_total(printer_id: str, filename: str, storage_media: str) -> tuple[bool, int | None, str | None]:
+    key = (str(printer_id), _basename_from_path(filename).lower(), normalize_storage_media(storage_media))
+    row = _LAYER_TOTAL_CACHE.get(key)
+    if not row:
+        return False, None, None
+    age = time.time() - float(row.get("time") or 0)
+    ttl = _LAYER_TOTAL_CACHE_TTL_SEC if row.get("total") else _LAYER_TOTAL_MISS_TTL_SEC
+    if age > ttl:
+        _LAYER_TOTAL_CACHE.pop(key, None)
+        return False, None, None
+    return True, row.get("total"), row.get("source")
+
+
+def _lookup_total_layer_from_file_metadata_sync(printer_id: str, filename: str, storage_media: str = "local") -> tuple[int | None, str | None]:
+    if not _has_real_file(filename):
+        return None, None
+    media = normalize_storage_media(storage_media)
+    cached, total, source = _cached_layer_total(printer_id, filename, media)
+    if cached:
+        return total, source
+
+    # This mirrors the stock Elegoo portal: when live status lacks total layers,
+    # ask the file-detail/file-list side for metadata about the currently printed file.
+    lookups: list[tuple[str, int, dict[str, Any], float]] = [
+        ("detail", GET_FILE_DETAIL, file_detail_params(filename, media), 15.0),
+        ("list", GET_FILE_LIST, file_list_params("/", media, page=1, page_size=200), 15.0),
+    ]
+    # USB prints may show up with a leading slash in file APIs; try both common
+    # media buckets without making every dashboard refresh hammer the printer.
+    if media != "u-disk":
+        lookups.extend([
+            ("udisk_detail", GET_FILE_DETAIL, file_detail_params(filename, "u-disk"), 15.0),
+            ("udisk_list", GET_FILE_LIST, file_list_params("/", "u-disk", page=1, page_size=200), 15.0),
+        ])
+
+    for label, method, params, timeout in lookups:
+        try:
+            payload = _send_command(printer_id, method, params, True, timeout, False)
+        except Exception as exc:
+            log("debug", f"Layer-total {label} lookup failed for {filename}: {exc}", "command", printer=printer_id)
+            continue
+        total, source = _find_total_layer_in_payload(payload, filename)
+        if total is not None:
+            src = f"{label}.{source or 'unknown'}"
+            _cache_layer_total(printer_id, filename, media, total, src)
+            return total, src
+    _cache_layer_total(printer_id, filename, media, None, "file_metadata.miss")
+    return None, None
+
+
+async def _enrich_status_with_file_layer_total(printer_id: str, status: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        return status
+    if not status.get("layer_total_missing"):
+        return status
+    filename = status.get("file")
+    if not _has_real_file(filename):
+        return status
+    try:
+        total, source = await asyncio.to_thread(_lookup_total_layer_from_file_metadata_sync, printer_id, str(filename), "local")
+    except Exception as exc:
+        log("debug", f"Layer-total metadata lookup failed for {filename}: {exc}", "command", printer=printer_id)
+        return status
+    if total is None:
+        return status
+    status["layer_total"] = total
+    status["layer_progress"] = _format_layer_progress(status.get("layer_current"), total)
+    status["layer_total_missing"] = False
+    status["layer_total_from_file_metadata"] = True
+    status["layer_total_source"] = source
+    src = status.get("layer_source") if isinstance(status.get("layer_source"), dict) else {}
+    src["total"] = source
+    status["layer_source"] = src
+    return status
 
 
 def _format_filament_used(value: Any, source: str | None = None) -> str:
@@ -700,6 +877,7 @@ def _extract_print_metrics(snap: dict[str, Any] | None, normalized: dict[str, An
         "layer_total": total_layer,
         "layer_progress": _format_layer_progress(current_layer, total_layer),
         "layer_source": {"current": current_src, "total": total_src},
+        "layer_total_missing": current_layer not in (None, "") and total_layer in (None, ""),
         "filament_used": _format_filament_used(filament_used, filament_src),
         "filament_used_raw": filament_used,
         "filament_used_source": filament_src,
@@ -896,6 +1074,31 @@ class AIFeedbackRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class AIFeedbackReasonRequest(BaseModel):
+    sample_id: Optional[int] = None
+    feedback_timestamp: Optional[float] = None
+    label: str = ""
+    reason: str
+    reason_key: str = ""
+
+
+class LearningResetRequest(BaseModel):
+    delete_samples: bool = False
+
+
+class LearningImportRequest(BaseModel):
+    rebuild_profiles: bool = True
+    limit: Optional[int] = None
+
+
+class LearningSampleReviewRequest(BaseModel):
+    feedback_label: Optional[str] = None
+    outcome: Optional[str] = None
+    feedback_note: Optional[str] = None
+    reason_key: Optional[str] = None
+    rebuild_profile: bool = True
+
+
 class OllamaPullRequest(BaseModel):
     model: str
     base_url: Optional[str] = None
@@ -1029,6 +1232,10 @@ async def _ai_monitor_loop() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    try:
+        ai_learning.ensure_database()
+    except Exception as exc:
+        log("warning", f"AI learning database initialization failed: {exc}", "portal_ai")
     runtime.start_all()
     camera_relays.configure_from_config(load_config())
     _start_ai_monitor()
@@ -1110,6 +1317,14 @@ async def setup(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings(request: Request):
     return templates.TemplateResponse("settings.html", view_context(request))
+
+
+@app.get("/ai-training", response_class=HTMLResponse)
+async def ai_training_page(request: Request):
+    cfg = load_config()
+    if needs_setup(cfg):
+        return RedirectResponse("/setup")
+    return templates.TemplateResponse("ai_training.html", view_context(request))
 
 
 @app.get("/logs", response_class=HTMLResponse)
@@ -1285,7 +1500,15 @@ async def mqtt_websocket_bridge(websocket: WebSocket, printer_id: str) -> None:
 @app.get("/health")
 async def health():
     cfg = load_config()
-    return {"ok": True, "version": __version__, "build": get_build_info(), "setup_required": needs_setup(cfg), "printers": len(cfg.get("printers") or {}), "camera_relays": camera_relays.status_all()}
+    return {
+        "ok": True,
+        "version": __version__,
+        "build": get_build_info(),
+        "setup_required": needs_setup(cfg),
+        "printers": len(cfg.get("printers") or {}),
+        "camera_relays": camera_relays.status_all(),
+        "ai_learning": ai_learning.db_health(),
+    }
 
 
 
@@ -1704,6 +1927,8 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "layer_current": print_metrics.get("layer_current"),
         "layer_total": print_metrics.get("layer_total"),
         "layer_progress": print_metrics.get("layer_progress") or "-",
+        "layer_source": print_metrics.get("layer_source"),
+        "layer_total_missing": print_metrics.get("layer_total_missing"),
         "hotend_current": nozzle.get("actual"),
         "hotend_target": nozzle.get("target"),
         "bed_current": bed.get("actual"),
@@ -1821,7 +2046,8 @@ async def api_status():
     if not runtime.get_client(pid):
         runtime.start(pid, printer_dict_to_config(pid, printer))
     snap = runtime.snapshot(pid)
-    return _status_from_snapshot(pid, printer, snap)
+    status = _status_from_snapshot(pid, printer, snap)
+    return await _enrich_status_with_file_layer_total(pid, status)
 
 
 @app.get("/api/status/{printer_id}")
@@ -1833,7 +2059,8 @@ async def api_status_printer(printer_id: str):
     if not runtime.get_client(printer_id):
         runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
     snap = runtime.snapshot(printer_id)
-    return _status_from_snapshot(printer_id, printer, snap)
+    status = _status_from_snapshot(printer_id, printer, snap)
+    return await _enrich_status_with_file_layer_total(printer_id, status)
 
 
 @app.get("/api/ai/monitor")
@@ -1962,6 +2189,23 @@ def _read_feedback_rows(limit: int = 200) -> list[dict[str, Any]]:
     return rows
 
 
+async def _run_learning_rebuild(printer_id: str, cfg: dict[str, Any]) -> None:
+    try:
+        await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, cfg)
+    except Exception as exc:
+        log("warning", f"AI learning profile rebuild failed: {exc}", "portal_ai", printer=printer_id)
+
+
+def _schedule_learning_rebuild(printer_id: str, cfg: dict[str, Any]) -> None:
+    try:
+        asyncio.create_task(_run_learning_rebuild(printer_id, cfg))
+    except RuntimeError:
+        try:
+            ai_learning.rebuild_profile(printer_id, cfg)
+        except Exception as exc:
+            log("warning", f"AI learning profile rebuild failed: {exc}", "portal_ai", printer=printer_id)
+
+
 @app.get("/api/ai/feedback/recent")
 async def api_ai_feedback_recent(limit: int = Query(50, ge=1, le=500)):
     rows = _read_feedback_rows(limit)
@@ -1994,6 +2238,337 @@ async def api_ai_feedback_stats(limit: int = Query(500, ge=1, le=2000)):
 async def api_ai_feedback_suppressions(printer_id: str | None = None):
     items = current_suppressions(printer_id)
     return {"ok": True, "count": len(items), "suppressions": items}
+
+
+def _json_maybe(value: Any, fallback: Any = None) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return fallback
+        try:
+            return json.loads(raw)
+        except Exception:
+            return fallback
+    return fallback
+
+
+def _feedback_frame_path(frame_path: str | None) -> Path | None:
+    raw = str(frame_path or "").strip()
+    if not raw:
+        return None
+    try:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = DATA_DIR / candidate
+        candidate = candidate.resolve()
+        root = (DATA_DIR / "ai_feedback_frames").resolve()
+        if candidate != root and root not in candidate.parents:
+            return None
+        if not candidate.exists() or not candidate.is_file():
+            return None
+        return candidate
+    except Exception:
+        return None
+
+
+def _public_learning_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    raw_obj = _json_maybe(sample.get("raw_json"), {})
+    snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+    reason = str(sample.get("feedback_note") or raw_obj.get("reason") or snapshot.get("reason") or raw_obj.get("note") or snapshot.get("note") or "").strip()
+    reason_key = str(raw_obj.get("reason_key") or snapshot.get("reason_key") or "").strip() if isinstance(raw_obj, dict) else ""
+    flags = _json_maybe(sample.get("triggered_flags"), [])
+    if isinstance(flags, str):
+        flags = [flags]
+    if not isinstance(flags, list):
+        flags = []
+    sample_id = int(sample.get("id") or 0)
+    frame_path = str(sample.get("frame_path") or "").strip()
+    has_frame = bool(_feedback_frame_path(frame_path))
+    return {
+        "id": sample_id,
+        "created_at": sample.get("created_at"),
+        "printer_id": sample.get("printer_id"),
+        "feedback_label": sample.get("feedback_label"),
+        "feedback_note": reason,
+        "reason": reason,
+        "reason_key": reason_key,
+        "outcome": sample.get("outcome"),
+        "ai_was_warning": bool(sample.get("ai_was_warning")),
+        "user_says_failure": bool(sample.get("user_says_failure")),
+        "file_name": sample.get("file_name"),
+        "print_stage": sample.get("print_stage"),
+        "progress_percent": sample.get("progress_percent"),
+        "risk_score": sample.get("risk_score"),
+        "severity": sample.get("severity"),
+        "confidence": sample.get("confidence"),
+        "vision_state": sample.get("vision_state"),
+        "dark_luma": sample.get("dark_luma"),
+        "contrast": sample.get("contrast"),
+        "edge_density": sample.get("edge_density"),
+        "edge_delta": sample.get("edge_delta"),
+        "triggered_flags": [str(x) for x in flags if str(x).strip()],
+        "suppression_match": bool(sample.get("suppression_match")),
+        "model_name": sample.get("model_name"),
+        "prompt_version": sample.get("prompt_version"),
+        "frame_path": frame_path,
+        "has_frame": has_frame,
+        "frame_url": f"/api/ai/learning/samples/{sample_id}/frame" if sample_id and has_frame else None,
+        "has_raw_json": bool(sample.get("raw_json")),
+    }
+
+
+def _clean_sample_filter(value: str | None, allowed: set[str] | None = None) -> str | None:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"all", "any", "*"}:
+        return None
+    return text if allowed is None or text in allowed else None
+
+
+def _export_safe_name(value: Any, fallback: str = "sample") -> str:
+    text = str(value or fallback).strip().replace("\\", "_").replace("/", "_")
+    text = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in text)
+    return text[:90] or fallback
+
+
+def _training_export_zip(rows: list[dict[str, Any]], include_frames: bool = True) -> bytes:
+    buf = io.BytesIO()
+    public_rows = [_public_learning_sample(r) for r in rows]
+    manifest = {
+        "schema": "cc2-ai-training-export-v1",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "sample_count": len(public_rows),
+        "frames_included": bool(include_frames),
+        "note": "SQLite training review export. JSONL audit log remains stored separately on the device.",
+    }
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
+        zf.writestr("samples_public.json", json.dumps(public_rows, indent=2, ensure_ascii=False, default=str))
+        jsonl = "\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows) + ("\n" if rows else "")
+        zf.writestr("samples_raw.jsonl", jsonl)
+        if include_frames:
+            seen: set[str] = set()
+            for row in rows:
+                sample_id = int(row.get("id") or 0)
+                path = _feedback_frame_path(row.get("frame_path"))
+                if not path:
+                    continue
+                resolved = str(path.resolve())
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                suffix = path.suffix.lower() or ".jpg"
+                zf.write(path, f"frames/{sample_id}_{_export_safe_name(path.stem)}{suffix}")
+    return buf.getvalue()
+
+
+@app.get("/api/ai/learning/status")
+async def api_ai_learning_status():
+    cfg = load_config()
+    return await asyncio.to_thread(ai_learning.global_status, cfg)
+
+
+@app.post("/api/ai/learning/rebuild")
+async def api_ai_learning_rebuild():
+    cfg = load_config()
+    results = []
+    for pid in ai_learning.known_printer_ids(cfg):
+        results.append(await asyncio.to_thread(ai_learning.rebuild_profile, pid, cfg))
+    return {"ok": True, "count": len(results), "profiles": results}
+
+
+@app.post("/api/ai/learning/reset")
+async def api_ai_learning_reset(body: LearningResetRequest | None = None):
+    delete_samples = bool(body.delete_samples) if body else False
+    result = await asyncio.to_thread(ai_learning.reset_profile, None, delete_samples)
+    status = await asyncio.to_thread(ai_learning.global_status, load_config())
+    return {"ok": True, "result": result, "status": status}
+
+
+@app.post("/api/ai/learning/import-jsonl")
+async def api_ai_learning_import_jsonl(body: LearningImportRequest | None = None):
+    cfg = load_config()
+    rebuild_profiles = bool(body.rebuild_profiles) if body else True
+    limit = body.limit if body else None
+    result = await asyncio.to_thread(ai_learning.import_jsonl_feedback, None, cfg, rebuild_profiles, limit)
+    status = await asyncio.to_thread(ai_learning.global_status, cfg)
+    return {"ok": bool(result.get("ok", True)), "import": result, "status": status}
+
+
+@app.get("/api/printers/{printer_id}/ai/learning")
+async def api_printer_ai_learning(printer_id: str):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    return await asyncio.to_thread(ai_learning.profile_status, printer_id, cfg)
+
+
+@app.post("/api/printers/{printer_id}/ai/learning/rebuild")
+async def api_printer_ai_learning_rebuild(printer_id: str):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    return await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, cfg)
+
+
+@app.post("/api/printers/{printer_id}/ai/learning/reset")
+async def api_printer_ai_learning_reset(printer_id: str, body: LearningResetRequest | None = None):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    delete_samples = bool(body.delete_samples) if body else False
+    result = await asyncio.to_thread(ai_learning.reset_profile, printer_id, delete_samples)
+    profile = await asyncio.to_thread(ai_learning.profile_status, printer_id, cfg)
+    return {"ok": True, "result": result, "profile": profile}
+
+
+@app.get("/api/ai/learning/samples")
+async def api_ai_learning_samples(
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    printer_id: str | None = None,
+    outcome: str | None = None,
+    label: str | None = None,
+):
+    cfg = load_config()
+    known = set(ai_learning.known_printer_ids(cfg))
+    pid = _clean_sample_filter(printer_id)
+    if pid and pid not in known:
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    outcome_filter = _clean_sample_filter(outcome, {"true_positive", "false_positive", "false_negative", "true_negative"})
+    label_filter = _clean_sample_filter(label, {"looks_good", "looks_bad", "false_alarm"})
+    rows, total = await asyncio.gather(
+        asyncio.to_thread(ai_learning_db.fetch_recent_samples, pid, limit, offset, outcome_filter, label_filter),
+        asyncio.to_thread(ai_learning_db.count_recent_samples, pid, outcome_filter, label_filter),
+    )
+    samples = [_public_learning_sample(row) for row in rows]
+    return {
+        "ok": True,
+        "count": len(samples),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(samples) < total,
+        "filters": {"printer_id": pid, "outcome": outcome_filter, "label": label_filter},
+        "printer_ids": sorted(known),
+        "samples": samples,
+    }
+
+
+@app.get("/api/ai/learning/samples/{sample_id}/frame")
+async def api_ai_learning_sample_frame(sample_id: int):
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Feedback sample not found")
+    path = _feedback_frame_path(sample.get("frame_path"))
+    if not path:
+        raise HTTPException(status_code=404, detail="Feedback frame not found")
+    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
+
+
+
+
+@app.post("/api/ai/learning/samples/{sample_id}/review")
+async def api_ai_learning_sample_review(sample_id: int, body: LearningSampleReviewRequest):
+    result = await asyncio.to_thread(
+        ai_learning_db.update_sample_review,
+        sample_id,
+        body.feedback_label,
+        body.outcome,
+        body.feedback_note,
+        body.reason_key,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Feedback sample not found")
+    if body.rebuild_profile:
+        sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+        printer_id = str((sample or {}).get("printer_id") or result.get("printer_id") or "")
+        if printer_id:
+            try:
+                await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, load_config())
+            except Exception as exc:
+                log("warning", f"AI learning profile rebuild after review failed: {exc}", "portal_ai", printer=printer_id)
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    return {"ok": True, "result": result, "sample": _public_learning_sample(sample or {})}
+
+
+@app.delete("/api/ai/learning/samples/{sample_id}")
+async def api_ai_learning_sample_delete(sample_id: int, rebuild_profile: bool = Query(True)):
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Feedback sample not found")
+    printer_id = str(sample.get("printer_id") or "")
+    result = await asyncio.to_thread(ai_learning_db.delete_sample, sample_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Feedback sample not found")
+    if rebuild_profile and printer_id:
+        try:
+            await asyncio.to_thread(ai_learning.rebuild_profile, printer_id, load_config())
+        except Exception as exc:
+            log("warning", f"AI learning profile rebuild after sample delete failed: {exc}", "portal_ai", printer=printer_id)
+    return {"ok": True, "result": result}
+
+
+@app.get("/api/ai/learning/export")
+async def api_ai_learning_export(
+    limit: int = Query(5000, ge=1, le=5000),
+    printer_id: str | None = None,
+    outcome: str | None = None,
+    label: str | None = None,
+    include_frames: bool = Query(True),
+):
+    cfg = load_config()
+    known = set(ai_learning.known_printer_ids(cfg))
+    pid = _clean_sample_filter(printer_id)
+    if pid and pid not in known:
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    outcome_filter = _clean_sample_filter(outcome, {"true_positive", "false_positive", "false_negative", "true_negative"})
+    label_filter = _clean_sample_filter(label, {"looks_good", "looks_bad", "false_alarm"})
+    rows = await asyncio.to_thread(ai_learning_db.fetch_recent_samples, pid, limit, 0, outcome_filter, label_filter)
+    payload = await asyncio.to_thread(_training_export_zip, rows, include_frames)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    filename = f"cc2-dash-ai-training-{stamp}.zip"
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/printers/{printer_id}/ai/learning/samples")
+async def api_printer_ai_learning_samples(
+    printer_id: str,
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    outcome: str | None = None,
+    label: str | None = None,
+):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}) and printer_id not in ai_learning.known_printer_ids(cfg):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    outcome_filter = _clean_sample_filter(outcome, {"true_positive", "false_positive", "false_negative", "true_negative"})
+    label_filter = _clean_sample_filter(label, {"looks_good", "looks_bad", "false_alarm"})
+    rows, total = await asyncio.gather(
+        asyncio.to_thread(ai_learning_db.fetch_recent_samples, printer_id, limit, offset, outcome_filter, label_filter),
+        asyncio.to_thread(ai_learning_db.count_recent_samples, printer_id, outcome_filter, label_filter),
+    )
+    samples = [_public_learning_sample(row) for row in rows]
+    return {
+        "ok": True,
+        "printer_id": printer_id,
+        "count": len(samples),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(samples) < total,
+        "filters": {"printer_id": printer_id, "outcome": outcome_filter, "label": label_filter},
+        "samples": samples,
+    }
+
 
 @app.post("/api/printers/{printer_id}/ai/feedback")
 async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
@@ -2050,10 +2625,78 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
         },
     }
     row = portal_ai.feedback(printer_id, body.label, body.note, training_snapshot)
+    learning_result: dict[str, Any] = {"enabled": False, "inserted": False}
+    if bool(ai_cfg.get("ai_feedback_learning_enabled", True)):
+        try:
+            learning_result = await asyncio.to_thread(ai_learning.record_feedback_row, row)
+            learning_result["enabled"] = True
+            if bool(ai_cfg.get("ai_learning_rebuild_on_feedback", True)) and learning_result.get("inserted"):
+                _schedule_learning_rebuild(printer_id, cfg)
+        except Exception as exc:
+            learning_result = {"enabled": True, "inserted": False, "error": str(exc)}
+            log("warning", f"AI learning feedback mirror failed: {exc}", "portal_ai", printer=printer_id)
     outcome = interpretation.get("outcome")
     sup_msg = "; suppression=active" if suppression else ""
-    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
-    return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression}
+    learn_msg = "; learning=sqlite" if learning_result.get("inserted") else ""
+    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
+    return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
+
+
+@app.post("/api/printers/{printer_id}/ai/feedback/reason")
+async def api_ai_feedback_reason(printer_id: str, body: AIFeedbackReasonRequest):
+    """Attach an optional reason chip/note to a previously saved feedback sample.
+
+    The main feedback button saves immediately. This endpoint lets the UI add a
+    lightweight reason afterward without blocking the original feedback flow.
+    """
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}):
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    reason = str(body.reason or "").strip()[:240]
+    reason_key = str(body.reason_key or "").strip()[:80]
+    if not reason:
+        raise HTTPException(status_code=400, detail="Reason is required")
+
+    update_result: dict[str, Any] = {"ok": False, "updated": False, "enabled": False}
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    if bool(ai_cfg.get("ai_feedback_learning_enabled", True)):
+        try:
+            update_result = await asyncio.to_thread(
+                ai_learning.update_feedback_reason,
+                body.sample_id,
+                printer_id,
+                reason,
+                reason_key,
+                body.label,
+                body.feedback_timestamp,
+            )
+            update_result["enabled"] = True
+        except Exception as exc:
+            update_result = {"ok": False, "updated": False, "enabled": True, "error": str(exc)}
+            log("warning", f"AI feedback reason SQLite update failed: {exc}", "portal_ai", printer=printer_id)
+
+    event = {
+        "schema": "cc2-ai-feedback-reason-v1",
+        "kind": "feedback_reason_update",
+        "printer_id": printer_id,
+        "label": str(body.label or "unknown"),
+        "reason": reason,
+        "reason_key": reason_key,
+        "feedback_timestamp": body.feedback_timestamp,
+        "learning_sample_id": body.sample_id,
+        "timestamp": time.time(),
+        "sqlite_update": update_result,
+    }
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with (DATA_DIR / "ai_feedback.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    except Exception as exc:
+        event["persist_error"] = str(exc)
+        log("warning", f"AI feedback reason JSONL append failed: {exc}", "portal_ai", printer=printer_id)
+
+    log("info", f"Portal AI feedback reason saved: {body.label} -> {reason}", "portal_ai", printer=printer_id, label=body.label, reason_key=reason_key)
+    return {"ok": True, "reason": {"text": reason, "key": reason_key}, "learning": update_result, "event": event}
 
 
 @app.get("/api/printers/{printer_id}/status")

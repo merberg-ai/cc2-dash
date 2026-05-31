@@ -53,20 +53,18 @@
 
         <hr />
 
-        <div class="status-grid five">
+        <div class="status-grid four">
           <div><strong>Print Time</strong><span id="printTime">-</span></div>
           <div><strong>Time Left</strong><span id="timeLeft">-</span></div>
           <div><strong>Layer</strong><span id="layerProgress">-</span></div>
-          <div><strong>Filament Used</strong><span id="filamentUsed">-</span></div>
           <div><strong>Speed</strong><span id="currentSpeed">-</span></div>
         </div>
 
         <hr />
 
-        <div class="status-grid three">
+        <div class="status-grid two">
           <div><strong>Hotend</strong><span id="hotendTemp">- / off</span></div>
           <div><strong>Bed</strong><span id="bedTemp">- / off</span></div>
-          <div><strong>API</strong><span id="apiState">Checking...</span></div>
         </div>
 
         <hr />
@@ -119,11 +117,19 @@
           {% if cfg.portal_ai.vision_ai_enabled|default(false) %}
           <div id="aiVisionBox" class="ai-vision-box pending"><div><strong>Vision: pending</strong><span>Waiting for the first camera analysis.</span></div></div>
           {% endif %}
+          <details id="aiLearningDashboard" class="ai-learning-dashboard">
+            <summary>
+              <span id="aiLearningDashBadge" class="ai-learning-dash-badge off">Learning: Off</span>
+              <span id="aiLearningDashSummary" class="ai-learning-dash-summary">Waiting for learning status...</span>
+            </summary>
+            <div id="aiLearningDashDetails" class="ai-learning-dash-details">Learning details will appear after the next AI check.</div>
+          </details>
           <div class="ai-feedback" id="aiFeedbackButtons">
             <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_good">Looks Good</button>
             <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_bad">Looks Bad</button>
             <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="false_alarm">False Alarm</button>
           </div>
+          <div class="ai-feedback-reasons hidden" id="aiFeedbackReasons" aria-live="polite"></div>
         </div>
       </div>
     </details>

@@ -79,6 +79,84 @@
     return { tone: 'good', label: 'Looks Good' };
   }
 
+  function fmtDashboardLearningNumber(value, digits = 2) {
+    if (value === null || value === undefined || value === '') return '-';
+    const n = Number(value);
+    if (!Number.isFinite(n)) return String(value);
+    return n.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+  }
+
+  function signedDashboardLearningNumber(value, digits = 2) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n)) return '0';
+    const out = fmtDashboardLearningNumber(Math.abs(n), digits);
+    if (Math.abs(n) < 0.000001) return '0';
+    return `${n > 0 ? '+' : '-'}${out}`;
+  }
+
+  function renderDashboardLearning(ai, vision) {
+    const shell = $('#aiLearningDashboard');
+    const badge = $('#aiLearningDashBadge');
+    const summary = $('#aiLearningDashSummary');
+    const details = $('#aiLearningDashDetails');
+    if (!shell || !badge || !summary || !details) return;
+
+    const learning = vision?.learning_thresholds || ai?.learning_thresholds || {};
+    const cfgAi = cfg?.portal_ai || {};
+    const mode = String(learning.mode || cfgAi.ai_feedback_learning_mode || (cfgAi.ai_feedback_learning_enabled === false ? 'off' : 'suggest_only'));
+    const enabled = learning.enabled !== undefined ? !!learning.enabled : (cfgAi.ai_feedback_learning_enabled !== false && mode !== 'off');
+    const normalizedMode = enabled ? mode : 'off';
+    const active = !!(vision?.learning_applied || learning.active);
+    const confidence = learning.confidence || 'none';
+    const sampleCount = Number.isFinite(Number(learning.sample_count)) ? Number(learning.sample_count) : null;
+    const manual = learning.manual || {};
+    const suggested = learning.suggested || {};
+    const applied = learning.applied || {};
+    const effective = learning.effective || {};
+
+    let tone = 'off';
+    let label = 'Learning: Off';
+    let text = 'Persistent AI learning is disabled or not collecting live threshold data yet.';
+    if (normalizedMode === 'suggest_only') {
+      tone = 'suggest';
+      label = 'Learning: Suggesting';
+      text = `Collecting feedback and suggestions only${sampleCount !== null ? ` · ${sampleCount} sample${sampleCount === 1 ? '' : 's'}` : ''}${confidence ? ` · ${confidence} confidence` : ''}.`;
+    } else if (normalizedMode === 'auto_adjust_safe') {
+      tone = active ? 'auto' : 'suggest';
+      label = 'Learning: Auto-adjusting';
+      text = active
+        ? `Bounded learned modifiers are active${sampleCount !== null ? ` · ${sampleCount} sample${sampleCount === 1 ? '' : 's'}` : ''}${confidence ? ` · ${confidence} confidence` : ''}.`
+        : `Auto-adjust is enabled, but no learned modifier is currently being applied${sampleCount !== null ? ` · ${sampleCount} sample${sampleCount === 1 ? '' : 's'}` : ''}.`;
+    }
+
+    badge.className = `ai-learning-dash-badge ${tone}`;
+    badge.textContent = label;
+    summary.textContent = text;
+
+    const rows = [
+      ['Dark luma', manual.dark_luma, suggested.dark_luma_modifier, applied.dark_luma_modifier, effective.dark_luma, 2],
+      ['Fine edge', manual.edge_density, suggested.edge_density_modifier, applied.edge_density_modifier, effective.edge_density, 3],
+      ['Bad checks', manual.required_bad_checks, suggested.required_bad_checks_modifier, applied.required_bad_checks_modifier, effective.required_bad_checks, 0],
+    ];
+    const haveThresholds = rows.some(row => row.slice(1, 5).some(v => v !== null && v !== undefined && v !== ''));
+    const thresholdHtml = haveThresholds ? rows.map(row => `
+      <div class="ai-learning-dash-row">
+        <strong>${esc(row[0])}</strong>
+        <span>manual <b>${esc(fmtDashboardLearningNumber(row[1], row[5]))}</b></span>
+        <span>suggested <b>${esc(signedDashboardLearningNumber(row[2], row[5]))}</b></span>
+        <span>applied <b>${esc(signedDashboardLearningNumber(row[3], row[5]))}</b></span>
+        <span>effective <b>${esc(fmtDashboardLearningNumber(row[4], row[5]))}</b></span>
+      </div>`).join('') : '<div class="ai-learning-dash-note">Threshold details will appear after a vision check or profile rebuild.</div>';
+    const modeMessage = normalizedMode === 'auto_adjust_safe'
+      ? (active ? 'Live vision heuristics are using the effective thresholds above.' : 'Auto-adjust is enabled, but live thresholds currently match manual values.')
+      : (normalizedMode === 'suggest_only' ? 'Suggest-only mode does not alter live scoring.' : 'Learning is off for live scoring.');
+    details.innerHTML = `
+      <div class="ai-learning-dash-note">${esc(modeMessage)}</div>
+      ${thresholdHtml}
+      <div class="ai-learning-dash-foot">Manual settings are not overwritten. Portal AI remains advisory-only.</div>
+    `;
+  }
+
   function renderPortalAI(ai) {
     ai = ai || {};
     const summary = ai.summary || 'Standing By';
@@ -109,6 +187,7 @@
       reasons.innerHTML = rows.map(r => `<li>${esc(r)}</li>`).join('');
     }
     const vision = ai.vision || ai.vision_ai || {};
+    renderDashboardLearning(ai, vision);
     const headerState = summarizeAIHeaderStatus(ai, vision);
     const headerPill = $('#aiSummaryPill');
     if (headerPill) {
@@ -132,6 +211,16 @@
       const heur = vision.heuristics || {};
       const heurWarnings = Array.isArray(heur.warnings) && heur.warnings.length ? `flags ${heur.warnings.join(', ')}` : '';
       const heurMetrics = Number.isFinite(Number(heur.mean_luma)) ? `luma ${Number(heur.mean_luma).toFixed(0)} · contrast ${Number(heur.contrast || 0).toFixed(0)} · edge ${Number(heur.edge_density || 0).toFixed(3)}` : '';
+      const learning = vision.learning_thresholds || {};
+      const applied = learning.applied || {};
+      const appliedBits = Object.entries(applied)
+        .filter(([, value]) => Math.abs(Number(value || 0)) > 0)
+        .map(([key, value]) => `${key.replace(/_modifier$/, '').replace(/_/g, ' ')} ${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(key.includes('edge') ? 3 : 0)}`);
+      const learningMeta = learning.mode
+        ? (vision.learning_applied || learning.active
+          ? `learning auto · ${appliedBits.join(', ') || 'bounded modifiers active'}`
+          : `learning ${String(learning.mode).replace(/_/g, ' ')}`)
+        : '';
       const vMeta = [
         vision.model ? `model ${vision.model}` : '',
         vision.last_check ? `checked ${vision.last_check}` : '',
@@ -139,7 +228,8 @@
         Number.isFinite(Number(vision.severity)) ? `severity ${Number(vision.severity)}%` : '',
         vision.consecutive_bad ? `${vision.consecutive_bad}/${vision.required_bad_checks || '?'} bad` : '',
         heurWarnings,
-        heurMetrics
+        heurMetrics,
+        learningMeta
       ].filter(Boolean).join(' · ');
       const img = vision.frame?.latest_url ? `<img class="vision-thumb" src="${esc(vision.frame.latest_url)}" alt="Latest vision frame" loading="lazy">` : '';
       const vClass = [String(vState), vision.benign_uncertainty || vision.normalized_from === 'uncertain' ? 'benign_uncertain' : ''].filter(Boolean).join(' ');
@@ -358,14 +448,12 @@
       const speedText = st.speed_setting || st.speed_mode_name || (st.speed_percent ? `${st.speed_percent}%` : '-') || '-';
       setText('currentSpeed', speedText);
       setText('currentSpeedBrief', speedText);
-      setText('filamentUsed', st.filament_used || '-');
-      setText('layerProgress', st.layer_progress || '-');
+      setText('layerProgress', formatDashboardLayer(st));
       renderGcodeThumbnail(st);
       setText('hotendTemp', tempLine(st.hotend_current, st.hotend_target));
       setText('bedTemp', tempLine(st.bed_current, st.bed_target));
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
-      setText('apiState', st.reachable ? 'Reachable' : 'Offline');
       setText('lastUpdate', new Date().toLocaleTimeString());
       if (st.portal_url) setText('portalState', st.portal_url);
       if (st.camera_url) setText('cameraState', st.camera_url);
@@ -383,7 +471,6 @@
       const cam = $('#cameraStream');
       if (ph && cam && !cam.classList.contains('hidden')) ph.classList.add('hidden');
     } catch (err) {
-      setText('apiState', 'Error');
       renderPortalAI({ summary: 'Connection Trouble', level: 'high', risk: 75, reasons: [err.message || 'Dashboard could not load printer status.'] });
       const statusEl = $('#statusText');
       if (statusEl) {
@@ -394,6 +481,21 @@
     }
   }
 
+
+  function formatDashboardLayer(status) {
+    const toLayerInt = value => {
+      if (value === null || value === undefined || value === '') return null;
+      const number = Number(value);
+      if (!Number.isFinite(number) || number < 0) return null;
+      return Math.floor(number);
+    };
+    const current = toLayerInt(status?.layer_current ?? status?.current_layer ?? status?.currentLayer);
+    const total = toLayerInt(status?.layer_total ?? status?.total_layer ?? status?.totalLayers ?? status?.total_layer_count);
+    if (current !== null && total !== null && total > 0) return `${current}/${total}`;
+    if (current !== null && current > 0) return `${current}/?`;
+    if (total !== null && total > 0) return `-/${total}`;
+    return status?.layer_progress || '-';
+  }
 
   function dashboardAccordionStorageKey() {
     const printerId = document.body.dataset.printerId || 'default';
@@ -424,6 +526,126 @@
       try { localStorage.setItem(key, JSON.stringify(state)); } catch {}
     };
     panels.forEach(panel => panel.addEventListener('toggle', persist));
+  }
+
+  const FEEDBACK_REASON_CHIPS = {
+    looks_bad: [
+      ['spaghetti_stringing', 'Spaghetti / stringing'],
+      ['detached_print', 'Detached print'],
+      ['blob_nozzle_buildup', 'Blob / nozzle buildup'],
+      ['first_layer_issue', 'First-layer issue'],
+      ['layer_shift', 'Layer shift'],
+      ['filament_issue', 'Filament issue'],
+      ['camera_bad_unclear', 'Camera bad / unclear'],
+      ['other', 'Other']
+    ],
+    false_alarm: [
+      ['normal_supports', 'Normal supports'],
+      ['purge_tower', 'Purge tower'],
+      ['infill_pattern', 'Infill pattern'],
+      ['reflection_glare', 'Reflection / glare'],
+      ['low_light_but_visible', 'Low light but visible'],
+      ['multicolor_purge_mess', 'Multicolor purge mess'],
+      ['camera_angle', 'Camera angle'],
+      ['other', 'Other']
+    ],
+    looks_good: [
+      ['normal_print', 'Normal print'],
+      ['normal_idle', 'Normal idle'],
+      ['normal_purge_supports', 'Normal purge/supports'],
+      ['other', 'Other']
+    ]
+  };
+
+  function feedbackLabelText(label) {
+    const map = { looks_good: 'Looks Good', looks_bad: 'Looks Bad', false_alarm: 'False Alarm' };
+    return map[label] || String(label || 'Feedback').replace(/_/g, ' ');
+  }
+
+  function hideFeedbackReasons() {
+    const panel = $('#aiFeedbackReasons');
+    if (!panel) return;
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+  }
+
+  async function saveFeedbackReason(meta, reasonKey, reasonText, button) {
+    const panel = $('#aiFeedbackReasons');
+    const printerId = meta?.printerId || document.body.dataset.printerId;
+    if (!printerId) return toast('No printer configured for feedback reason.', 'warn');
+    const text = String(reasonText || '').trim();
+    if (!text) return toast('Pick or enter a reason first.', 'warn');
+    setButtonBusy(button, true, 'Saving...');
+    try {
+      const payload = {
+        sample_id: meta?.sampleId || null,
+        feedback_timestamp: meta?.feedbackTimestamp || null,
+        label: meta?.label || '',
+        reason: text,
+        reason_key: reasonKey || ''
+      };
+      await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback/reason`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      toast(`Feedback reason saved: ${text}`, 'success', 3600);
+      if (panel) {
+        panel.innerHTML = `<div class="ai-feedback-reason-saved">Reason saved: <strong>${esc(text)}</strong></div>`;
+        setTimeout(hideFeedbackReasons, 2600);
+      }
+    } catch (err) {
+      toast(err.message, 'error', 7000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function showFeedbackReasons(label, data) {
+    const panel = $('#aiFeedbackReasons');
+    if (!panel) return;
+    const chips = FEEDBACK_REASON_CHIPS[label] || FEEDBACK_REASON_CHIPS.looks_good;
+    const sampleId = data?.learning?.id || data?.learning?.sample_id || null;
+    const feedbackTimestamp = data?.feedback?.timestamp || null;
+    const meta = {
+      label,
+      printerId: document.body.dataset.printerId,
+      sampleId,
+      feedbackTimestamp
+    };
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+      <div class="ai-feedback-reason-head">
+        <div><strong>Optional training reason</strong><span>${esc(feedbackLabelText(label))} was saved. Add a quick reason to make future learning less dumb.</span></div>
+        <button class="button ghost tiny" type="button" data-feedback-reason-skip>Skip</button>
+      </div>
+      <div class="ai-feedback-reason-chips">
+        ${chips.map(([key, text]) => `<button class="button secondary tiny ai-feedback-reason-chip" type="button" data-reason-key="${esc(key)}" data-reason-text="${esc(text)}">${esc(text)}</button>`).join('')}
+      </div>
+      <div class="ai-feedback-reason-custom">
+        <input type="text" id="aiFeedbackReasonCustom" maxlength="240" placeholder="Optional custom reason/note">
+        <button class="button secondary tiny" type="button" data-feedback-reason-custom-save>Save note</button>
+      </div>
+    `;
+    $('[data-feedback-reason-skip]', panel)?.addEventListener('click', hideFeedbackReasons);
+    $$('.ai-feedback-reason-chip', panel).forEach(chip => {
+      chip.addEventListener('click', async () => {
+        const key = chip.dataset.reasonKey || '';
+        const text = chip.dataset.reasonText || chip.textContent || '';
+        if (key === 'other') {
+          const input = $('#aiFeedbackReasonCustom');
+          if (input) {
+            input.focus();
+            input.placeholder = 'Type the other reason, then Save note';
+          }
+          return;
+        }
+        await saveFeedbackReason(meta, key, text, chip);
+      });
+    });
+    $('[data-feedback-reason-custom-save]', panel)?.addEventListener('click', async (ev) => {
+      const input = $('#aiFeedbackReasonCustom');
+      await saveFeedbackReason(meta, 'custom', input?.value || '', ev.currentTarget);
+    });
   }
 
   function initDashboard() {
@@ -457,6 +679,7 @@
           const outcome = data?.interpretation?.outcome ? ` · ${String(data.interpretation.outcome).replace(/_/g, ' ')}` : '';
           const supMsg = data?.suppression ? ' · similar warnings muted for this print' : '';
           toast(`Portal AI feedback saved${frameMsg}${outcome}${supMsg}`, data?.frame?.captured ? 'success' : 'warn', data?.suppression ? 6500 : 4500);
+          showFeedbackReasons(label, data);
         } catch (err) {
           toast(err.message, 'error', 7000);
         } finally {
@@ -1014,6 +1237,308 @@
     el.className = `inline-status ${tone || ''}`.trim();
   }
 
+  function fmtLearningNumber(value, digits = 3) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return value === 0 ? '0' : '-';
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function signedLearningNumber(value, digits = 3) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return '0';
+    return `${n > 0 ? '+' : ''}${fmtLearningNumber(n, digits)}`;
+  }
+
+  function collectAiLearningSettings() {
+    cfg.portal_ai = cfg.portal_ai || {};
+    const mode = $('#aiLearningMode')?.value || cfg.portal_ai.ai_feedback_learning_mode || 'suggest_only';
+    cfg.portal_ai.ai_feedback_learning_enabled = !!$('#aiLearningEnabled')?.checked && mode !== 'off';
+    cfg.portal_ai.ai_feedback_learning_mode = mode;
+    cfg.portal_ai.ai_learning_min_samples = Number($('#aiLearningMinSamples')?.value || 8);
+    cfg.portal_ai.ai_learning_min_false_positives = Number($('#aiLearningMinFalsePositives')?.value || 4);
+    cfg.portal_ai.ai_learning_min_false_negatives = Number($('#aiLearningMinFalseNegatives')?.value || 2);
+    cfg.portal_ai.ai_learning_max_dark_luma_adjustment = Number($('#aiLearningMaxDarkLuma')?.value || 8);
+    cfg.portal_ai.ai_learning_max_edge_density_adjustment = Number($('#aiLearningMaxEdgeDensity')?.value || 0.05);
+    cfg.portal_ai.ai_learning_max_required_bad_checks_adjustment = Number($('#aiLearningMaxBadChecks')?.value || 1);
+    cfg.portal_ai.ai_learning_apply_dark_luma = !!$('#aiLearningApplyDarkLuma')?.checked;
+    cfg.portal_ai.ai_learning_apply_edge_density = !!$('#aiLearningApplyEdgeDensity')?.checked;
+    cfg.portal_ai.ai_learning_apply_required_bad_checks = !!$('#aiLearningApplyBadChecks')?.checked;
+    cfg.portal_ai.ai_learning_rebuild_on_feedback = !!$('#aiLearningRebuildOnFeedback')?.checked;
+    cfg.portal_ai.ai_learning_keep_jsonl_audit_log = true;
+  }
+
+  function thresholdCell(label, value, digits = 3) {
+    return `<div class="ai-learning-threshold"><span>${esc(label)}</span><strong>${esc(fmtLearningNumber(value, digits))}</strong></div>`;
+  }
+
+  function renderAiLearningProfile(profile) {
+    profile = profile || {};
+    const thresholds = profile.thresholds || {};
+    const manual = thresholds.manual || {};
+    const suggested = thresholds.suggested || {};
+    const applied = thresholds.applied || {};
+    const effective = thresholds.effective || {};
+    const outcomes = profile.outcomes || {};
+    const baselines = profile.normal_baselines || {};
+    const luma = baselines.luma || {};
+    const contrast = baselines.contrast || {};
+    const edge = baselines.edge_density || {};
+    const confidence = String(profile.confidence || 'none').toLowerCase();
+    const reasons = (profile.reasons || []).slice(0, 4);
+
+    const metricRows = [
+      ['Dark luma', manual.dark_luma, signedLearningNumber(suggested.dark_luma_modifier, 2), signedLearningNumber(applied.dark_luma_modifier, 2), effective.dark_luma, 2],
+      ['Fine-edge density', manual.edge_density, signedLearningNumber(suggested.edge_density_modifier, 3), signedLearningNumber(applied.edge_density_modifier, 3), effective.edge_density, 3],
+      ['Bad checks', manual.required_bad_checks, signedLearningNumber(suggested.required_bad_checks_modifier, 0), signedLearningNumber(applied.required_bad_checks_modifier, 0), effective.required_bad_checks, 0],
+    ].map(row => `
+      <div class="ai-learning-metric-row">
+        <div class="ai-learning-metric-name">${esc(row[0])}</div>
+        ${thresholdCell('manual', row[1], row[5])}
+        ${thresholdCell('suggested', row[2], row[5])}
+        ${thresholdCell('applied', row[3], row[5])}
+        ${thresholdCell('effective', row[4], row[5])}
+      </div>
+    `).join('');
+
+    return `
+      <article class="ai-learning-card" data-printer-id="${esc(profile.printer_id || '')}">
+        <div class="ai-learning-card-header">
+          <div>
+            <strong>${esc(profile.printer_id || 'unknown printer')}</strong>
+            <small>${esc(profile.message || 'Learning profile loaded.')}</small>
+          </div>
+          <span class="ai-learning-badge ${esc(confidence)}">${esc((profile.mode || 'suggest_only').replaceAll('_', ' '))} · ${esc(confidence)}</span>
+        </div>
+        <div class="ai-learning-outcomes">
+          ${thresholdCell('samples', profile.sample_count, 0)}
+          ${thresholdCell('true +', outcomes.true_positive, 0)}
+          ${thresholdCell('false +', outcomes.false_positive, 0)}
+          ${thresholdCell('false -', outcomes.false_negative, 0)}
+          ${thresholdCell('true -', outcomes.true_negative, 0)}
+        </div>
+        <div class="ai-learning-thresholds">
+          ${metricRows}
+        </div>
+        <div class="ai-learning-baselines">
+          ${thresholdCell('normal luma median', luma.median, 2)}
+          ${thresholdCell('normal luma p10/p90', `${fmtLearningNumber(luma.p10, 2)} / ${fmtLearningNumber(luma.p90, 2)}`, 2)}
+          ${thresholdCell('normal contrast median', contrast.median, 2)}
+          ${thresholdCell('edge p90/p95', `${fmtLearningNumber(edge.p90, 3)} / ${fmtLearningNumber(edge.p95, 3)}`, 3)}
+        </div>
+        ${reasons.length ? `<ul class="ai-learning-reasons">${reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : '<div class="ai-learning-message">No learning reason text yet.</div>'}
+      </article>
+    `;
+  }
+
+  function renderAiLearningStatus(data) {
+    const panel = $('#aiLearningPanel');
+    const summary = $('#aiLearningStatusSummary');
+    if (!panel) return;
+    const learning = data?.learning || {};
+    const db = data?.database || {};
+    const profiles = learning.profiles || [];
+    if (summary) {
+      summary.textContent = `${learning.enabled ? 'Enabled' : 'Off'} · ${String(learning.mode || 'suggest_only').replaceAll('_', ' ')} · ${profiles.length} profile(s) · ${db.feedback_samples || 0} sample(s)`;
+    }
+    if (!profiles.length) {
+      panel.innerHTML = '<div class="ai-learning-empty">No printer learning profiles yet. Click feedback during prints, then rebuild profiles here.</div>';
+      return;
+    }
+    panel.innerHTML = profiles.map(renderAiLearningProfile).join('');
+  }
+
+  async function refreshAiLearningStatus(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    try {
+      const data = await api('/api/ai/learning/status');
+      renderAiLearningStatus(data);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiLearningStatusSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function renderAiLearningImportSummary(result) {
+    const summary = $('#aiLearningImportSummary');
+    if (!summary) return;
+    const imp = result?.import || result || {};
+    if (!imp.exists) {
+      setInlineStatus('aiLearningImportSummary', 'No data/ai_feedback.jsonl file found to import.', 'bad');
+      return;
+    }
+    const bits = [
+      `scanned ${imp.scanned || 0}`,
+      `imported ${imp.imported || 0}`,
+      `duplicates ${imp.duplicates || 0}`,
+      `reason updates ${imp.reason_updates || 0}`,
+      `malformed ${imp.malformed || 0}`,
+      `rebuilt ${imp.rebuilt_profiles || 0}`,
+    ];
+    setInlineStatus('aiLearningImportSummary', bits.join(' · '), imp.ok === false ? 'bad' : 'good');
+  }
+
+  async function importAiLearningJsonl(button = null) {
+    const rebuild = $('#aiLearningImportRebuild')?.checked !== false;
+    setButtonBusy(button, true, 'Importing...');
+    try {
+      const data = await api('/api/ai/learning/import-jsonl', { method:'POST', body:JSON.stringify({ rebuild_profiles: rebuild }) });
+      renderAiLearningImportSummary(data);
+      if (data.status) renderAiLearningStatus(data.status);
+      await refreshAiFeedbackSamples().catch(() => {});
+      toast(`Imported ${data.import?.imported || 0} sample(s), skipped ${data.import?.duplicates || 0} duplicate(s).`, 'success', 9000);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiLearningImportSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+
+  function fmtFeedbackTime(value) {
+    if (!value) return '-';
+    try {
+      const d = new Date(value);
+      if (!Number.isFinite(d.getTime())) return String(value);
+      return d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    } catch { return String(value); }
+  }
+
+  function labelText(value) {
+    const map = { looks_good:'Looks Good', looks_bad:'Looks Bad', false_alarm:'False Alarm' };
+    return map[String(value || '')] || String(value || '-').replaceAll('_', ' ');
+  }
+
+  function outcomeText(value) {
+    const map = { true_positive:'True +', false_positive:'False +', false_negative:'False -', true_negative:'True -' };
+    return map[String(value || '')] || String(value || '-').replaceAll('_', ' ');
+  }
+
+  function outcomeTone(value) {
+    const v = String(value || '').toLowerCase();
+    if (v === 'true_positive' || v === 'false_negative') return 'bad';
+    if (v === 'false_positive') return 'warn';
+    if (v === 'true_negative') return 'good';
+    return 'neutral';
+  }
+
+  function metricBit(label, value, digits = 2) {
+    if (value === null || value === undefined || value === '') return '';
+    const n = Number(value);
+    const display = Number.isFinite(n) ? fmtLearningNumber(n, digits) : value;
+    return `<span><b>${esc(label)}</b> ${esc(display)}</span>`;
+  }
+
+  function syncAiFeedbackPrinterOptions(printerIds = []) {
+    const select = $('#aiFeedbackSamplesPrinter');
+    if (!select) return;
+    const current = select.value;
+    const ids = new Set();
+    Object.keys(cfg?.printers || {}).forEach(id => ids.add(id));
+    (printerIds || []).forEach(id => id && ids.add(String(id)));
+    select.innerHTML = '<option value="">All printers</option>' + Array.from(ids).sort().map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+    if (current && ids.has(current)) select.value = current;
+  }
+
+  function renderAiFeedbackSample(sample) {
+    sample = sample || {};
+    const flags = Array.isArray(sample.triggered_flags) ? sample.triggered_flags.filter(Boolean).slice(0, 6) : [];
+    const flagsHtml = flags.length ? `<div class="ai-feedback-sample-flags">${flags.map(f => `<span>${esc(f)}</span>`).join('')}</div>` : '';
+    const metrics = [
+      metricBit('risk', sample.risk_score, 0),
+      metricBit('sev', sample.severity, 0),
+      metricBit('conf', sample.confidence, 0),
+      metricBit('luma', sample.dark_luma, 1),
+      metricBit('contrast', sample.contrast, 1),
+      metricBit('edge', sample.edge_density, 3),
+      metricBit('delta', sample.edge_delta, 3),
+    ].filter(Boolean).join('');
+    const thumb = sample.frame_url
+      ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>`
+      : '<div class="ai-feedback-sample-thumb empty">no frame</div>';
+    const stageBits = [
+      sample.print_stage ? String(sample.print_stage).replaceAll('_', ' ') : '',
+      sample.progress_percent !== null && sample.progress_percent !== undefined ? `${fmtLearningNumber(sample.progress_percent, 1)}%` : '',
+      sample.vision_state ? String(sample.vision_state).replaceAll('_', ' ') : '',
+      sample.suppression_match ? 'suppression match' : '',
+    ].filter(Boolean).join(' · ');
+    const reason = sample.reason || sample.feedback_note || '';
+    return `
+      <article class="ai-feedback-sample-card ${esc(outcomeTone(sample.outcome))}">
+        ${thumb}
+        <div class="ai-feedback-sample-body">
+          <div class="ai-feedback-sample-head">
+            <div>
+              <strong>${esc(labelText(sample.feedback_label))}</strong>
+              <small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown printer')}</small>
+            </div>
+            <span class="ai-feedback-sample-outcome ${esc(outcomeTone(sample.outcome))}">${esc(outcomeText(sample.outcome))}</span>
+          </div>
+          ${reason ? `<div class="ai-feedback-sample-reason">${esc(reason)}</div>` : '<div class="ai-feedback-sample-reason muted">No reason note saved.</div>'}
+          <div class="ai-feedback-sample-meta">
+            ${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}
+            ${stageBits ? `<span><b>stage</b> ${esc(stageBits)}</span>` : ''}
+          </div>
+          ${metrics ? `<div class="ai-feedback-sample-metrics">${metrics}</div>` : '<div class="ai-feedback-sample-metrics muted">No metrics captured for this sample.</div>'}
+          ${flagsHtml}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderAiFeedbackSamples(data) {
+    const panel = $('#aiFeedbackSamplesPanel');
+    const summary = $('#aiFeedbackSamplesSummary');
+    if (!panel) return;
+    syncAiFeedbackPrinterOptions(data?.printer_ids || []);
+    const samples = data?.samples || [];
+    if (summary) {
+      const total = Number(data?.total || 0);
+      const shown = Number(data?.count || samples.length || 0);
+      const filters = data?.filters || {};
+      const bits = [
+        `${shown}/${total} shown`,
+        filters.printer_id ? `printer ${filters.printer_id}` : 'all printers',
+        filters.outcome ? String(filters.outcome).replaceAll('_', ' ') : '',
+        filters.label ? labelText(filters.label) : '',
+      ].filter(Boolean);
+      summary.textContent = bits.join(' · ');
+    }
+    if (!samples.length) {
+      panel.innerHTML = '<div class="ai-learning-empty">No feedback samples match these filters yet.</div>';
+      return;
+    }
+    panel.innerHTML = samples.map(renderAiFeedbackSample).join('');
+  }
+
+  async function refreshAiFeedbackSamples(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    try {
+      const params = new URLSearchParams();
+      const limit = $('#aiFeedbackSamplesLimit')?.value || '25';
+      params.set('limit', limit);
+      const printerId = $('#aiFeedbackSamplesPrinter')?.value || '';
+      const outcome = $('#aiFeedbackSamplesOutcome')?.value || '';
+      const label = $('#aiFeedbackSamplesLabel')?.value || '';
+      if (printerId) params.set('printer_id', printerId);
+      if (outcome) params.set('outcome', outcome);
+      if (label) params.set('label', label);
+      const data = await api(`/api/ai/learning/samples?${params.toString()}`);
+      renderAiFeedbackSamples(data);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiFeedbackSamplesSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
   function ollamaBaseUrlFromSettings() {
     return $('#aiOllamaBaseUrl')?.value?.trim() || cfg?.portal_ai?.ollama_base_url || 'http://localhost:11434';
   }
@@ -1121,9 +1646,12 @@
     const saveMenu = $('#saveMenuButton');
     if (saveMenu) saveMenu.addEventListener('click', async () => {
       cfg.features = cfg.features || {};
+      cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
+      cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
+      cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
       setButtonBusy(saveMenu, true, 'Saving...');
       try { await api('/api/config', { method:'POST', body:JSON.stringify({ config: cfg }) }); toast('Menu settings saved. Reloading...', 'success'); setTimeout(()=>location.reload(), 500); }
       catch (err) { toast(err.message, 'error'); }
@@ -1212,9 +1740,12 @@
       const showThumb = $('#dashboardShowGcodeThumbnail');
       if (showThumb) cfg.dashboard.show_gcode_thumbnail = !!showThumb.checked;
 
+      cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
+      cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
+      cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
 
       cfg.kiosk.refresh_interval_seconds = Number($('#kioskRefreshInterval')?.value || 3);
       cfg.kiosk.camera_fit = $('#kioskCameraFit')?.value || 'contain';
@@ -1265,6 +1796,7 @@
       cfg.portal_ai.feedback_suppression_enabled = !!$('#aiFeedbackSuppressionEnabled')?.checked;
       cfg.portal_ai.feedback_suppression_ttl_hours = Number($('#aiFeedbackSuppressionTtlHours')?.value || 18);
       cfg.portal_ai.feedback_suppression_max_severity = Number($('#aiFeedbackSuppressionMaxSeverity')?.value || 65);
+      collectAiLearningSettings();
       cfg.portal_ai.auto_pause_enabled = !!$('#aiAutoPauseEnabled')?.checked;
       cfg.portal_ai.auto_pause_threshold = Number($('#aiAutoPauseThreshold')?.value || 90);
 
@@ -1372,6 +1904,62 @@
       }
     });
 
+    const refreshAiLearning = $('#refreshAiLearningButton');
+    if (refreshAiLearning) refreshAiLearning.addEventListener('click', async () => {
+      try { await refreshAiLearningStatus(refreshAiLearning); }
+      catch (err) { toast(err.message, 'error', 9000); }
+    });
+
+    const rebuildAiLearning = $('#rebuildAiLearningButton');
+    if (rebuildAiLearning) rebuildAiLearning.addEventListener('click', async () => {
+      setButtonBusy(rebuildAiLearning, true, 'Rebuilding...');
+      try {
+        const data = await api('/api/ai/learning/rebuild', { method:'POST', body:JSON.stringify({}) });
+        renderAiLearningStatus({ ok:true, database:data.database || {}, learning:{ profiles:data.profiles || [], mode:cfg?.portal_ai?.ai_feedback_learning_mode || 'suggest_only', enabled:!!cfg?.portal_ai?.ai_feedback_learning_enabled } });
+        await refreshAiLearningStatus();
+        toast(`Rebuilt ${data.count || 0} AI learning profile(s).`, 'success');
+      } catch (err) {
+        toast(err.message, 'error', 9000);
+      } finally {
+        setButtonBusy(rebuildAiLearning, false);
+      }
+    });
+
+    const resetAiLearning = $('#resetAiLearningButton');
+    if (resetAiLearning) resetAiLearning.addEventListener('click', async () => {
+      if (!confirm('Reset learned tuning profiles? Feedback samples and JSONL audit logs will be kept.')) return;
+      setButtonBusy(resetAiLearning, true, 'Resetting...');
+      try {
+        const data = await api('/api/ai/learning/reset', { method:'POST', body:JSON.stringify({ delete_samples:false }) });
+        renderAiLearningStatus(data.status || data);
+        toast('Learned tuning reset. Feedback samples were kept.', 'success');
+      } catch (err) {
+        toast(err.message, 'error', 9000);
+      } finally {
+        setButtonBusy(resetAiLearning, false);
+      }
+    });
+
+    const importAiLearningJsonlButton = $('#importAiLearningJsonlButton');
+    if (importAiLearningJsonlButton) importAiLearningJsonlButton.addEventListener('click', async () => {
+      if (!confirm('Import data/ai_feedback.jsonl into SQLite now? Existing samples will be skipped as duplicates.')) return;
+      try { await importAiLearningJsonl(importAiLearningJsonlButton); }
+      catch (err) { toast(err.message, 'error', 9000); }
+    });
+
+    const refreshAiFeedbackSamplesButton = $('#refreshAiFeedbackSamplesButton');
+    if (refreshAiFeedbackSamplesButton) refreshAiFeedbackSamplesButton.addEventListener('click', async () => {
+      try { await refreshAiFeedbackSamples(refreshAiFeedbackSamplesButton); }
+      catch (err) { toast(err.message, 'error', 9000); }
+    });
+    ['aiFeedbackSamplesPrinter', 'aiFeedbackSamplesOutcome', 'aiFeedbackSamplesLabel', 'aiFeedbackSamplesLimit'].forEach(id => {
+      const el = $('#' + id);
+      if (el) el.addEventListener('change', () => refreshAiFeedbackSamples().catch(err => toast(err.message, 'error', 9000)));
+    });
+
+    refreshAiLearningStatus().catch(() => {});
+    refreshAiFeedbackSamples().catch(() => {});
+
     const saveAI = $('#saveAIButton');
     if (saveAI) saveAI.addEventListener('click', async () => {
       cfg.portal_ai = cfg.portal_ai || {};
@@ -1404,6 +1992,7 @@
       cfg.portal_ai.feedback_suppression_enabled = !!$('#aiFeedbackSuppressionEnabled')?.checked;
       cfg.portal_ai.feedback_suppression_ttl_hours = Number($('#aiFeedbackSuppressionTtlHours')?.value || 18);
       cfg.portal_ai.feedback_suppression_max_severity = Number($('#aiFeedbackSuppressionMaxSeverity')?.value || 65);
+      collectAiLearningSettings();
       cfg.portal_ai.auto_pause_enabled = !!$('#aiAutoPauseEnabled')?.checked;
       cfg.portal_ai.auto_pause_threshold = Number($('#aiAutoPauseThreshold')?.value || 90);
       setButtonBusy(saveAI, true, 'Saving...');
@@ -2369,6 +2958,197 @@
     }
   }
 
+
+
+  const aiTrainingState = { samples: [], selectedId: null, lastData: null };
+
+  function syncAiTrainingPrinterOptions(printerIds = []) {
+    const select = $('#aiTrainingPrinter');
+    if (!select) return;
+    const current = select.value;
+    const ids = new Set();
+    Object.keys(cfg?.printers || {}).forEach(id => ids.add(id));
+    (printerIds || []).forEach(id => id && ids.add(String(id)));
+    select.innerHTML = '<option value="">All printers</option>' + Array.from(ids).sort().map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+    if (current && ids.has(current)) select.value = current;
+  }
+
+  function sampleStageText(sample) {
+    return [
+      sample.print_stage ? String(sample.print_stage).replaceAll('_', ' ') : '',
+      sample.progress_percent !== null && sample.progress_percent !== undefined ? `${fmtLearningNumber(sample.progress_percent, 1)}%` : '',
+      sample.vision_state ? String(sample.vision_state).replaceAll('_', ' ') : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  function renderAiTrainingSampleCard(sample) {
+    sample = sample || {};
+    const tone = outcomeTone(sample.outcome);
+    const selected = Number(aiTrainingState.selectedId) === Number(sample.id);
+    const flags = Array.isArray(sample.triggered_flags) ? sample.triggered_flags.filter(Boolean).slice(0, 4) : [];
+    const metrics = [
+      sample.risk_score !== null && sample.risk_score !== undefined ? `risk ${fmtLearningNumber(sample.risk_score, 0)}` : '',
+      sample.severity !== null && sample.severity !== undefined ? `sev ${fmtLearningNumber(sample.severity, 0)}` : '',
+      sample.confidence !== null && sample.confidence !== undefined ? `conf ${fmtLearningNumber(sample.confidence, 0)}` : '',
+      sample.dark_luma !== null && sample.dark_luma !== undefined ? `luma ${fmtLearningNumber(sample.dark_luma, 1)}` : '',
+      sample.edge_density !== null && sample.edge_density !== undefined ? `edge ${fmtLearningNumber(sample.edge_density, 3)}` : '',
+    ].filter(Boolean);
+    const thumb = sample.frame_url ? `<span class="ai-training-thumb"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></span>` : '<span class="ai-training-thumb">no frame</span>';
+    const reason = sample.reason || sample.feedback_note || '';
+    return `
+      <button class="ai-training-sample-card ${esc(tone)} ${selected ? 'selected' : ''}" type="button" data-training-sample-id="${esc(sample.id)}">
+        ${thumb}
+        <span class="ai-training-sample-body">
+          <span class="ai-training-sample-head">
+            <span><strong>${esc(labelText(sample.feedback_label))}</strong><small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown')}</small></span>
+            <span class="ai-training-pill ${esc(tone)}">${esc(outcomeText(sample.outcome))}</span>
+          </span>
+          <span class="ai-training-note">${esc(reason || 'No reason note saved.')}</span>
+          <span class="ai-training-meta">${sample.file_name ? `<span>file ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span>${esc(sampleStageText(sample))}</span>` : ''}</span>
+          ${metrics.length ? `<span class="ai-training-metrics">${metrics.map(m => `<span>${esc(m)}</span>`).join('')}</span>` : ''}
+          ${flags.length ? `<span class="ai-training-flags">${flags.map(f => `<span>${esc(f)}</span>`).join('')}</span>` : ''}
+        </span>
+      </button>
+    `;
+  }
+
+  function renderAiTrainingSamples(data) {
+    const grid = $('#aiTrainingSamplesGrid');
+    const summary = $('#aiTrainingSummary');
+    if (!grid) return;
+    syncAiTrainingPrinterOptions(data?.printer_ids || []);
+    aiTrainingState.lastData = data || {};
+    aiTrainingState.samples = data?.samples || [];
+    if (summary) {
+      const filters = data?.filters || {};
+      summary.textContent = `${data?.count || 0}/${data?.total || 0} shown · ${filters.printer_id || 'all printers'}${filters.outcome ? ` · ${outcomeText(filters.outcome)}` : ''}${filters.label ? ` · ${labelText(filters.label)}` : ''}`;
+    }
+    if (!aiTrainingState.samples.length) {
+      grid.innerHTML = '<div class="ai-learning-empty">No feedback samples match these filters yet.</div>';
+      aiTrainingState.selectedId = null;
+      renderAiTrainingSelected(null);
+      return;
+    }
+    if (!aiTrainingState.samples.some(s => Number(s.id) === Number(aiTrainingState.selectedId))) {
+      aiTrainingState.selectedId = aiTrainingState.samples[0].id;
+    }
+    grid.innerHTML = aiTrainingState.samples.map(renderAiTrainingSampleCard).join('');
+    $$('[data-training-sample-id]', grid).forEach(btn => btn.addEventListener('click', () => {
+      aiTrainingState.selectedId = Number(btn.dataset.trainingSampleId);
+      renderAiTrainingSamples(aiTrainingState.lastData);
+      renderAiTrainingSelected(aiTrainingState.samples.find(s => Number(s.id) === Number(aiTrainingState.selectedId)));
+    }));
+    renderAiTrainingSelected(aiTrainingState.samples.find(s => Number(s.id) === Number(aiTrainingState.selectedId)));
+  }
+
+  function renderAiTrainingSelected(sample) {
+    const box = $('#aiTrainingSelected');
+    if (!box) return;
+    const save = $('#aiTrainingSaveReviewButton');
+    const del = $('#aiTrainingDeleteSampleButton');
+    if (!sample) {
+      box.className = 'ai-training-selected empty';
+      box.textContent = 'No sample selected.';
+      if (save) save.disabled = true;
+      if (del) del.disabled = true;
+      return;
+    }
+    if (save) save.disabled = false;
+    if (del) del.disabled = false;
+    box.className = 'ai-training-selected';
+    box.innerHTML = `
+      <div class="ai-feedback-sample-head"><div><strong>${esc(labelText(sample.feedback_label))}</strong><small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown printer')}</small></div><span class="ai-feedback-sample-outcome ${esc(outcomeTone(sample.outcome))}">${esc(outcomeText(sample.outcome))}</span></div>
+      ${sample.frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>` : ''}
+      <div class="ai-feedback-sample-meta"><span><b>ID</b> ${esc(sample.id)}</span>${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span><b>stage</b> ${esc(sampleStageText(sample))}</span>` : ''}</div>
+    `;
+    $('#aiTrainingReviewLabel').value = sample.feedback_label || 'looks_good';
+    $('#aiTrainingReviewOutcome').value = sample.outcome || '';
+    $('#aiTrainingReviewNote').value = sample.reason || sample.feedback_note || '';
+  }
+
+  function aiTrainingParams() {
+    const params = new URLSearchParams();
+    params.set('limit', $('#aiTrainingLimit')?.value || '50');
+    const printerId = $('#aiTrainingPrinter')?.value || '';
+    const outcome = $('#aiTrainingOutcome')?.value || '';
+    const label = $('#aiTrainingLabel')?.value || '';
+    if (printerId) params.set('printer_id', printerId);
+    if (outcome) params.set('outcome', outcome);
+    if (label) params.set('label', label);
+    return params;
+  }
+
+  async function refreshAiTrainingSamples(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    try {
+      const data = await api(`/api/ai/learning/samples?${aiTrainingParams().toString()}`);
+      renderAiTrainingSamples(data);
+      return data;
+    } catch (err) {
+      setInlineStatus('aiTrainingSummary', err.message, 'bad');
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function saveAiTrainingReview(button = null) {
+    const id = aiTrainingState.selectedId;
+    if (!id) return toast('Select a sample first.', 'warn');
+    setButtonBusy(button, true, 'Saving...');
+    try {
+      const body = {
+        feedback_label: $('#aiTrainingReviewLabel')?.value || '',
+        outcome: $('#aiTrainingReviewOutcome')?.value || '',
+        feedback_note: $('#aiTrainingReviewNote')?.value || '',
+        rebuild_profile: true,
+      };
+      await api(`/api/ai/learning/samples/${encodeURIComponent(id)}/review`, { method:'POST', body:JSON.stringify(body) });
+      setInlineStatus('aiTrainingReviewStatus', 'Review saved and profile rebuild requested.', 'good');
+      toast('Training sample review saved.', 'success');
+      await refreshAiTrainingSamples();
+    } catch (err) {
+      setInlineStatus('aiTrainingReviewStatus', err.message, 'bad');
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function deleteAiTrainingSample(button = null) {
+    const id = aiTrainingState.selectedId;
+    if (!id) return toast('Select a sample first.', 'warn');
+    if (!confirm(`Delete SQLite training sample ${id}? JSONL audit data and frame files are kept.`)) return;
+    setButtonBusy(button, true, 'Deleting...');
+    try {
+      await api(`/api/ai/learning/samples/${encodeURIComponent(id)}?rebuild_profile=true`, { method:'DELETE' });
+      setInlineStatus('aiTrainingReviewStatus', 'Sample deleted from SQLite learner. JSONL/frame files kept.', 'good');
+      toast('Training sample deleted from SQLite.', 'success');
+      aiTrainingState.selectedId = null;
+      await refreshAiTrainingSamples();
+    } catch (err) {
+      setInlineStatus('aiTrainingReviewStatus', err.message, 'bad');
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function exportAiTrainingDataset() {
+    const params = aiTrainingParams();
+    params.set('include_frames', $('#aiTrainingExportFrames')?.checked ? 'true' : 'false');
+    window.location.href = `/api/ai/learning/export?${params.toString()}`;
+  }
+
+  function initAiTraining() {
+    $('#aiTrainingRefreshButton')?.addEventListener('click', e => refreshAiTrainingSamples(e.currentTarget));
+    $('#aiTrainingExportButton')?.addEventListener('click', exportAiTrainingDataset);
+    $('#aiTrainingSaveReviewButton')?.addEventListener('click', e => saveAiTrainingReview(e.currentTarget));
+    $('#aiTrainingDeleteSampleButton')?.addEventListener('click', e => deleteAiTrainingSample(e.currentTarget));
+    ['aiTrainingPrinter','aiTrainingOutcome','aiTrainingLabel','aiTrainingLimit'].forEach(id => $('#' + id)?.addEventListener('change', () => refreshAiTrainingSamples().catch(()=>{})));
+    renderAiTrainingSelected(null);
+    refreshAiTrainingSamples().catch(err => toast(err.message, 'error'));
+  }
+
+
   function initFiles() {
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
     $('#refreshPrinterFilesButton')?.addEventListener('click', loadPrinterFiles);
@@ -2404,6 +3184,7 @@
   if (page === 'kiosk') initKiosk();
   if (page === 'setup') initSetup();
   if (page === 'settings') initSettings();
+  if (page === 'ai-training') initAiTraining();
   if (page === 'logs') initLogs();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();

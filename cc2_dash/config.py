@@ -19,7 +19,7 @@ class PrinterConfig:
     name: str
     host: str
     serial: str
-    access_code: str = "123456"
+    access_code: str = ""
     port: int = 1883
     enabled: bool = True
     allow_commands: bool = True
@@ -47,7 +47,7 @@ def printer_dict_to_config(printer_id: str, data: dict[str, Any]) -> PrinterConf
         name=str(data.get("name") or data.get("host_name") or "Centauri Carbon 2"),
         host=str(host),
         serial=str(serial),
-        access_code=str(data.get("access_code") or data.get("pin") or "123456"),
+        access_code=str(data.get("access_code") or data.get("pin") or ""),
         port=int(data.get("port") or 1883),
         enabled=bool(data.get("enabled", True)),
         allow_commands=bool(data.get("allow_commands", True)),
@@ -69,7 +69,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     return data
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "config_version": 4,
+    "config_version": 5,
     "app": {
         "name": "cc2-dash",
         "bind_host": "0.0.0.0",
@@ -99,9 +99,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "printers": {},
     "features": {
+        "portal_menu_enabled": True,
         "file_manager_enabled": False,
         "filament_manager_enabled": False,
         "kiosk_enabled": True,
+        "ai_training_menu_enabled": True,
+        "logs_menu_enabled": True,
     },
     "kiosk": {
         "refresh_interval_seconds": 3,
@@ -170,6 +173,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "feedback_suppression_max_severity": 65,
         "feedback_suppression_include_camera": False,
         "feedback_threshold_auto_tuning_enabled": False,
+        "ai_feedback_learning_enabled": True,
+        "ai_feedback_learning_mode": "suggest_only",
+        "ai_learning_min_samples": 8,
+        "ai_learning_min_false_positives": 4,
+        "ai_learning_min_false_negatives": 2,
+        "ai_learning_max_dark_luma_adjustment": 8,
+        "ai_learning_max_edge_density_adjustment": 0.05,
+        "ai_learning_max_required_bad_checks_adjustment": 1,
+        "ai_learning_apply_dark_luma": True,
+        "ai_learning_apply_edge_density": True,
+        "ai_learning_apply_required_bad_checks": True,
+        "ai_learning_rebuild_on_feedback": True,
+        "ai_learning_keep_jsonl_audit_log": True,
         "auto_pause_enabled": False,
         "auto_pause_threshold": 90,
         "require_multiple_bad_checks": 3
@@ -285,6 +301,9 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         # its top-nav entry by default. Older saved configs inherited the prior
         # True default, so migrate once; users can re-enable it from Settings.
         features = cfg.setdefault("features", {})
+        features.setdefault("portal_menu_enabled", True)
+        features.setdefault("ai_training_menu_enabled", True)
+        features.setdefault("logs_menu_enabled", True)
         if old_version < 2:
             features["file_manager_enabled"] = False
         # v1.2.28: Filament Manager is still experimental. Keep the route and
@@ -294,7 +313,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
             features["filament_manager_enabled"] = False
         dashboard = cfg.setdefault("dashboard", {})
         dashboard.setdefault("show_gcode_thumbnail", True)
-        cfg["config_version"] = 4
+        cfg["config_version"] = 5
     except Exception:
         pass
     try:
@@ -320,7 +339,10 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         pass
     try:
         features = cfg.setdefault("features", {})
+        features.setdefault("portal_menu_enabled", True)
         features.setdefault("kiosk_enabled", True)
+        features.setdefault("ai_training_menu_enabled", True)
+        features.setdefault("logs_menu_enabled", True)
         kiosk = cfg.setdefault("kiosk", {})
         kiosk.setdefault("refresh_interval_seconds", 3)
         kiosk.setdefault("camera_fit", "contain")
@@ -344,6 +366,25 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         ai.setdefault("feedback_suppression_max_severity", 65)
         ai.setdefault("feedback_suppression_include_camera", False)
         ai.setdefault("feedback_threshold_auto_tuning_enabled", False)
+        ai.setdefault("ai_feedback_learning_enabled", True)
+        ai.setdefault("ai_feedback_learning_mode", "suggest_only")
+        ai.setdefault("ai_learning_min_samples", 8)
+        ai.setdefault("ai_learning_min_false_positives", 4)
+        ai.setdefault("ai_learning_min_false_negatives", 2)
+        ai.setdefault("ai_learning_max_dark_luma_adjustment", 8)
+        ai.setdefault("ai_learning_max_edge_density_adjustment", 0.05)
+        ai.setdefault("ai_learning_max_required_bad_checks_adjustment", 1)
+        ai.setdefault("ai_learning_apply_dark_luma", True)
+        ai.setdefault("ai_learning_apply_edge_density", True)
+        ai.setdefault("ai_learning_apply_required_bad_checks", True)
+        ai.setdefault("ai_learning_rebuild_on_feedback", True)
+        ai.setdefault("ai_learning_keep_jsonl_audit_log", True)
+        mode = str(ai.get("ai_feedback_learning_mode") or "suggest_only").strip().lower()
+        if mode not in {"off", "suggest_only", "auto_adjust_safe"}:
+            ai["ai_feedback_learning_mode"] = "suggest_only"
+        app_cfg = cfg.setdefault("app", {})
+        if app_cfg.get("name") == "cc2-dash-lite":
+            app_cfg["name"] = "cc2-dash"
         old_prompt = "You are monitoring a 3D printer camera image. Return JSON only with visual_state, failure_types, confidence, severity, summary, and recommended_action. Be conservative and do not treat normal supports, purge towers, brims, skirts, infill, filament swaps, or multicolor purge waste as failure unless clearly abnormal."
         current_prompt = str(ai.get("vision_prompt") or "").strip()
         if not current_prompt or current_prompt == old_prompt:
