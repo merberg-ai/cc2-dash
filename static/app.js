@@ -66,6 +66,10 @@
     const level = String(ai.level || 'low').toLowerCase();
     const risk = Math.max(0, Math.min(100, Number(ai.risk || 0)));
     const vState = String(vision.visual_state || '').toLowerCase();
+    const aiState = String(ai.state || '').toLowerCase();
+    if (aiState === 'preparing') {
+      return { tone: 'good', label: 'Preparing' };
+    }
     const badVision = ['failure_likely', 'camera_bad', 'failed', 'error'].includes(vState);
     const fishyVision = ['possible_failure', 'uncertain'].includes(vState) && !(vision.benign_uncertainty || vision.normalized_from === 'uncertain');
     const highLevel = ['high', 'critical', 'bad', 'error', 'failure'].includes(level);

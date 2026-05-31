@@ -140,6 +140,33 @@ ACTIVE_SUB_STATUS_CODES = {
 }
 IDLE_MACHINE_STATUS_CODES = {1, 16}
 IDLE_SUB_STATUS_CODES = {0, 2077}
+PRINT_PREP_MACHINE_STATUS_CODES = {0, 5, 8, 10}
+PRINT_PREP_SUB_STATUS_CODES = {1041, 1045, 1096, 1405, 1906, 2801, 2802, 2901, 2902}
+PRINT_PREP_TEXT_TERMS = (
+    "preheating",
+    "extruder heating",
+    "extruder preheating",
+    "bed heating",
+    "bed preheating",
+    "heating bed",
+    "homing",
+    "auto leveling",
+    "leveling",
+    "self checking",
+    "initializing",
+    "warming",
+    "warmup",
+    "warm up",
+)
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except Exception:
+        return None
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
@@ -154,6 +181,64 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
 def _has_real_file(value: Any) -> bool:
     text = str(value or "").strip()
     return bool(text and text not in {"-", "none", "None", "null"})
+
+
+def _print_phase_from_status(status: dict[str, Any] | None, snap: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Classify start-of-job preparation states separately from real failures.
+
+    The firmware legitimately reports active-job file/progress/temperature targets
+    while it is preheating, homing, or leveling. During those phases the bed can be
+    empty/dark and filament sensors can briefly report odd values, so Portal AI
+    should show Preparing instead of Failure Likely.
+    """
+    status = status or {}
+    n = ((snap or {}).get("normalized") or {}) if isinstance(snap, dict) else {}
+    machine_code = _coerce_int(status.get("status_code", n.get("status_code")))
+    sub_code = _coerce_int(status.get("sub_status_code", n.get("sub_status_code")))
+    state_text = " ".join(
+        str(x or "")
+        for x in (
+            status.get("state"),
+            status.get("status_text"),
+            n.get("state"),
+            n.get("sub_state"),
+        )
+    ).strip().lower()
+
+    is_preparing = bool(
+        machine_code in PRINT_PREP_MACHINE_STATUS_CODES
+        or sub_code in PRINT_PREP_SUB_STATUS_CODES
+        or any(term in state_text for term in PRINT_PREP_TEXT_TERMS)
+    )
+    if "bed preheating" in state_text or sub_code in {1405, 1906}:
+        kind = "bed_preheating"
+        label = "Bed Preheating"
+    elif ("extruder" in state_text and ("preheat" in state_text or "heating" in state_text)) or sub_code in {1045, 1096}:
+        kind = "extruder_preheating"
+        label = "Extruder Preheating"
+    elif "homing" in state_text or machine_code == 10 or sub_code in {2801, 2802}:
+        kind = "homing"
+        label = "Homing"
+    elif "level" in state_text or machine_code == 5 or sub_code in {2901, 2902}:
+        kind = "auto_leveling"
+        label = "Auto Leveling"
+    elif "self" in state_text or machine_code == 8:
+        kind = "self_checking"
+        label = "Self Checking"
+    elif "initial" in state_text or machine_code == 0:
+        kind = "initializing"
+        label = "Initializing"
+    else:
+        kind = "preparing"
+        label = str(status.get("status_text") or n.get("sub_state") or status.get("state") or n.get("state") or "Preparing")
+
+    return {
+        "is_preparing": is_preparing,
+        "kind": kind,
+        "label": label,
+        "status_code": machine_code,
+        "sub_status_code": sub_code,
+    }
 
 
 def _status_looks_active_print(status: dict[str, Any] | None, snap: dict[str, Any] | None = None) -> bool:
@@ -251,6 +336,60 @@ def _idle_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any]
         "vision": vision,
     }
     return portal_ai.set_cached_result(printer_id, result)
+
+
+def _prep_vision_result(printer_id: str, status: dict[str, Any], source: str = "request") -> dict[str, Any]:
+    now = time.time()
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status)
+    label = str(phase.get("label") or "Preparing")
+    result = {
+        "enabled": True,
+        "skipped": True,
+        "visual_state": "standby",
+        "summary": f"Printer is {label}; vision failure checks are paused until actual printing begins.",
+        "consecutive_bad": 0,
+        "last_check_epoch": now,
+        "last_check": time.strftime("%H:%M:%S"),
+        "source": source,
+        "active_print": bool(status.get("active_print")),
+        "print_phase": phase,
+    }
+    return vision_monitor.set_cached_result(printer_id, result)
+
+
+def _prep_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any], source: str = "request") -> dict[str, Any]:
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    now = time.time()
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status)
+    label = str(phase.get("label") or "Preparing")
+    vision = status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None
+    result = {
+        "enabled": bool(ai_cfg.get("enabled", True)),
+        "state": "preparing",
+        "level": "low",
+        "risk": 0,
+        "summary": "Preparing",
+        "reasons": [
+            f"Printer is in a normal start-of-job state: {label}.",
+            "Failure alerts are paused for preheating/homing/leveling and will resume when printing starts.",
+        ],
+        "positives": ["Telemetry state says the printer is preparing the job, not failing it."],
+        "active_print": bool(status.get("active_print")),
+        "monitor_active_prints_only": bool(ai_cfg.get("monitor_active_prints_only", True)),
+        "print_phase": phase,
+        "last_check_epoch": now,
+        "last_check": time.strftime("%H:%M:%S"),
+        "source": source,
+        "background_monitor_enabled": bool(ai_cfg.get("background_monitor_enabled", True)),
+        "rules": {
+            "telemetry": bool(ai_cfg.get("telemetry_rules_enabled", True)),
+            "camera": bool(ai_cfg.get("camera_rules_enabled", True)),
+            "vision": bool(ai_cfg.get("vision_ai_enabled", False)),
+        },
+        "vision": vision,
+    }
+    return portal_ai.set_cached_result(printer_id, result)
+
 
 FILAMENT_TRAY_STATUS = {
     # Matches the stock portal enum: Empty=0, preViewLoad=1, loaded=2.
@@ -1799,6 +1938,12 @@ async def api_set_default_printer(printer_id: str):
 
 def _maybe_attach_vision(printer_id: str, printer: dict[str, Any] | None, status: dict[str, Any], cfg: dict[str, Any], ai_source: str = "request", force: bool = False) -> dict[str, Any]:
     ai_cfg = cfg.get("portal_ai", {}) or {}
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status)
+    if phase.get("is_preparing"):
+        status["print_phase"] = phase
+        if ai_cfg.get("vision_ai_enabled", False):
+            status["vision_ai"] = _prep_vision_result(printer_id, status, ai_source)
+        return status
     if ai_cfg.get("monitor_active_prints_only", True) and not bool(status.get("active_print")):
         if ai_cfg.get("vision_ai_enabled", False):
             status["vision_ai"] = _idle_vision_result(printer_id, ai_source)
@@ -1844,6 +1989,13 @@ def _maybe_attach_vision(printer_id: str, printer: dict[str, Any] | None, status
 
 def _attach_ai_status(printer_id: str, status: dict[str, Any], snap: Optional[dict[str, Any]], cfg: dict[str, Any], ai_source: str = "request", force_ai_evaluate: bool = False, printer: dict[str, Any] | None = None) -> dict[str, Any]:
     ai_cfg = cfg.get("portal_ai", {}) or {}
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status, snap)
+    if phase.get("is_preparing"):
+        status["print_phase"] = phase
+        if ai_cfg.get("vision_ai_enabled", False):
+            status["vision_ai"] = _prep_vision_result(printer_id, status, ai_source)
+        status["portal_ai"] = _prep_ai_result(printer_id, status, cfg, ai_source)
+        return status
     if ai_cfg.get("enabled", True) and ai_cfg.get("monitor_active_prints_only", True) and not bool(status.get("active_print")):
         if ai_cfg.get("vision_ai_enabled", False):
             status["vision_ai"] = _idle_vision_result(printer_id, ai_source)
@@ -1911,6 +2063,8 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "registered": bool(snap.get("registered")),
         "state": str(state).lower(),
         "status_text": str(state).replace("_", " ").title(),
+        "status_code": n.get("status_code"),
+        "sub_status_code": n.get("sub_status_code"),
         "message": snap.get("last_error") or ("Registered with printer" if snap.get("registered") else "Waiting for MQTT registration"),
         "progress": round(progress, 1),
         "print_time": seconds_to_hms((n.get("time") or {}).get("elapsed_sec")) or "-",
@@ -1948,6 +2102,7 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "direct_portal_url": f"http://{pcfg.host}/",
         "raw": snap,
     }
+    status["print_phase"] = _print_phase_from_status(status, snap)
     status["active_print"] = _status_looks_active_print(status, snap)
     if status.get("show_gcode_thumbnail") and _has_real_file(status.get("file")):
         status["gcode_thumbnail_url"] = f"/api/printers/{printer_id}/files/thumbnail-image?filename={quote(str(status.get('file') or ''))}&storage_media=local"
@@ -3556,6 +3711,13 @@ async def api_vision_check_now(printer_id: str):
     snap = runtime.snapshot(printer_id)
     # Build status without forcing a nested vision run, then run vision explicitly.
     status = _status_from_snapshot(printer_id, printer, snap, ai_source="request", force_ai_evaluate=False, attach_ai=False)
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status, snap)
+    if phase.get("is_preparing"):
+        status["print_phase"] = phase
+        result = _prep_vision_result(printer_id, status, "manual")
+        status["vision_ai"] = result
+        status["portal_ai"] = _prep_ai_result(printer_id, status, cfg, "manual")
+        return {"ok": True, "skipped": True, "reason": "preparing", "vision": result, "portal_ai": status.get("portal_ai"), "status": status}
     if (cfg.get("portal_ai", {}) or {}).get("monitor_active_prints_only", True) and not bool(status.get("active_print")):
         result = _idle_vision_result(printer_id, "manual")
         status["vision_ai"] = result

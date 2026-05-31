@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.46-blue)
+![Version](https://img.shields.io/badge/version-1.2.47-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.46 configurable-navigation
+1.2.47 print-prep-ai-guard
 ```
 
 Major current capabilities:
@@ -1143,6 +1143,15 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.47 print-prep AI guard
+
+- Added explicit print-preparation state detection for bed preheating, extruder preheating, homing, auto-leveling, self-checking, and initializing.
+- Portal AI now reports these phases as Preparing instead of Failure Likely, and the dashboard summary pill shows Preparing instead of a scary false alarm.
+- Vision/Ollama failure checks are paused during normal start-of-job preparation, preventing dark/empty-bed camera frames from causing false alarms.
+- Temperature-gap, filament-out, and progress-stall rules are also paused during preparation and resume when actual printing starts.
+- Added `print_phase`, `status_code`, and `sub_status_code` fields to status payloads for better debugging and future UI work.
+- No printer-control/autopause behavior changes; Portal AI remains advisory-only.
 
 ### v1.2.46 configurable navigation
 
