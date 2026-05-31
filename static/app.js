@@ -6,6 +6,7 @@
   let cfg = cfgEl ? JSON.parse(cfgEl.textContent) : {};
   let dashboardThumbnailUrl = '';
   let dashboardThumbnailFile = '';
+  const baseDocumentTitle = document.title || 'cc2-dash';
 
   function toast(message, type = 'info', timeout = 4200) {
     const host = $('#toastHost');
@@ -83,6 +84,30 @@
     return { label, tone, busy, preparing, title };
   }
 
+  function compactTitleText(value, fallback = '') {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (!text || text === '-' || text.toLowerCase() === 'none') return fallback;
+    return text.length > 34 ? `${text.slice(0, 31)}…` : text;
+  }
+
+  function updateDashboardTitle(status, summaryState, progress) {
+    const st = status || {};
+    const state = summaryState || printSummaryState(st, !!st.active_print, progress);
+    const label = compactTitleText(state.label || st.status_text || st.state, 'cc2-dash');
+    const pct = Number.isFinite(Number(progress)) ? `${Number(progress).toFixed(1)}%` : '';
+    const timeLeft = compactTitleText(st.time_left || st.remaining || st.remaining_time || '', '');
+    const elapsed = compactTitleText(st.print_time || st.elapsed || '', '');
+    const parts = [label];
+    if (state.busy || Number(progress) > 0) parts.push(pct);
+    if (timeLeft && timeLeft !== '0s') parts.push(`${timeLeft} left`);
+    else if (elapsed && (state.busy || Number(progress) > 0)) parts.push(`${elapsed} elapsed`);
+    document.title = `${parts.filter(Boolean).join(' · ')} · ${baseDocumentTitle}`;
+  }
+
+  function setDashboardTitleOffline(message = 'Connection Trouble') {
+    document.title = `${compactTitleText(message, 'Connection Trouble')} · ${baseDocumentTitle}`;
+  }
+
   function setText(id, value) {
     const el = $('#' + id);
     if (el) el.textContent = value ?? '-';
@@ -95,6 +120,14 @@
     const risk = Math.max(0, Math.min(100, Number(ai.risk || 0)));
     const vState = String(vision.visual_state || '').toLowerCase();
     const aiState = String(ai.state || '').toLowerCase();
+    const summary = String(ai.summary || '').toLowerCase();
+    const activeHint = ai.active_print;
+    if (ai.enabled === false) {
+      return { tone: 'idle', label: 'Disabled' };
+    }
+    if (aiState === 'idle_standby' || (summary === 'idle' && activeHint === false)) {
+      return { tone: 'idle', label: 'Idle' };
+    }
     if (aiState === 'preparing') {
       return { tone: 'good', label: 'Preparing' };
     }
@@ -473,6 +506,7 @@
         printStatePill.textContent = summaryState.label;
         printStatePill.title = summaryState.title;
       }
+      updateDashboardTitle(st, summaryState, progress);
 
       setText('statusText', st.status_text || st.state || 'Unknown');
       renderPortalAI(st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Connection Lost', level: st.reachable ? 'low' : 'watch', risk: st.reachable ? 0 : 35, reasons: [st.message || 'Waiting for printer telemetry.'] });
@@ -506,6 +540,7 @@
       if (ph && cam && !cam.classList.contains('hidden')) ph.classList.add('hidden');
     } catch (err) {
       renderPortalAI({ summary: 'Connection Trouble', level: 'high', risk: 75, reasons: [err.message || 'Dashboard could not load printer status.'] });
+      setDashboardTitleOffline('Connection Trouble');
       const statusEl = $('#statusText');
       if (statusEl) {
         statusEl.textContent = 'Printer Error';

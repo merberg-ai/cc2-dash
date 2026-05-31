@@ -57,6 +57,7 @@ button, input, select, textarea { font: inherit; }
 .dashboard-summary .summary-ai-status.good { color:var(--cc2-success); border-color:color-mix(in srgb, var(--cc2-success) 42%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-success) 13%, var(--cc2-card)); }
 .dashboard-summary .summary-ai-status.warn { color:var(--cc2-warning); border-color:color-mix(in srgb, var(--cc2-warning) 46%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-warning) 14%, var(--cc2-card)); }
 .dashboard-summary .summary-ai-status.bad { color:var(--cc2-danger); border-color:color-mix(in srgb, var(--cc2-danger) 48%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-danger) 15%, var(--cc2-card)); }
+.dashboard-summary .summary-ai-status.idle { color:var(--cc2-muted); border-color:var(--cc2-border); background:var(--cc2-card-soft); }
 .dashboard-accordion:not([open]) .dashboard-summary::after { transform:rotate(-90deg); }
 .dashboard-accordion:not([open]) .print-status-summary.busy .summary-progress { display:flex; }
 .dashboard-accordion:not([open]) .print-status-summary .summary-print-state { display:inline-flex; }

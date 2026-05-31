@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.48-blue)
+![Version](https://img.shields.io/badge/version-1.2.49-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.48 collapsed-status-summary
+1.2.49 dashboard-title-and-idle-ai-summary
 ```
 
 Major current capabilities:
@@ -1143,6 +1143,13 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.49 dashboard title and idle AI summary
+
+- Updated the collapsed AI Info summary pill so idle/standby telemetry shows `Idle` instead of the generic `Looks Good` label.
+- Added live browser tab title updates on the dashboard using the current printer status, progress percentage, and time remaining when available.
+- Connection trouble now also reflects in the page title so a stale/offline tab is easier to spot.
+- No changes to Portal AI scoring, print-prep guards, printer commands, or advisory-only behavior.
 
 ### v1.2.48 collapsed status summary
 
