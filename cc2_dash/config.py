@@ -102,6 +102,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "portal_menu_enabled": True,
         "file_manager_enabled": False,
         "filament_manager_enabled": False,
+        "control_page_enabled": False,
         "kiosk_enabled": True,
         "ai_training_menu_enabled": True,
         "logs_menu_enabled": True,
@@ -309,6 +310,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         features.setdefault("portal_menu_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
+        features.setdefault("control_page_enabled", False)
         if old_version < 2:
             features["file_manager_enabled"] = False
         # v1.2.28: Filament Manager is still experimental. Keep the route and
@@ -318,7 +320,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
             features["filament_manager_enabled"] = False
         dashboard = cfg.setdefault("dashboard", {})
         dashboard.setdefault("show_gcode_thumbnail", True)
-        cfg["config_version"] = 6
+        cfg["config_version"] = 7
     except Exception:
         pass
     try:
@@ -348,6 +350,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         features.setdefault("kiosk_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
+        features.setdefault("control_page_enabled", False)
         kiosk = cfg.setdefault("kiosk", {})
         kiosk.setdefault("refresh_interval_seconds", 3)
         kiosk.setdefault("camera_fit", "contain")

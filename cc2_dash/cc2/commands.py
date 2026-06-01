@@ -202,20 +202,47 @@ def pct_to_pwm(value: Any) -> int:
 
 
 def fan_params(model: Optional[int] = None, box: Optional[int] = None, aux: Optional[int] = None, values_are_pwm: bool = False) -> Dict[str, Any]:
+    """Return the stock Elegoo fan-control payload for method 1030.
+
+    The bundled stock portal sends ``TargetFanSpeed`` with PWM-ish 0-255 values
+    named ``ModelFan``, ``AuxiliaryFan``, and ``BoxFan``.  Keep this shape
+    deliberately close to stock for firmware builds that reject friendlier alias
+    fields.
+    """
     def conv(v: Optional[int]) -> Optional[int]:
         if v is None:
             return None
         return int(max(0, min(255, v))) if values_are_pwm else pct_to_pwm(v)
 
-    out: Dict[str, Any] = {}
+    fans: Dict[str, Any] = {}
     model_pwm, box_pwm, aux_pwm = conv(model), conv(box), conv(aux)
     if model_pwm is not None:
-        out["fan"] = model_pwm
-    if box_pwm is not None:
-        out["box_fan"] = box_pwm
+        fans["ModelFan"] = model_pwm
     if aux_pwm is not None:
-        out["aux_fan"] = aux_pwm
-    return out
+        fans["AuxiliaryFan"] = aux_pwm
+    if box_pwm is not None:
+        fans["BoxFan"] = box_pwm
+    return {"TargetFanSpeed": fans}
+
+
+def print_speed_pct_params(percent: int | float) -> Dict[str, Any]:
+    value = int(max(1, min(300, round(float(percent)))))
+    return {"PrintSpeedPct": value}
+
+
+def home_axes_params(axis: str) -> Dict[str, Any]:
+    value = str(axis or "XYZ").upper().strip()
+    if value not in {"X", "Y", "Z", "XY", "XYZ"}:
+        value = "XYZ"
+    return {"Axis": value}
+
+
+def move_axes_params(axis: str, step: int | float) -> Dict[str, Any]:
+    value = str(axis or "").upper().strip()
+    if value not in {"X", "Y", "Z"}:
+        value = "X"
+    amount = float(step or 0)
+    return {"Axis": value, "Step": amount}
 
 
 def temperature_params(nozzle: Optional[int] = None, bed: Optional[int] = None) -> Dict[str, Any]:

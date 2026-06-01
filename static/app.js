@@ -1915,6 +1915,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
+      cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -2009,6 +2010,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
+      cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -3421,6 +3423,187 @@
   }
 
 
+  const controlState = {
+    step: 10,
+    refreshTimer: null,
+    fans: { model: 0, auxiliary: 0, case: 0 },
+    lastNonZeroFan: { model: 60, auxiliary: 60, case: 60 },
+    allowCommands: false,
+    allowDangerous: false,
+  };
+
+  function controlClamp(value, min, max) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, Math.round(n)));
+  }
+
+  function setControlNote(message, tone = '') {
+    const el = $('#controlStatusNote');
+    if (!el) return;
+    el.className = `mini-note ${tone === 'bad' ? 'bad-text' : tone === 'warn' ? 'warn-text' : tone === 'good' ? 'good-text' : ''}`.trim();
+    el.innerHTML = message;
+  }
+
+  function updateControlCommandLocks() {
+    $$('[data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], #controlLightToggle').forEach(el => {
+      el.disabled = !controlState.allowCommands;
+    });
+    $$('[data-control-move], [data-control-home]').forEach(el => {
+      el.disabled = !controlState.allowDangerous;
+    });
+  }
+
+  function setControlFanUi(fan, percent, quiet = false) {
+    const value = controlClamp(percent, 0, 100);
+    controlState.fans[fan] = value;
+    if (value > 0) controlState.lastNonZeroFan[fan] = value;
+    const input = $(`[data-control-fan-input="${fan}"]`);
+    const toggle = $(`[data-control-fan-toggle="${fan}"]`);
+    const card = $(`[data-control-fan-card="${fan}"]`);
+    if (input && !quiet) input.value = value;
+    if (toggle) toggle.checked = value > 0;
+    if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
+  }
+
+  function updateControlSpeedUi(percent) {
+    const pct = controlClamp(percent, 1, 300);
+    setText('controlSpeedLabel', `${pct}%`);
+    $$('[data-control-speed]').forEach(btn => {
+      const preset = Number(btn.dataset.controlSpeed);
+      btn.classList.toggle('active', Math.abs(preset - pct) <= 2);
+    });
+  }
+
+  function updateControlStepUi(step) {
+    controlState.step = Number(step) || 10;
+    $$('[data-control-step]').forEach(btn => btn.classList.toggle('active', Number(btn.dataset.controlStep) === controlState.step));
+  }
+
+  function renderControlStatus(data) {
+    if (!data) return;
+    controlState.allowCommands = !!data.allow_commands;
+    controlState.allowDangerous = !!data.allow_dangerous_commands;
+    setText('controlPosX', data.position?.x ?? '-');
+    setText('controlPosY', data.position?.y ?? '-');
+    setText('controlPosZ', data.position?.z ?? '-');
+    updateControlSpeedUi(data.speed_percent ?? 100);
+    setControlFanUi('model', data.fans?.model ?? 0);
+    setControlFanUi('auxiliary', data.fans?.auxiliary ?? 0);
+    setControlFanUi('case', data.fans?.case ?? 0);
+    const light = $('#controlLightToggle');
+    if (light) light.checked = !!data.light_on;
+    updateControlCommandLocks();
+    const connected = !!data.connected;
+    const safety = controlState.allowDangerous ? 'motion unlocked' : 'motion locked';
+    const commandStatus = controlState.allowCommands ? 'commands enabled' : 'commands disabled';
+    const tone = !connected ? 'bad' : (!controlState.allowCommands || !controlState.allowDangerous ? 'warn' : 'good');
+    const age = Number(data.last_message_age_sec);
+    const ageText = Number.isFinite(age) ? ` · telemetry ${age.toFixed(age < 10 ? 1 : 0)}s old` : '';
+    setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${connected ? 'connected' : 'offline'} · ${commandStatus} · ${safety}${ageText}`, tone);
+  }
+
+  async function refreshControlStatus(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    const load = $('#controlLoadStatus');
+    if (load) load.classList.remove('hidden');
+    try {
+      const data = await printerApi('/control/status');
+      renderControlStatus(data);
+      return data;
+    } catch (err) {
+      setControlNote(esc(err.message), 'bad');
+      throw err;
+    } finally {
+      if (load) load.classList.add('hidden');
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function controlCommand(path, body, button = null, successMessage = 'Command sent') {
+    setButtonBusy(button, true, 'Sending...');
+    try {
+      const data = await printerApi(path, { method:'POST', body:JSON.stringify(body || {}) });
+      toast(data.message || successMessage, 'success');
+      await refreshControlStatus();
+      return data;
+    } catch (err) {
+      toast(err.message, 'error', 8500);
+      await refreshControlStatus().catch(() => {});
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function controlMoveStep(axis, dir) {
+    const step = Number(controlState.step || 10);
+    const lower = String(dir || '').toLowerCase();
+    let sign = ['minus', 'down', 'negative'].includes(lower) ? -1 : 1;
+    // Stock Elegoo UI reverses the Z move sign before sending the command.
+    if (String(axis).toUpperCase() === 'Z') sign *= -1;
+    return step * sign;
+  }
+
+  async function controlMove(axis, dir, button = null) {
+    const step = controlMoveStep(axis, dir);
+    await controlCommand('/control/move', { axis, step }, button, `Moved ${axis} ${step}mm`);
+  }
+
+  async function controlHome(axis, button = null) {
+    const label = String(axis || 'XYZ').toUpperCase();
+    if (!confirm(`Home ${label}? Make sure the printer has clearance.`)) return;
+    await controlCommand('/control/home', { axis: label }, button, `Homing ${label}`);
+  }
+
+  async function controlSetSpeed(percent, button = null) {
+    const value = controlClamp(percent, 1, 300);
+    updateControlSpeedUi(value);
+    await controlCommand('/control/speed', { percent: value }, button, `Print speed set to ${value}%`);
+  }
+
+  async function controlSetFan(fan, percent, button = null) {
+    const value = controlClamp(percent, 0, 100);
+    setControlFanUi(fan, value, true);
+    await controlCommand('/control/fan', { fan, percent: value }, button, `${fan} fan set to ${value}%`);
+  }
+
+  function currentFanInputValue(fan) {
+    const input = $(`[data-control-fan-input="${fan}"]`);
+    return controlClamp(input?.value ?? controlState.fans[fan] ?? 0, 0, 100);
+  }
+
+  function initControl() {
+    updateControlStepUi(controlState.step);
+    $('#refreshControlButton')?.addEventListener('click', e => refreshControlStatus(e.currentTarget).catch(err => toast(err.message, 'error')));
+    $$('[data-control-step]').forEach(btn => btn.addEventListener('click', () => updateControlStepUi(btn.dataset.controlStep)));
+    $$('[data-control-move]').forEach(btn => btn.addEventListener('click', () => controlMove(btn.dataset.controlMove, btn.dataset.controlDir, btn).catch(() => {})));
+    $$('[data-control-home]').forEach(btn => btn.addEventListener('click', () => controlHome(btn.dataset.controlHome, btn).catch(() => {})));
+    $$('[data-control-speed]').forEach(btn => btn.addEventListener('click', () => controlSetSpeed(btn.dataset.controlSpeed, btn).catch(() => {})));
+    $$('[data-control-fan-bump]').forEach(btn => btn.addEventListener('click', () => {
+      const fan = btn.dataset.controlFanBump;
+      const next = currentFanInputValue(fan) + Number(btn.dataset.delta || 0);
+      setControlFanUi(fan, next);
+      controlSetFan(fan, next, btn).catch(() => {});
+    }));
+    $$('[data-control-fan-input]').forEach(input => {
+      input.addEventListener('change', () => controlSetFan(input.dataset.controlFanInput, input.value).catch(() => {}));
+      input.addEventListener('input', () => setControlFanUi(input.dataset.controlFanInput, input.value, true));
+    });
+    $$('[data-control-fan-toggle]').forEach(toggle => toggle.addEventListener('change', () => {
+      const fan = toggle.dataset.controlFanToggle;
+      const value = toggle.checked ? (controlState.lastNonZeroFan[fan] || 60) : 0;
+      setControlFanUi(fan, value);
+      controlSetFan(fan, value).catch(() => {});
+    }));
+    $('#controlLightToggle')?.addEventListener('change', e => {
+      controlCommand('/light', { on: !!e.currentTarget.checked }, null, e.currentTarget.checked ? 'Light on' : 'Light off').catch(() => {});
+    });
+    refreshControlStatus().catch(err => toast(err.message, 'error'));
+    controlState.refreshTimer = setInterval(() => refreshControlStatus().catch(() => {}), 10000);
+  }
+
+
   function initFiles() {
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
     $('#refreshPrinterFilesButton')?.addEventListener('click', loadPrinterFiles);
@@ -3460,4 +3643,5 @@
   if (page === 'logs') initLogs();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();
+  if (page === 'control') initControl();
 })();
