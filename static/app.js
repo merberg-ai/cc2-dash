@@ -3491,15 +3491,52 @@
     controlsLocked: false,
   };
 
-  window.cc2ControlCameraFailed = function () {
+  function showControlCameraPlaceholder(message, mode = 'warming') {
     const ph = $('#controlCameraPlaceholder');
+    if (!ph) return;
+    ph.classList.remove('hidden');
+    ph.classList.toggle('camera-placeholder-warn', mode === 'warn');
+    ph.classList.toggle('camera-placeholder-bad', mode === 'bad');
+    ph.innerHTML = `<span class="spinner"></span><span>${message}</span>`;
+  }
+
+  function hideControlCameraPlaceholder() {
+    const ph = $('#controlCameraPlaceholder');
+    if (ph) ph.classList.add('hidden');
+  }
+
+  window.cc2ControlCameraLoaded = function () {
+    hideControlCameraPlaceholder();
     const cam = $('#controlCameraStream');
-    if (ph) {
-      ph.classList.remove('hidden');
-      ph.innerHTML = '<span>Camera relay unavailable. Check relay status or restart camera.</span>';
-    }
-    if (cam) cam.classList.add('hidden');
+    if (cam) cam.classList.remove('hidden');
   };
+
+  window.cc2ControlCameraFailed = function () {
+    showControlCameraPlaceholder('Camera relay reconnecting...', 'warn');
+    const cam = $('#controlCameraStream');
+    if (cam) {
+      cam.classList.add('hidden');
+      window.clearTimeout(window.__cc2ControlCameraRetryTimer);
+      window.__cc2ControlCameraRetryTimer = window.setTimeout(() => {
+        const src = cam.dataset.relaySrc || cam.getAttribute('src');
+        if (src) {
+          cam.src = `${src.split('?')[0]}?t=${Date.now()}`;
+          cam.classList.remove('hidden');
+        }
+      }, 3000);
+    }
+  };
+
+  function ensureControlCameraStream(url) {
+    const cam = $('#controlCameraStream');
+    if (!cam || !url) return;
+    const current = cam.dataset.relaySrc || cam.getAttribute('src') || '';
+    if (!current || current !== url) {
+      cam.dataset.relaySrc = url;
+      cam.src = `${url}?t=${Date.now()}`;
+    }
+    cam.classList.remove('hidden');
+  }
 
   function renderControlCameraRelay(relay) {
     relay = relay || {};
@@ -3590,7 +3627,19 @@
     controlState.allowDangerous = !!data.allow_dangerous_commands;
     controlState.activePrint = !!data.active_print;
     controlState.controlsLocked = !!data.controls_locked;
-    renderControlCameraRelay(data.camera_relay || {});
+    const relay = data.camera_relay || {};
+    renderControlCameraRelay(relay);
+    ensureControlCameraStream(data.camera_url || data.camera_stream_url || '');
+    const cam = $('#controlCameraStream');
+    const ph = $('#controlCameraPlaceholder');
+    if (cam && ph && (relay.running || relay.ok || relay.upstream_connected || Number(relay.frames_received || 0) > 0)) {
+      cam.classList.remove('hidden');
+      ph.classList.add('hidden');
+    } else if (relay.enabled === false) {
+      showControlCameraPlaceholder('Camera relay disabled in settings.', 'bad');
+    } else if (relay.running === false) {
+      showControlCameraPlaceholder('Camera relay is not running yet.', 'warn');
+    }
     setText('controlPosX', data.position?.x ?? '-');
     setText('controlPosY', data.position?.y ?? '-');
     setText('controlPosZ', data.position?.z ?? '-');

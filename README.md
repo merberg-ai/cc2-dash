@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.54-blue)
+![Version](https://img.shields.io/badge/version-1.2.55-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -62,7 +62,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.54 control-page-print-lock-camera-light-toggle
+1.2.55 control-camera-relay-fix
 ```
 
 Major current capabilities:
@@ -1184,6 +1184,12 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.55 control camera relay fix
+
+- Fixed the Control page camera panel so it explicitly uses the cc2-dash camera relay stream endpoint from Control status instead of relying only on the initial template image state.
+- Added Control-page camera load/failure handlers that hide the loading overlay when the relay starts producing frames and retry the relay stream if the browser drops the MJPEG connection.
+- Removed the extra descriptive blurbs from the Control page hero and camera card to keep the page tighter on mobile.
 
 ### v1.2.54 control page print lock, camera, and light toggle polish
 

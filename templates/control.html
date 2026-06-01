@@ -4,7 +4,6 @@
 <section class="control-stack fade-in">
   <article class="card hero-card">
     <h1>Control</h1>
-    <p>Stock-portal-style movement, speed, fan, and light controls for the active printer.</p>
     {% if printer %}
     <div class="mini-note">Active printer: <strong>{{ printer.name }}</strong> · {{ printer.host }}</div>
     {% else %}
@@ -16,7 +15,6 @@
     <div class="card-title-row file-title-row">
       <div>
         <h2>Camera</h2>
-        <p>Live relay view for jogging and printer checks. Scaled tighter here so the controls stay usable on mobile.</p>
       </div>
     </div>
     <div class="camera-wrap control-camera-wrap" id="controlCameraWrap">
@@ -25,9 +23,9 @@
         <span>Loading camera stream...</span>
       </div>
       {% if printer and cfg.dashboard.camera_autoload %}
-        <img id="controlCameraStream" class="camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}" onerror="window.cc2ControlCameraFailed && window.cc2ControlCameraFailed()" />
+        <img id="controlCameraStream" class="camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}" onload="window.cc2ControlCameraLoaded && window.cc2ControlCameraLoaded()" onerror="window.cc2ControlCameraFailed && window.cc2ControlCameraFailed()" />
       {% else %}
-        <img id="controlCameraStream" class="camera-stream hidden" alt="Printer camera stream" />
+        <img id="controlCameraStream" class="camera-stream hidden" alt="Printer camera stream" onload="window.cc2ControlCameraLoaded && window.cc2ControlCameraLoaded()" onerror="window.cc2ControlCameraFailed && window.cc2ControlCameraFailed()" />
       {% endif %}
       <span id="controlCameraRelayBadge" class="live-badge"><span id="controlCameraRelayDot" class="dot warn"></span><span id="controlCameraRelayText">RELAY</span></span>
     </div>
