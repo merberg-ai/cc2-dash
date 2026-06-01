@@ -1780,6 +1780,7 @@
   }
 
   async function refreshAiFeedbackSamples(button = null) {
+    if (!$('#aiFeedbackSamplesPanel')) return null;
     setButtonBusy(button, true, 'Refreshing...');
     try {
       const params = new URLSearchParams();

@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.51-blue)
+![Version](https://img.shields.io/badge/version-1.2.52-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.51 themed-failure-toggle-fix
+1.2.52 themed-toggle-cleanup
 ```
 
 Major current capabilities:
@@ -75,7 +75,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Failure Detection telemetry checks | Working, with optional guarded auto-pause off by default |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, recent-sample review, and AI Training review/export tools |
+| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
@@ -1143,6 +1143,13 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.52 themed toggle cleanup
+
+- Replaced remaining native checkbox styling with the same cc2-dash themed pill switch style where it fits the UI, including generated dashboard/action/printer settings rows, setup wizard options, AI Training export options, and advanced JSON override.
+- Themed checkbox-style controls now follow the active theme color instead of browser/default checkbox rendering.
+- Removed the bulky recent feedback sample browser from Settings > Failure Detection because the AI Training page already owns sample review/export workflows.
+- Settings still keep AI learning status, rebuild/import controls, and auto-pause configuration, but no longer duplicate the training sample list.
 
 ### v1.2.51 themed failure toggle fix
 
