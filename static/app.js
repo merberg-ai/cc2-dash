@@ -7,6 +7,7 @@
   let dashboardThumbnailUrl = '';
   let dashboardThumbnailFile = '';
   const baseDocumentTitle = document.title || 'cc2-dash';
+  let autoPauseModalState = { token: null, timer: null, cancelled: false };
 
   function toast(message, type = 'info', timeout = 4200) {
     const host = $('#toastHost');
@@ -218,7 +219,7 @@
     details.innerHTML = `
       <div class="ai-learning-dash-note">${esc(modeMessage)}</div>
       ${thresholdHtml}
-      <div class="ai-learning-dash-foot">Manual settings are not overwritten. Portal AI remains advisory-only.</div>
+      <div class="ai-learning-dash-foot">Manual settings are not overwritten. Auto-pause is opt-in; cancel print stays manual.</div>
     `;
   }
 
@@ -258,8 +259,8 @@
     if (headerPill) {
       headerPill.className = `summary-ai-status ${headerState.tone}`;
       headerPill.textContent = headerState.label;
-      headerPill.title = `Portal AI: ${headerState.label} · ${level.toUpperCase()} · ${risk}%`;
-      headerPill.setAttribute('aria-label', `AI status: ${headerState.label}`);
+      headerPill.title = `Failure Detection: ${headerState.label} · ${level.toUpperCase()} · ${risk}%`;
+      headerPill.setAttribute('aria-label', `Failure detection status: ${headerState.label}`);
     }
     const visionBox = $('#aiVisionBox');
     if (visionBox) {
@@ -301,6 +302,173 @@
       visionBox.className = `ai-vision-box ${esc(vClass)}`;
       visionBox.innerHTML = `${img}<div><strong>Vision: ${esc(vLabel)}</strong><span>${esc(vSummary)}</span>${vMeta ? `<small>${esc(vMeta)}</small>` : ''}</div>`;
     }
+  }
+
+  function setFailureDetectionToggle(enabled) {
+    $$('.failure-detection-toggle-input, #portalAIEnabled').forEach(input => {
+      if (input) input.checked = !!enabled;
+    });
+  }
+
+  async function updateFailureDetectionEnabled(enabled, source = 'dashboard') {
+    const previous = cfg?.portal_ai?.enabled !== false;
+    setFailureDetectionToggle(enabled);
+    cfg.portal_ai = cfg.portal_ai || {};
+    cfg.portal_ai.enabled = !!enabled;
+    try {
+      const data = await api('/api/ai/enabled', { method: 'POST', body: JSON.stringify({ enabled: !!enabled }) });
+      cfg.portal_ai.enabled = !!data.enabled;
+      setFailureDetectionToggle(data.enabled);
+      toast(`Failure Detection ${data.enabled ? 'enabled' : 'disabled'}.`, data.enabled ? 'success' : 'warn');
+      if (source === 'dashboard') await refreshDashboard();
+    } catch (err) {
+      cfg.portal_ai.enabled = previous;
+      setFailureDetectionToggle(previous);
+      toast(err.message, 'error', 7000);
+    }
+  }
+
+  function initFailureDetectionToggle() {
+    const dashboardToggle = $('#failureDetectionToggle');
+    const switchLabel = dashboardToggle?.closest('.failure-detection-switch');
+    if (switchLabel) {
+      switchLabel.addEventListener('click', event => event.stopPropagation());
+    }
+    if (dashboardToggle) {
+      dashboardToggle.addEventListener('change', event => {
+        event.stopPropagation();
+        updateFailureDetectionEnabled(!!dashboardToggle.checked, 'dashboard');
+      });
+    }
+    setFailureDetectionToggle(cfg?.portal_ai?.enabled !== false);
+  }
+
+  function closeAutoPauseModal() {
+    const modal = $('#autoPauseModal');
+    if (autoPauseModalState.timer) window.clearInterval(autoPauseModalState.timer);
+    autoPauseModalState.timer = null;
+    autoPauseModalState.token = null;
+    autoPauseModalState.cancelled = false;
+    if (modal) {
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function updateAutoPauseCountdown(deadlineEpoch) {
+    const countdownEl = $('#autoPauseCountdown');
+    const seconds = Math.max(0, Math.ceil((Number(deadlineEpoch || 0) * 1000 - Date.now()) / 1000));
+    if (countdownEl) countdownEl.textContent = String(seconds);
+    const subtitle = $('#autoPauseModalSubtitle');
+    if (subtitle) subtitle.textContent = seconds > 0 ? `Pause command will be sent in ${seconds} second${seconds === 1 ? '' : 's'} unless cancelled.` : 'Pause command is due now. Waiting for backend confirmation...';
+  }
+
+  function showAutoPauseModal(autoPause, ai, status) {
+    const pending = autoPause?.pending;
+    const modal = $('#autoPauseModal');
+    if (!modal || !pending?.token) return;
+    const token = pending.token;
+    if (autoPauseModalState.cancelled && autoPauseModalState.token === token) return;
+    const failureType = pending.failure_type || autoPause.failure_type || 'High-risk failure warning';
+    const reason = pending.reason || autoPause.reason || (ai?.reasons || [])[0] || 'Failure Detection reported a high-risk condition.';
+    $('#autoPauseWarningText') && ($('#autoPauseWarningText').textContent = `Warning: ${failureType}`);
+    $('#autoPauseBlurb') && ($('#autoPauseBlurb').textContent = pending.message || `Failure Detection may pause this print in ${pending.countdown_seconds || autoPause.countdown_seconds || 30} seconds unless you cancel.`);
+    $('#autoPauseReason') && ($('#autoPauseReason').textContent = `${reason} Risk: ${ai?.level ? String(ai.level).toUpperCase() : 'HIGH'} · ${Number(ai?.risk || pending.risk || 0)}%.`);
+    const feedback = $('#autoPauseFeedback');
+    if (feedback) feedback.classList.add('hidden');
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    autoPauseModalState.token = token;
+    autoPauseModalState.cancelled = false;
+    updateAutoPauseCountdown(pending.deadline_epoch);
+    if (autoPauseModalState.timer) window.clearInterval(autoPauseModalState.timer);
+    autoPauseModalState.timer = window.setInterval(() => updateAutoPauseCountdown(pending.deadline_epoch), 250);
+  }
+
+  async function cancelAutoPause() {
+    const printerId = document.body.dataset.printerId;
+    const token = autoPauseModalState.token;
+    if (!printerId || !token) return closeAutoPauseModal();
+    const cancelButton = $('#autoPauseCancelButton');
+    setButtonBusy(cancelButton, true, 'Cancelling...');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/auto-pause/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ token, reason: 'cancelled from dashboard modal' })
+      });
+      autoPauseModalState.cancelled = true;
+      toast(`Auto-pause cancelled${data.cooldown_minutes ? ` · muted for ${data.cooldown_minutes}m` : ''}.`, 'warn', 5200);
+      if (autoPauseModalState.timer) window.clearInterval(autoPauseModalState.timer);
+      autoPauseModalState.timer = null;
+      const feedback = $('#autoPauseFeedback');
+      if (feedback) feedback.classList.remove('hidden');
+      $('#autoPauseBlurb') && ($('#autoPauseBlurb').textContent = 'Pause cancelled. You can save training feedback below or close this warning.');
+      $('#autoPauseCountdown') && ($('#autoPauseCountdown').textContent = '—');
+    } catch (err) {
+      toast(err.message, 'error', 7000);
+    } finally {
+      setButtonBusy(cancelButton, false);
+    }
+  }
+
+  async function pauseNowFromAutoPause() {
+    const printerId = document.body.dataset.printerId;
+    const button = $('#autoPauseNowButton');
+    if (!printerId) return toast('No printer configured for pause command.', 'warn');
+    setButtonBusy(button, true, 'Pausing...');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/auto-pause/pause-now`, { method: 'POST' });
+      toast(data.message || 'Pause command sent.', 'success');
+      closeAutoPauseModal();
+      await refreshDashboard();
+    } catch (err) {
+      toast(err.message, 'error', 8000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function handleAutoPause(status, ai) {
+    const autoPause = ai?.auto_pause || {};
+    if (autoPause.sent?.ok) {
+      toast('Failure Detection sent a pause command.', 'warn', 7000);
+      closeAutoPauseModal();
+      return;
+    }
+    if (autoPause.pending?.token) {
+      showAutoPauseModal(autoPause, ai, status);
+      return;
+    }
+    if (autoPauseModalState.token && !autoPauseModalState.cancelled) closeAutoPauseModal();
+  }
+
+  function initAutoPauseModal() {
+    $('#autoPauseCancelButton')?.addEventListener('click', cancelAutoPause);
+    $('#autoPauseNowButton')?.addEventListener('click', pauseNowFromAutoPause);
+    $$('#autoPauseFeedback [data-autopause-feedback]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const label = btn.dataset.autopauseFeedback || 'false_alarm';
+        const printerId = document.body.dataset.printerId;
+        if (!printerId) return toast('No printer configured for feedback.', 'warn');
+        setButtonBusy(btn, true, 'Saving...');
+        try {
+          const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback`, {
+            method: 'POST',
+            body: JSON.stringify({
+              label,
+              context: { page, saved_from: 'auto_pause_cancel_modal', auto_pause_token: autoPauseModalState.token || '' }
+            })
+          });
+          toast('Failure Detection feedback saved.', 'success');
+          closeAutoPauseModal();
+          showFeedbackReasons(label, data);
+        } catch (err) {
+          toast(err.message, 'error', 7000);
+        } finally {
+          setButtonBusy(btn, false);
+        }
+      });
+    });
   }
 
 
@@ -509,7 +677,9 @@
       updateDashboardTitle(st, summaryState, progress);
 
       setText('statusText', st.status_text || st.state || 'Unknown');
-      renderPortalAI(st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Connection Lost', level: st.reachable ? 'low' : 'watch', risk: st.reachable ? 0 : 35, reasons: [st.message || 'Waiting for printer telemetry.'] });
+      const aiStatus = st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Connection Lost', level: st.reachable ? 'low' : 'watch', risk: st.reachable ? 0 : 35, reasons: [st.message || 'Waiting for printer telemetry.'] };
+      renderPortalAI(aiStatus);
+      handleAutoPause(st, aiStatus);
       setText('printTime', st.print_time || '-');
       setText('timeLeft', st.time_left || '-');
       setText('completion', st.completion || `${progress.toFixed(1)}%`);
@@ -720,6 +890,8 @@
   function initDashboard() {
     initDashboardAccordions();
     initGcodeThumbnailModal();
+    initFailureDetectionToggle();
+    initAutoPauseModal();
     refreshDashboard();
     const interval = Number(cfg?.dashboard?.refresh_interval_seconds || 3) * 1000;
     setInterval(refreshDashboard, Math.max(1500, interval));
@@ -747,7 +919,7 @@
           const frameMsg = data?.frame?.captured ? (data.frame.fresh ? ' + fresh frame captured' : ' + cached frame saved') : ' (no frame yet)';
           const outcome = data?.interpretation?.outcome ? ` · ${String(data.interpretation.outcome).replace(/_/g, ' ')}` : '';
           const supMsg = data?.suppression ? ' · similar warnings muted for this print' : '';
-          toast(`Portal AI feedback saved${frameMsg}${outcome}${supMsg}`, data?.frame?.captured ? 'success' : 'warn', data?.suppression ? 6500 : 4500);
+          toast(`Failure Detection feedback saved${frameMsg}${outcome}${supMsg}`, data?.frame?.captured ? 'success' : 'warn', data?.suppression ? 6500 : 4500);
           showFeedbackReasons(label, data);
         } catch (err) {
           toast(err.message, 'error', 7000);
@@ -814,7 +986,7 @@
       if (aiBadge) {
         aiBadge.className = `kiosk-overlay-pill ai ${aiState.tone}`;
         aiBadge.textContent = aiState.label;
-        aiBadge.title = `Portal AI: ${aiState.label}`;
+        aiBadge.title = `Failure Detection: ${aiState.label}`;
       }
 
       const statusBadge = $('#kioskStatusBadge');
@@ -982,7 +1154,7 @@
         <div class="setup-summary-grid">
           <div><strong>Printer(s)</strong><span>${printers.length}</span></div>
           <div><strong>Theme</strong><span>${esc(themeId)}</span></div>
-          <div><strong>Portal AI</strong><span>${ai.enabled ? 'enabled' : 'disabled'}</span></div>
+          <div><strong>Failure Detection</strong><span>${ai.enabled ? 'enabled' : 'disabled'}</span></div>
           <div><strong>Vision</strong><span>${ai.vision_ai_enabled ? 'Ollama enabled' : 'telemetry/local only'}</span></div>
         </div>
         <div class="mini-note">Access: ${esc(access.join(' · ') || 'localhost only')}</div>
@@ -1653,6 +1825,11 @@
       refreshConfigEditor();
     }).catch(err => toast(err.message, 'error'));
 
+    const settingsFailureToggle = $('#portalAIEnabled');
+    if (settingsFailureToggle) {
+      settingsFailureToggle.addEventListener('change', () => updateFailureDetectionEnabled(!!settingsFailureToggle.checked, 'settings'));
+    }
+
     const managerScan = $('#managerScanButton');
     if (managerScan) managerScan.addEventListener('click', async () => {
       const subnet = $('#managerScanSubnet')?.value?.trim() || cfg?.network?.allowed_subnets?.[0] || '192.168.1.0/24';
@@ -1868,6 +2045,9 @@
       collectAiLearningSettings();
       cfg.portal_ai.auto_pause_enabled = !!$('#aiAutoPauseEnabled')?.checked;
       cfg.portal_ai.auto_pause_threshold = Number($('#aiAutoPauseThreshold')?.value || 90);
+      cfg.portal_ai.auto_pause_countdown_seconds = Number($('#aiAutoPauseCountdown')?.value || 30);
+      cfg.portal_ai.auto_pause_cooldown_minutes = Number($('#aiAutoPauseCooldown')?.value || 10);
+      cfg.portal_ai.auto_pause_require_high_level = !!$('#aiAutoPauseRequireHigh')?.checked;
 
       $$('#actionSettings [data-action-id]').forEach(row => {
         const id = row.dataset.actionId;
@@ -2064,8 +2244,11 @@
       collectAiLearningSettings();
       cfg.portal_ai.auto_pause_enabled = !!$('#aiAutoPauseEnabled')?.checked;
       cfg.portal_ai.auto_pause_threshold = Number($('#aiAutoPauseThreshold')?.value || 90);
+      cfg.portal_ai.auto_pause_countdown_seconds = Number($('#aiAutoPauseCountdown')?.value || 30);
+      cfg.portal_ai.auto_pause_cooldown_minutes = Number($('#aiAutoPauseCooldown')?.value || 10);
+      cfg.portal_ai.auto_pause_require_high_level = !!$('#aiAutoPauseRequireHigh')?.checked;
       setButtonBusy(saveAI, true, 'Saving...');
-      try { await api('/api/config', { method:'POST', body:JSON.stringify({ config: cfg }) }); toast('Portal AI settings saved. Reloading...', 'success'); setTimeout(()=>location.reload(), 500); }
+      try { await api('/api/config', { method:'POST', body:JSON.stringify({ config: cfg }) }); toast('Failure Detection settings saved. Reloading...', 'success'); setTimeout(()=>location.reload(), 500); }
       catch (err) { toast(err.message, 'error'); }
       finally { setButtonBusy(saveAI, false); }
     });

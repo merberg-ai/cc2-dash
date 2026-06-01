@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.49-blue)
+![Version](https://img.shields.io/badge/version-1.2.50-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -16,7 +16,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 > This is an unofficial project. It is not affiliated with, endorsed by, or supported by Elegoo, OctoEverywhere, or any printer vendor. Firmware behavior can change. Some stock command paths behave differently across firmware versions.
 
 > [!NOTE]
-> In this version, **Portal AI cannot pause, resume, cancel, or otherwise control print jobs automatically**. AI/vision monitoring is advisory only. Manual dashboard controls can still be enabled by the user, but the AI watchdog does not issue pause/cancel commands yet.
+> In this version, **Failure Detection can optionally pause a print after a high-risk warning countdown**. Auto-pause is off by default, has a configurable countdown/cancel window, and only sends a pause command when explicitly enabled. Cancel print remains locked behind manual controls; AI never cancels, resumes, loads/unloads filament, or overrides the stock printer controls.
 
 ---
 
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.49 dashboard-title-and-idle-ai-summary
+1.2.50 failure-detection-auto-pause
 ```
 
 Major current capabilities:
@@ -73,7 +73,7 @@ Major current capabilities:
 | Stock portal bridge | Working as fallback/reference portal |
 | Camera relay | Working, reduces direct camera connection pileups |
 | Kiosk mode | Working, camera-first fullscreen view |
-| Portal AI telemetry checks | Working, advisory-only |
+| Failure Detection telemetry checks | Working, with optional guarded auto-pause off by default |
 | Ollama vision checks | Working, active-print-only by default |
 | AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, recent-sample review, and AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
@@ -606,7 +606,7 @@ How it works in this version:
 6. Manual threshold settings are not overwritten.
 7. Default mode is `suggest_only`, so learned modifiers are calculated and shown but not applied to live detection unless you explicitly switch to `auto_adjust_safe`.
 8. In `auto_adjust_safe`, bounded learned modifiers are applied only to the live in-memory vision check thresholds; your manual settings are still not overwritten.
-9. Portal AI remains advisory-only and does not pause, cancel, resume, load/unload filament, or control jobs automatically.
+9. Failure Detection auto-pause is opt-in. When enabled, high-risk active-print failures can arm a countdown and send `PAUSE_PRINT` if not cancelled. Cancel print, resume, load/unload filament, and other job-control actions remain manual.
 
 Learning modes under `portal_ai` config:
 
@@ -876,7 +876,7 @@ Speed preset modes:
 | `2` | Sport |
 | `3` | Ludicrous / Frenzy |
 
-Again: Portal AI does not automatically trigger pause/cancel in this version.
+Again: Failure Detection auto-pause is opt-in and pause-only. It never sends cancel print automatically.
 
 ---
 
@@ -1046,7 +1046,7 @@ Check:
 3. The Pi can reach the Ollama host.
 4. The selected vision model is installed.
 
-### Portal AI does nothing while idle
+### Failure Detection does nothing while idle
 
 That is expected. Current behavior is active-print-only monitoring. The loop still wakes lightly to check status so it can resume when a print starts, but it avoids heavy AI/vision work while idle.
 
@@ -1144,18 +1144,29 @@ cc2-dash/
 
 ## Release notes
 
+### v1.2.50 failure detection auto-pause
+
+- Renamed the dashboard `AI Info` card to `Failure Detection`.
+- Added a modern pill-style enable/disable toggle on the Failure Detection card header, visible even while collapsed.
+- Added live Failure Detection enable/disable behavior from the dashboard and Settings.
+- Added opt-in automatic pause-on-failure behavior with configurable risk threshold, countdown seconds, cooldown minutes, and high-level-only requirement.
+- Added a themed high-risk warning modal with red warning text, failure summary, countdown timer, Cancel Pause, Pause Now, and post-cancel feedback options.
+- Backend watchdog now owns pending auto-pause countdowns so the pause can still fire even if the browser view is not the only thing ticking.
+- Tuned failure scoring: telemetry rule disabling is honored more cleanly, startup temperature/filament grace windows reduce false alarms, and paused states no longer trigger progress-stall failures.
+- Auto-pause remains conservative: it only considers active, connected, non-prep, non-paused print states. Cancel print is still not automated.
+
 ### v1.2.49 dashboard title and idle AI summary
 
-- Updated the collapsed AI Info summary pill so idle/standby telemetry shows `Idle` instead of the generic `Looks Good` label.
+- Updated the collapsed Failure Detection summary pill so idle/standby telemetry shows `Idle` instead of the generic `Looks Good` label.
 - Added live browser tab title updates on the dashboard using the current printer status, progress percentage, and time remaining when available.
 - Connection trouble now also reflects in the page title so a stale/offline tab is easier to spot.
-- No changes to Portal AI scoring, print-prep guards, printer commands, or advisory-only behavior.
+- No changes to Portal AI scoring or print-prep guards in that release.
 
 ### v1.2.48 collapsed status summary
 
 - Updated the collapsed Print Status card to show the printer telemetry status label, such as Bed Preheating, Extruder Preheating, Homing, Printing, or Idle, instead of always showing PRINTING during active/prep states.
 - The collapsed summary now keeps the progress bar visible for active print-preparation phases and uses warning-colored styling for preparation states, green for real printing, muted for idle, and red for error/offline states.
-- No changes to Portal AI scoring, print-prep guards, printer commands, or advisory-only behavior.
+- No changes to Portal AI scoring or print-prep guards in that release.
 
 ### v1.2.47 print-prep AI guard
 
@@ -1164,7 +1175,7 @@ cc2-dash/
 - Vision/Ollama failure checks are paused during normal start-of-job preparation, preventing dark/empty-bed camera frames from causing false alarms.
 - Temperature-gap, filament-out, and progress-stall rules are also paused during preparation and resume when actual printing starts.
 - Added `print_phase`, `status_code`, and `sub_status_code` fields to status payloads for better debugging and future UI work.
-- No printer-control/autopause behavior changes; Portal AI remains advisory-only.
+- No printer-control/autopause behavior changed in that release; auto-pause arrives later in v1.2.50.
 
 ### v1.2.46 configurable navigation
 
@@ -1262,7 +1273,7 @@ cc2-dash/
 - Vision API results now include `learning_thresholds` and `learning_applied` so the dashboard/logs can explain when bounded modifiers were used.
 - Added dashboard Vision metadata showing learning mode and applied modifiers during live checks.
 - Added low-noise warning fallback: if the learning database/config lookup fails, vision monitoring falls back to manual thresholds instead of failing the check.
-- Portal AI remains advisory-only and still does not pause/cancel/control print jobs automatically.
+- Failure Detection auto-pause is now available in v1.2.50 as an opt-in pause-only guard; cancel/resume/control actions remain manual.
 
 ### v1.2.35 learning settings UI
 
@@ -1270,7 +1281,7 @@ cc2-dash/
 - Added controls for persistent learning enablement, learning mode, minimum sample counts, maximum learned adjustment bounds, modifier-type toggles, and rebuild-on-feedback behavior.
 - Added per-printer learning profile cards showing sample counts, true/false positive/negative outcomes, manual/suggested/applied/effective thresholds, normal baselines, confidence, and explanation reasons.
 - Added Settings buttons to refresh learning status, rebuild all profiles, and reset learned tuning while keeping feedback samples and JSONL audit logs.
-- Kept live AI scoring unchanged in this version; suggest-only mode remains the default and Portal AI remains advisory-only.
+- Kept live AI scoring unchanged in that version; suggest-only mode remains the default. Auto-pause arrives later in v1.2.50 as an opt-in pause-only guard.
 
 ### v1.2.34 persistent AI learning foundation
 
@@ -1375,7 +1386,7 @@ cc2-dash/
 
 ### v1.2.18 AI header status
 
-- Added compact Portal AI status pill to collapsed AI Info header.
+- Added compact Portal AI status pill to the collapsed AI/Failure Detection header.
 
 ### v1.2.17 collapsed progress
 
@@ -1383,7 +1394,7 @@ cc2-dash/
 
 ### v1.2.16 dashboard section split
 
-- Split Camera, Print Status, AI Info, Quick Actions, and Connection into clearer collapsible sections.
+- Split Camera, Print Status, AI/Failure Detection, Quick Actions, and Connection into clearer collapsible sections.
 
 ### v1.2.15 dashboard accordion polish
 

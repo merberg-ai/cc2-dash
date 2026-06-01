@@ -175,7 +175,7 @@ class PortalAIDetector:
                 "level": "disabled",
                 "risk": 0,
                 "summary": "Disabled",
-                "reasons": ["Portal AI is disabled in settings."],
+                "reasons": ["Failure Detection is disabled in settings."],
                 "last_check_epoch": time.time(),
                 "last_check": time.strftime("%H:%M:%S"),
                 "source": source,
@@ -230,6 +230,13 @@ class PortalAIDetector:
             has_print_markers = bool(file_name and file_name != "-" and progress < 99.9 and (hotend_target > 0 or bed_target > 0 or elapsed_sec > 0))
             active_print = bool(active_state or has_print_markers)
 
+        telemetry_rules_enabled = bool(ai_cfg.get("telemetry_rules_enabled", True))
+        stuck_minutes = _as_float(ai_cfg.get("progress_stuck_minutes"), 8.0)
+        effective_stuck_minutes = stuck_minutes
+        if multi_color_grace_active:
+            effective_stuck_minutes = max(stuck_minutes, multi_color_grace_minutes)
+        paused_state = _text_contains(state_lower, "paused", "pausing")
+
         if ai_cfg.get("monitor_active_prints_only", True) and not active_print:
             prev["progress"] = progress
             prev["progress_changed_at"] = now
@@ -239,7 +246,7 @@ class PortalAIDetector:
                 "level": "low",
                 "risk": 0,
                 "summary": "Idle",
-                "reasons": ["Printer is idle; Portal AI monitoring is paused until an active print starts."],
+                "reasons": ["Printer is idle; Failure Detection is paused until an active print starts."],
                 "positives": ["Printer telemetry is connected."] if reachable else [],
                 "active_print": False,
                 "monitor_active_prints_only": True,
@@ -260,41 +267,46 @@ class PortalAIDetector:
             prev["last_result"] = result
             return result
 
-        if not reachable:
-            risk += 45 if active_print else 30
-            reasons.append("Printer is not reachable through the CC2 MQTT client.")
-        elif not connected:
-            risk += 30
-            reasons.append("MQTT client is not fully connected yet.")
-        elif not registered:
-            risk += 25
-            reasons.append("MQTT client is connected but registration is not confirmed yet.")
-        else:
-            positives.append("Printer telemetry is connected.")
-
-        stale_after = _as_float(ai_cfg.get("stale_status_seconds"), 75.0)
-        if message_age > stale_after:
-            bump = 45 if active_print else 25
-            risk += bump
-            reasons.append(f"Last printer status is stale ({int(message_age)}s old).")
-        elif message_age < 999999:
-            positives.append(f"Telemetry is fresh ({int(message_age)}s old).")
-
-        if _text_contains(state_lower, "error", "fail", "emergency", "exception"):
-            risk += 80
-            reasons.append(f"Printer state reports a problem: {state_text}.")
-        if _text_contains(state_lower, "stopped") and 0 < progress < 99:
-            risk += 65
-            reasons.append("Print appears stopped before reaching 100% completion.")
-        if _text_contains(state_lower, "paused"):
-            if multi_color_grace_active:
-                positives.append("Pause/filament operation detected; using multi-color grace handling.")
+        if telemetry_rules_enabled:
+            if not reachable:
+                risk += 45 if active_print else 30
+                reasons.append("Printer is not reachable through the CC2 MQTT client.")
+            elif not connected:
+                risk += 30
+                reasons.append("MQTT client is not fully connected yet.")
+            elif not registered:
+                risk += 25
+                reasons.append("MQTT client is connected but registration is not confirmed yet.")
             else:
-                risk += 12
-                reasons.append("Print is paused. This may be intentional, but it needs attention.")
-        if exceptions:
-            risk += 45
-            reasons.append(f"Printer reported exception status: {exceptions}.")
+                positives.append("Printer telemetry is connected.")
+
+            stale_after = _as_float(ai_cfg.get("stale_status_seconds"), 75.0)
+            if message_age > stale_after:
+                bump = 45 if active_print else 25
+                risk += bump
+                reasons.append(f"Last printer status is stale ({int(message_age)}s old).")
+            elif message_age < 999999:
+                positives.append(f"Telemetry is fresh ({int(message_age)}s old).")
+
+            if _text_contains(state_lower, "error", "fail", "emergency", "exception"):
+                risk += 80
+                reasons.append(f"Printer state reports a problem: {state_text}.")
+            if _text_contains(state_lower, "stopped") and 0 < progress < 99:
+                risk += 65
+                reasons.append("Print appears stopped before reaching 100% completion.")
+            if paused_state:
+                if multi_color_grace_active:
+                    positives.append("Pause/filament operation detected; using multi-color grace handling.")
+                else:
+                    risk += 12
+                    reasons.append("Print is paused. This may be intentional, but it needs attention.")
+            if exceptions:
+                risk += 45
+                reasons.append(f"Printer reported exception status: {exceptions}.")
+        else:
+            positives.append("Telemetry failure rules are disabled in settings.")
+            prev["progress"] = progress
+            prev["progress_changed_at"] = now
 
         if is_print_prep:
             prev["progress"] = progress
@@ -337,59 +349,68 @@ class PortalAIDetector:
 
         if active_print:
             positives.append("A print appears to be active or recently active.")
-            if hotend_target <= 0 and progress < 99:
-                risk += 35
-                reasons.append("Hotend target is off while the print still appears active.")
-            elif hotend_target >= 150:
-                diff = hotend_target - hotend_current
-                if diff > 35:
-                    risk += 45
-                    reasons.append(f"Hotend is far below target ({hotend_current:.1f}/{hotend_target:.1f}°C).")
-                elif diff > 20:
-                    risk += 22
-                    reasons.append(f"Hotend is below target ({hotend_current:.1f}/{hotend_target:.1f}°C).")
+            if telemetry_rules_enabled:
+                temp_grace = _as_float(ai_cfg.get("temperature_grace_seconds"), 180.0)
+                filament_grace = _as_float(ai_cfg.get("filament_sensor_grace_seconds"), 60.0)
+                temp_grace_active = elapsed_sec > 0 and elapsed_sec < temp_grace and progress < 1.0
+                if temp_grace_active:
+                    positives.append(f"Temperature-gap checks are in startup grace ({int(elapsed_sec)}/{int(temp_grace)}s).")
                 else:
-                    positives.append("Hotend temperature is near target.")
+                    if hotend_target <= 0 and progress < 99:
+                        risk += 35
+                        reasons.append("Hotend target is off while the print still appears active.")
+                    elif hotend_target >= 150:
+                        diff = hotend_target - hotend_current
+                        if diff > 35:
+                            risk += 45
+                            reasons.append(f"Hotend is far below target ({hotend_current:.1f}/{hotend_target:.1f}°C).")
+                        elif diff > 20:
+                            risk += 22
+                            reasons.append(f"Hotend is below target ({hotend_current:.1f}/{hotend_target:.1f}°C).")
+                        else:
+                            positives.append("Hotend temperature is near target.")
 
-            if bed_target >= 35:
-                diff = bed_target - bed_current
-                if diff > 18:
-                    risk += 25
-                    reasons.append(f"Bed is well below target ({bed_current:.1f}/{bed_target:.1f}°C).")
-                elif diff <= 10:
-                    positives.append("Bed temperature is near target.")
+                    if bed_target >= 35:
+                        diff = bed_target - bed_current
+                        if diff > 18:
+                            risk += 25
+                            reasons.append(f"Bed is well below target ({bed_current:.1f}/{bed_target:.1f}°C).")
+                        elif diff <= 10:
+                            positives.append("Bed temperature is near target.")
 
-            if filament.get("sensor_enabled") and filament.get("detected") is False:
-                risk += 80
-                reasons.append("Filament sensor reports no filament while printing.")
-
-            stuck_minutes = _as_float(ai_cfg.get("progress_stuck_minutes"), 8.0)
-            effective_stuck_minutes = stuck_minutes
-            if multi_color_grace_active:
-                effective_stuck_minutes = max(stuck_minutes, multi_color_grace_minutes)
-            last_progress = prev.get("progress")
-            changed_at = prev.get("progress_changed_at") or now
-            if last_progress is None or abs(progress - _as_float(last_progress)) >= 0.15:
-                prev["progress"] = progress
-                prev["progress_changed_at"] = now
-                prev["file"] = file_name
-                positives.append("Progress has moved recently.")
-            else:
-                stuck_for = (now - changed_at) / 60.0
-                if progress > 0.1 and multi_color_grace_active and stuck_for < effective_stuck_minutes:
-                    positives.append(f"Progress is unchanged, but multi-color/filament-swap grace is active ({stuck_for:.1f}/{effective_stuck_minutes:.0f}m).")
-                elif progress > 0.1 and stuck_for >= effective_stuck_minutes:
-                    risk += 28 if multi_color_grace_active else 45
-                    if multi_color_grace_active:
-                        reasons.append(f"Progress has not changed for about {stuck_for:.1f} minutes, beyond the multi-color grace window.")
+                filament_grace_active = elapsed_sec > 0 and elapsed_sec < filament_grace
+                if filament.get("sensor_enabled") and filament.get("detected") is False:
+                    if filament_grace_active or paused_state or multi_color_grace_active:
+                        positives.append("Filament sensor warning is inside startup/pause/multicolor grace.")
                     else:
-                        reasons.append(f"Progress has not changed for about {stuck_for:.1f} minutes.")
-                elif progress > 0.1 and stuck_for >= max(2.0, effective_stuck_minutes / 2.0):
-                    risk += 8 if multi_color_grace_active else 18
-                    if multi_color_grace_active:
-                        reasons.append(f"Progress has been unchanged for about {stuck_for:.1f} minutes during multi-color grace.")
-                    else:
-                        reasons.append(f"Progress has been unchanged for about {stuck_for:.1f} minutes.")
+                        risk += 80
+                        reasons.append("Filament sensor reports no filament while printing.")
+
+                last_progress = prev.get("progress")
+                changed_at = prev.get("progress_changed_at") or now
+                if last_progress is None or abs(progress - _as_float(last_progress)) >= 0.15:
+                    prev["progress"] = progress
+                    prev["progress_changed_at"] = now
+                    prev["file"] = file_name
+                    positives.append("Progress has moved recently.")
+                elif paused_state:
+                    positives.append("Progress is unchanged because the printer reports a paused state.")
+                else:
+                    stuck_for = (now - changed_at) / 60.0
+                    if progress > 0.1 and multi_color_grace_active and stuck_for < effective_stuck_minutes:
+                        positives.append(f"Progress is unchanged, but multi-color/filament-swap grace is active ({stuck_for:.1f}/{effective_stuck_minutes:.0f}m).")
+                    elif progress > 0.1 and stuck_for >= effective_stuck_minutes:
+                        risk += 28 if multi_color_grace_active else 45
+                        if multi_color_grace_active:
+                            reasons.append(f"Progress has not changed for about {stuck_for:.1f} minutes, beyond the multi-color grace window.")
+                        else:
+                            reasons.append(f"Progress has not changed for about {stuck_for:.1f} minutes.")
+                    elif progress > 0.1 and stuck_for >= max(2.0, effective_stuck_minutes / 2.0):
+                        risk += 8 if multi_color_grace_active else 18
+                        if multi_color_grace_active:
+                            reasons.append(f"Progress has been unchanged for about {stuck_for:.1f} minutes during multi-color grace.")
+                        else:
+                            reasons.append(f"Progress has been unchanged for about {stuck_for:.1f} minutes.")
         else:
             prev["progress"] = progress
             prev["progress_changed_at"] = now
