@@ -194,7 +194,7 @@
         <div class="setting-controls"><label><input id="kioskShowProgress" class="toggle" type="checkbox" {% if cfg.kiosk.show_progress|default(true) %}checked{% endif %}> show</label></div>
       </div>
       <div class="setting-row">
-        <div><strong>AI status overlay</strong><small>Shows Looks Good, Something looks fishy, or Possible failure detected when Portal AI is enabled.</small></div>
+        <div><strong>AI status overlay</strong><small>Shows Looks Good, Something looks fishy, or Possible failure detected when Failure Detection is enabled.</small></div>
         <div class="setting-controls"><label><input id="kioskShowAiStatus" class="toggle" type="checkbox" {% if cfg.kiosk.show_ai_status|default(true) %}checked{% endif %}> show</label></div>
       </div>
       <div class="setting-row">
@@ -255,18 +255,18 @@
 
   <details class="card settings-panel">
     <summary class="settings-summary">
-      <span>Portal AI 🤖</span>
-      <small>Telemetry, watchdog, Ollama vision, and failure detection.</small>
+      <span>Failure Detection 🤖</span>
+      <small>Telemetry, watchdog, Ollama vision, and optional guarded pause-on-failure.</small>
     </summary>
     <div class="settings-panel-body">
     <p class="muted">Explainable failure detection using printer telemetry first, with optional server-side camera frame checks through your LAN Ollama vision model.</p>
     <div class="settings-list">
       <div class="setting-row">
-        <div><strong>Enable Portal AI</strong><small>Turns the dashboard AI risk card on or off.</small></div>
-        <div class="setting-controls"><label><input id="portalAIEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.enabled %}checked{% endif %}> enabled</label></div>
+        <div><strong>Enable Failure Detection</strong><small>Turns the dashboard failure-detection card and watchdog scoring on or off.</small></div>
+        <div class="setting-controls"><label class="switch-toggle settings-switch"><input id="portalAIEnabled" type="checkbox" {% if cfg.portal_ai.enabled %}checked{% endif %}><span class="switch-slider" aria-hidden="true"></span></label></div>
       </div>
       <div class="setting-row">
-        <div><strong>Background watchdog</strong><small>Keeps Portal AI monitoring from the backend service even when no browser is open.</small></div>
+        <div><strong>Background watchdog</strong><small>Keeps Failure Detection monitoring from the backend service even when no browser is open.</small></div>
         <div class="setting-controls"><label><input id="aiBackgroundMonitorEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.background_monitor_enabled|default(true) %}checked{% endif %}> enabled</label></div>
       </div>
       <div class="setting-row">
@@ -342,7 +342,7 @@
         <div class="setting-controls compact-inline"><input id="aiVisionConfidenceThreshold" class="input" type="number" min="0" max="100" step="5" value="{{ cfg.portal_ai.vision_confidence_threshold|default(70) }}"><input id="aiVisionSeverityThreshold" class="input" type="number" min="0" max="100" step="5" value="{{ cfg.portal_ai.vision_severity_threshold|default(60) }}"></div>
       </div>
       <div class="setting-row">
-        <div><strong>Bad vision checks required</strong><small>How many suspicious camera analyses in a row before Portal AI treats vision as confirmed.</small></div>
+        <div><strong>Bad vision checks required</strong><small>How many suspicious camera analyses in a row before Failure Detection treats vision as confirmed.</small></div>
         <div class="setting-controls"><input id="aiVisionRequiredBadChecks" class="input" type="number" min="1" max="10" step="1" value="{{ cfg.portal_ai.vision_required_bad_checks|default(2) }}"></div>
       </div>
       <div class="setting-row tall">
@@ -350,7 +350,7 @@
         <div class="setting-controls"><textarea id="aiVisionPrompt" class="input config-textarea small-textarea">{{ cfg.portal_ai.vision_prompt|default('') }}</textarea></div>
       </div>
       <div class="setting-row">
-        <div><strong>Progress stuck threshold</strong><small>Minutes without progress change before Portal AI becomes suspicious.</small></div>
+        <div><strong>Progress stuck threshold</strong><small>Minutes without progress change before Failure Detection becomes suspicious.</small></div>
         <div class="setting-controls"><input id="aiProgressStuckMinutes" class="input" type="number" min="1" max="120" step="1" value="{{ cfg.portal_ai.progress_stuck_minutes }}"></div>
       </div>
       <div class="setting-row">
@@ -434,50 +434,28 @@
         </div>
       </div>
 
-      <div class="setting-row tall ai-learning-warning-row">
-        <div><strong>Recent AI feedback samples</strong><small id="aiFeedbackSamplesSummary">Recent feedback samples have not been loaded yet.</small></div>
-        <div class="setting-controls ai-feedback-sample-controls">
-          <select id="aiFeedbackSamplesPrinter" class="input compact-select">
-            <option value="">All printers</option>
-          </select>
-          <select id="aiFeedbackSamplesOutcome" class="input compact-select">
-            <option value="">All outcomes</option>
-            <option value="true_positive">True positive</option>
-            <option value="false_positive">False positive</option>
-            <option value="false_negative">False negative</option>
-            <option value="true_negative">True negative</option>
-          </select>
-          <select id="aiFeedbackSamplesLabel" class="input compact-select">
-            <option value="">All labels</option>
-            <option value="looks_good">Looks Good</option>
-            <option value="looks_bad">Looks Bad</option>
-            <option value="false_alarm">False Alarm</option>
-          </select>
-          <select id="aiFeedbackSamplesLimit" class="input compact-select">
-            <option value="10">Last 10</option>
-            <option value="25" selected>Last 25</option>
-            <option value="50">Last 50</option>
-          </select>
-          <button id="refreshAiFeedbackSamplesButton" class="button secondary tiny" type="button">Refresh Samples</button>
-        </div>
-      </div>
-      <div class="ai-feedback-samples-panel" id="aiFeedbackSamplesPanel">
-        <div class="ai-learning-empty">Loading recent feedback samples...</div>
-      </div>
-      <div class="ai-learning-safety-note ai-feedback-samples-note">
-        Recent samples are a lightweight review view for labels, reasons, outcomes, metrics, and captured feedback frames. Images stay on disk; SQLite stores paths and metrics only.
-      </div>
-
       <div class="ai-learning-safety-note">
-        <strong>Safety limits:</strong> learning does not change your manual threshold settings. Suggest-only mode does not alter live detection. Save All before rebuilding if you changed learning limits/mode. Portal AI remains advisory and will not pause, cancel, resume, load/unload filament, or control jobs automatically.
+        <strong>Safety limits:</strong> learning does not change your manual threshold settings. Suggest-only mode does not alter live detection. Save All before rebuilding if you changed learning limits/mode. Failure Detection can optionally pause a print only after a high-risk countdown. Cancel-print remains locked behind manual controls.
       </div>
       <div class="setting-row">
-        <div><strong>Auto-pause</strong><small>Planned safety action. Stored in config, but this build does not auto-pause yet.</small></div>
-        <div class="setting-controls"><label><input id="aiAutoPauseEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.auto_pause_enabled %}checked{% endif %}> armed</label></div>
+        <div><strong>Auto-pause on high-risk failure</strong><small>When armed, Failure Detection starts a countdown modal and then sends Pause Print if the warning is not cancelled.</small></div>
+        <div class="setting-controls"><label class="switch-toggle settings-switch"><input id="aiAutoPauseEnabled" type="checkbox" {% if cfg.portal_ai.auto_pause_enabled %}checked{% endif %}><span class="switch-slider" aria-hidden="true"></span></label></div>
       </div>
       <div class="setting-row">
-        <div><strong>Auto-pause risk threshold</strong><small>Reserved for a later build after we trust the risk score.</small></div>
-        <div class="setting-controls"><input id="aiAutoPauseThreshold" class="input" type="number" min="50" max="100" step="5" value="{{ cfg.portal_ai.auto_pause_threshold }}"></div>
+        <div><strong>Auto-pause risk threshold</strong><small>Minimum risk score before the countdown is armed. Default is intentionally spicy but cautious: 90%.</small></div>
+        <div class="setting-controls"><input id="aiAutoPauseThreshold" class="input" type="number" min="50" max="100" step="5" value="{{ cfg.portal_ai.auto_pause_threshold|default(90) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Auto-pause countdown</strong><small>Seconds shown in the warning modal before the pause command is sent.</small></div>
+        <div class="setting-controls"><input id="aiAutoPauseCountdown" class="input" type="number" min="5" max="600" step="5" value="{{ cfg.portal_ai.auto_pause_countdown_seconds|default(30) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Auto-pause cooldown</strong><small>Minutes to suppress the same warning after you cancel or after a pause command is sent.</small></div>
+        <div class="setting-controls"><input id="aiAutoPauseCooldown" class="input" type="number" min="1" max="240" step="1" value="{{ cfg.portal_ai.auto_pause_cooldown_minutes|default(10) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Require high-level failure</strong><small>Only auto-pause for Failure Likely / HIGH states, not medium suspicion or mild watch states.</small></div>
+        <div class="setting-controls"><label><input id="aiAutoPauseRequireHigh" class="toggle" type="checkbox" {% if cfg.portal_ai.auto_pause_require_high_level|default(true) %}checked{% endif %}> enabled</label></div>
       </div>
     </div>
     </div>

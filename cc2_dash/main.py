@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import ipaddress
 import json
@@ -117,6 +118,9 @@ _AI_MONITOR_STATE: dict[str, Any] = {
     "last_error": None,
 }
 _AI_MONITOR_LAST_LOGGED: dict[str, dict[str, Any]] = {}
+_AI_AUTO_PAUSE_PENDING: dict[str, dict[str, Any]] = {}
+_AI_AUTO_PAUSE_CANCELLED: dict[str, float] = {}
+_AI_AUTO_PAUSE_LAST_SENT: dict[str, float] = {}
 _LAYER_TOTAL_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 _LAYER_TOTAL_CACHE_TTL_SEC = 300.0
 _LAYER_TOTAL_MISS_TTL_SEC = 90.0
@@ -1221,6 +1225,15 @@ class AIFeedbackReasonRequest(BaseModel):
     reason_key: str = ""
 
 
+class AIEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class AutoPauseCancelRequest(BaseModel):
+    token: Optional[str] = None
+    reason: str = ""
+
+
 class LearningResetRequest(BaseModel):
     delete_samples: bool = False
 
@@ -1285,6 +1298,181 @@ async def lan_guard(request: Request, call_next):
 def _level_rank(level: str | None) -> int:
     ranks = {"disabled": 0, "low": 10, "watch": 25, "medium": 50, "high": 75}
     return ranks.get(str(level or "low").lower(), 0)
+
+
+def _cleanup_auto_pause_state(now: float | None = None) -> None:
+    now = now or time.time()
+    for token, expiry in list(_AI_AUTO_PAUSE_CANCELLED.items()):
+        if float(expiry or 0) <= now:
+            _AI_AUTO_PAUSE_CANCELLED.pop(token, None)
+
+
+def _auto_pause_signature(printer_id: str, status: dict[str, Any], result: dict[str, Any]) -> str:
+    reason = str((result.get("reasons") or [""])[0] or "")[:180]
+    bucket = int((_coerce_float(status.get("progress"), 0.0) // 5) * 5)
+    raw = "|".join([
+        str(printer_id),
+        str(status.get("file") or "-"),
+        str(status.get("status_text") or status.get("state") or ""),
+        str(result.get("state") or ""),
+        str(result.get("level") or ""),
+        str(bucket),
+        reason,
+    ])
+    return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _auto_pause_failure_type(result: dict[str, Any]) -> str:
+    text = " ".join(str(x or "") for x in (result.get("reasons") or [])).lower()
+    if any(w in text for w in ("filament", "runout", "no filament")):
+        return "Filament / runout warning"
+    if any(w in text for w in ("hotend", "bed", "temperature", "target", "below")):
+        return "Temperature warning"
+    if any(w in text for w in ("spaghetti", "stringing", "detached", "blob", "vision", "camera image", "ollama")):
+        return "Vision failure warning"
+    if any(w in text for w in ("stale", "mqtt", "telemetry", "reachable", "registered")):
+        return "Telemetry warning"
+    if "camera" in text:
+        return "Camera warning"
+    return "High-risk failure warning"
+
+
+def _status_is_safe_to_pause(status: dict[str, Any]) -> tuple[bool, str]:
+    if not status.get("active_print"):
+        return False, "printer is not reporting an active print"
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else {}
+    if phase.get("is_preparing"):
+        return False, "printer is still preparing the job"
+    state_text = f"{status.get('state') or ''} {status.get('status_text') or ''}".lower()
+    if any(word in state_text for word in ("idle", "standby", "complete", "finished", "stopped", "stopping")) and "print" not in state_text:
+        return False, "printer is not in a running print state"
+    if any(word in state_text for word in ("paused", "pausing")):
+        return False, "printer is already paused"
+    if not status.get("reachable") or not status.get("connected"):
+        return False, "printer is not connected enough to send a pause command"
+    return True, "eligible"
+
+
+def _auto_pause_public_pending(pending: dict[str, Any] | None, now: float | None = None) -> dict[str, Any] | None:
+    if not pending:
+        return None
+    now = now or time.time()
+    deadline = float(pending.get("deadline_epoch") or 0)
+    return {
+        "token": pending.get("token"),
+        "created_epoch": pending.get("created_epoch"),
+        "deadline_epoch": deadline,
+        "remaining_seconds": max(0, int(round(deadline - now))),
+        "countdown_seconds": pending.get("countdown_seconds"),
+        "risk": pending.get("risk"),
+        "level": pending.get("level"),
+        "failure_type": pending.get("failure_type"),
+        "message": pending.get("message"),
+        "reason": pending.get("reason"),
+    }
+
+
+def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[str, Any], cfg: dict[str, Any], schedule: bool = False) -> dict[str, Any]:
+    """Attach auto-pause metadata and, from the background watchdog only, execute due pauses.
+
+    The dashboard owns the human-facing countdown modal, but the backend owns the
+    pending timer so the action is not just a browser-side toy. Cancelled tokens
+    are suppressed for a configurable cooldown so the same failure does not
+    immediately re-arm like a cursed jack-in-the-box.
+    """
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    now = time.time()
+    _cleanup_auto_pause_state(now)
+    out = dict(result or {})
+    threshold = max(50, min(100, int(_coerce_float(ai_cfg.get("auto_pause_threshold"), 90))))
+    countdown = max(5, min(600, int(_coerce_float(ai_cfg.get("auto_pause_countdown_seconds"), 30))))
+    cooldown_minutes = max(1.0, min(240.0, _coerce_float(ai_cfg.get("auto_pause_cooldown_minutes"), 10.0)))
+    enabled = bool(ai_cfg.get("enabled", True)) and bool(ai_cfg.get("auto_pause_enabled", False))
+    risk = int(_coerce_float(out.get("risk"), 0.0))
+    level = str(out.get("level") or "low").lower()
+    state = str(out.get("state") or "").lower()
+    safe_to_pause, safety_reason = _status_is_safe_to_pause(status)
+    token = _auto_pause_signature(printer_id, status, out)
+    failure_type = _auto_pause_failure_type(out)
+    reason = str((out.get("reasons") or ["Failure Detection reported a high-risk condition."])[0] or "Failure Detection reported a high-risk condition.")
+    require_high = bool(ai_cfg.get("auto_pause_require_high_level", True))
+    eligible = bool(
+        enabled
+        and safe_to_pause
+        and risk >= threshold
+        and (not require_high or level == "high" or state == "failure_likely")
+        and out.get("enabled", True) is not False
+    )
+
+    pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
+    if pending and (not eligible or pending.get("token") != token):
+        _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
+        pending = None
+
+    cancelled_until = float(_AI_AUTO_PAUSE_CANCELLED.get(token) or 0)
+    if cancelled_until > now:
+        eligible = False
+        safety_reason = f"auto-pause was cancelled for this failure signature for {int((cancelled_until - now) // 60) + 1} more minute(s)"
+
+    last_sent = float(_AI_AUTO_PAUSE_LAST_SENT.get(printer_id) or 0)
+    cooldown_remaining = max(0, int(round((last_sent + cooldown_minutes * 60.0) - now)))
+    if cooldown_remaining > 0:
+        eligible = False
+        safety_reason = f"auto-pause cooldown active for {cooldown_remaining}s"
+
+    sent = None
+    error = None
+    if pending and eligible and schedule and now >= float(pending.get("deadline_epoch") or 0):
+        try:
+            _send_command(printer_id, PAUSE_PRINT, {}, True, 60.0, True)
+            sent = {"ok": True, "sent_epoch": now, "message": "Pause command sent by Failure Detection."}
+            _AI_AUTO_PAUSE_LAST_SENT[printer_id] = now
+            _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
+            pending = None
+            log("warning", f"Failure Detection auto-pause sent: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
+        except Exception as exc:
+            error = str(getattr(exc, "detail", None) or exc)
+            pending["last_error"] = error
+            # Avoid hammering the printer every watchdog tick after one failed attempt.
+            _AI_AUTO_PAUSE_CANCELLED[token] = now + min(300.0, cooldown_minutes * 60.0)
+            log("error", f"Failure Detection auto-pause failed: {error}", "portal_ai", printer=printer_id)
+
+    if not pending and eligible and schedule:
+        pending = {
+            "token": token,
+            "created_epoch": now,
+            "deadline_epoch": now + countdown,
+            "countdown_seconds": countdown,
+            "risk": risk,
+            "level": level,
+            "failure_type": failure_type,
+            "message": f"Failure Detection may pause this print in {countdown} seconds unless you cancel.",
+            "reason": reason,
+        }
+        _AI_AUTO_PAUSE_PENDING[printer_id] = pending
+        log("warning", f"Failure Detection auto-pause countdown armed: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
+
+    pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
+    action_state = "disabled"
+    if enabled:
+        action_state = "pending" if pending else ("sent" if sent else ("armed" if eligible else "standing_by"))
+    auto_pause = {
+        "enabled": enabled,
+        "threshold": threshold,
+        "countdown_seconds": countdown,
+        "cooldown_minutes": cooldown_minutes,
+        "require_high_level": require_high,
+        "eligible": eligible,
+        "safety_reason": safety_reason,
+        "failure_type": failure_type,
+        "reason": reason,
+        "state": action_state,
+        "pending": _auto_pause_public_pending(pending, now),
+        "sent": sent,
+        "error": error or (pending or {}).get("last_error"),
+    }
+    out["auto_pause"] = auto_pause
+    return out
 
 
 def _start_ai_monitor() -> None:
@@ -1989,17 +2177,24 @@ def _maybe_attach_vision(printer_id: str, printer: dict[str, Any] | None, status
 
 def _attach_ai_status(printer_id: str, status: dict[str, Any], snap: Optional[dict[str, Any]], cfg: dict[str, Any], ai_source: str = "request", force_ai_evaluate: bool = False, printer: dict[str, Any] | None = None) -> dict[str, Any]:
     ai_cfg = cfg.get("portal_ai", {}) or {}
+    schedule_auto_pause = ai_source == "background" or (ai_source == "request" and not bool(ai_cfg.get("background_monitor_enabled", True)))
+    if not ai_cfg.get("enabled", True):
+        result = portal_ai.evaluate(printer_id, status, snap, cfg, source=ai_source)
+        status["portal_ai"] = _process_auto_pause(printer_id, status, result, cfg, schedule=False)
+        return status
     phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status, snap)
     if phase.get("is_preparing"):
         status["print_phase"] = phase
         if ai_cfg.get("vision_ai_enabled", False):
             status["vision_ai"] = _prep_vision_result(printer_id, status, ai_source)
-        status["portal_ai"] = _prep_ai_result(printer_id, status, cfg, ai_source)
+        result = _prep_ai_result(printer_id, status, cfg, ai_source)
+        status["portal_ai"] = _process_auto_pause(printer_id, status, result, cfg, schedule=False)
         return status
-    if ai_cfg.get("enabled", True) and ai_cfg.get("monitor_active_prints_only", True) and not bool(status.get("active_print")):
+    if ai_cfg.get("monitor_active_prints_only", True) and not bool(status.get("active_print")):
         if ai_cfg.get("vision_ai_enabled", False):
             status["vision_ai"] = _idle_vision_result(printer_id, ai_source)
-        status["portal_ai"] = _idle_ai_result(printer_id, status, cfg, ai_source)
+        result = _idle_ai_result(printer_id, status, cfg, ai_source)
+        status["portal_ai"] = _process_auto_pause(printer_id, status, result, cfg, schedule=False)
         return status
     use_cached = (
         ai_source == "request"
@@ -2017,12 +2212,12 @@ def _attach_ai_status(printer_id: str, status: dict[str, Any], snap: Optional[di
             if vision_cached:
                 status["vision_ai"] = vision_cached
                 cached.setdefault("vision", vision_cached)
-            status["portal_ai"] = cached
+            status["portal_ai"] = _process_auto_pause(printer_id, status, cached, cfg, schedule=False)
             return status
     status = _maybe_attach_vision(printer_id, printer, status, cfg, ai_source=ai_source, force=force_ai_evaluate)
-    status["portal_ai"] = portal_ai.evaluate(printer_id, status, snap, cfg, source=ai_source)
+    result = portal_ai.evaluate(printer_id, status, snap, cfg, source=ai_source)
+    status["portal_ai"] = _process_auto_pause(printer_id, status, result, cfg, schedule=schedule_auto_pause)
     return status
-
 
 def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Optional[dict[str, Any]], ai_source: str = "request", force_ai_evaluate: bool = False, attach_ai: bool = True) -> dict[str, Any]:
     pcfg = printer_dict_to_config(printer_id, printer)
@@ -2242,6 +2437,41 @@ async def api_ai_monitor_status():
         },
         "cached": cached,
     }
+
+
+@app.post("/api/ai/enabled")
+async def api_ai_set_enabled(req: AIEnabledRequest):
+    cfg = load_config()
+    cfg.setdefault("portal_ai", {})["enabled"] = bool(req.enabled)
+    saved = save_config(cfg)
+    if not req.enabled:
+        _AI_AUTO_PAUSE_PENDING.clear()
+    log("info", f"Failure Detection {'enabled' if req.enabled else 'disabled'}", "settings")
+    return {"ok": True, "enabled": bool(req.enabled), "config": saved.get("portal_ai", {})}
+
+
+@app.post("/api/printers/{printer_id}/ai/auto-pause/cancel")
+async def api_ai_auto_pause_cancel(printer_id: str, req: AutoPauseCancelRequest | None = None):
+    pending = _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
+    token = (req.token if req else None) or (pending or {}).get("token")
+    cfg = load_config()
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    cooldown_minutes = max(1.0, min(240.0, _coerce_float(ai_cfg.get("auto_pause_cooldown_minutes"), 10.0)))
+    if token:
+        _AI_AUTO_PAUSE_CANCELLED[str(token)] = time.time() + cooldown_minutes * 60.0
+    log("info", f"Failure Detection auto-pause cancelled{': ' + str(req.reason) if req and req.reason else ''}", "portal_ai", printer=printer_id)
+    return {"ok": True, "cancelled": bool(pending), "token": token, "cooldown_minutes": cooldown_minutes}
+
+
+@app.post("/api/printers/{printer_id}/ai/auto-pause/pause-now")
+async def api_ai_auto_pause_now(printer_id: str):
+    if printer_id not in (load_config().get("printers") or {}):
+        raise HTTPException(404, "Printer not configured")
+    result = await asyncio.to_thread(_send_command, printer_id, PAUSE_PRINT, {}, True, 60.0, True)
+    _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
+    _AI_AUTO_PAUSE_LAST_SENT[printer_id] = time.time()
+    log("warning", "Failure Detection pause-now command sent", "portal_ai", printer=printer_id)
+    return {"ok": True, "message": "Pause command sent", "result": result.get("result")}
 
 
 @app.get("/api/printers/{printer_id}/ai/status")

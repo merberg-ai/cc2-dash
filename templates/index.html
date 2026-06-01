@@ -89,14 +89,18 @@
     </details>
 
     <details class="card dashboard-card dashboard-accordion fade-in" data-card="ai_info" style="order: {{ card.order }}" open>
-      <summary class="settings-summary dashboard-summary ai-info-summary">
-        <span class="dashboard-summary-title">AI Info</span>
-        <span id="aiSummaryPill" class="summary-ai-status good" aria-label="AI status">Looks Good</span>
+      <summary class="settings-summary dashboard-summary ai-info-summary failure-detection-summary">
+        <span class="dashboard-summary-title">Failure Detection</span>
+        <span id="aiSummaryPill" class="summary-ai-status good" aria-label="Failure detection status">Looks Good</span>
+        <label class="switch-toggle failure-detection-switch" title="Enable or disable Failure Detection" aria-label="Enable or disable Failure Detection">
+          <input id="failureDetectionToggle" class="failure-detection-toggle-input" type="checkbox" {% if cfg.portal_ai.enabled|default(true) %}checked{% endif %}>
+          <span class="switch-slider" aria-hidden="true"></span>
+        </label>
       </summary>
       <div class="dashboard-panel-body">
         <div class="status-grid two ai-status-grid">
           <div>
-            <strong>Portal AI 🤖</strong>
+            <strong>Failure Detection 🤖</strong>
             <span id="assistantText">Standing By</span>
             <small id="assistantReason" class="ai-reason">Telemetry rules warming up...</small>
           </div>
@@ -112,7 +116,7 @@
             <span id="aiLevel" class="ai-pill low">Low</span>
             <span id="aiLastCheck">checking...</span>
           </div>
-          <div class="ai-risk-meter" aria-label="Portal AI risk score"><div id="aiRiskBar" class="ai-risk-bar" style="width:0%"></div></div>
+          <div class="ai-risk-meter" aria-label="Failure Detection risk score"><div id="aiRiskBar" class="ai-risk-bar" style="width:0%"></div></div>
           <ul id="aiReasons" class="ai-reasons"><li>No warning rules are currently triggered.</li></ul>
           {% if cfg.portal_ai.vision_ai_enabled|default(false) %}
           <div id="aiVisionBox" class="ai-vision-box pending"><div><strong>Vision: pending</strong><span>Waiting for the first camera analysis.</span></div></div>
@@ -191,4 +195,38 @@
     </div>
   </div>
 </div>
+
+<div id="autoPauseModal" class="modal-backdrop auto-pause-modal hidden" role="dialog" aria-modal="true" aria-labelledby="autoPauseModalTitle" aria-hidden="true">
+  <div class="modal-card auto-pause-card">
+    <div class="modal-header auto-pause-header">
+      <div>
+        <h2 id="autoPauseModalTitle">Failure Detection Warning</h2>
+        <p id="autoPauseModalSubtitle">A high-risk print failure may be happening.</p>
+      </div>
+    </div>
+    <div class="auto-pause-warning">
+      <strong id="autoPauseWarningText">Warning: Failure Detection may pause this print soon.</strong>
+      <span id="autoPauseBlurb">Review the printer now. Cancel if this is a false alarm.</span>
+    </div>
+    <div class="auto-pause-countdown" aria-live="assertive">
+      <span id="autoPauseCountdown">30</span>
+      <small>seconds until pause command</small>
+    </div>
+    <div id="autoPauseReason" class="auto-pause-reason">Waiting for failure details...</div>
+    <div id="autoPauseFeedback" class="auto-pause-feedback hidden">
+      <strong>Cancelled. Want to train it?</strong>
+      <span>Saving feedback helps reduce dumb future alarms.</span>
+      <div class="auto-pause-feedback-buttons">
+        <button class="button secondary tiny" type="button" data-autopause-feedback="looks_good">Looks Good</button>
+        <button class="button secondary tiny" type="button" data-autopause-feedback="false_alarm">False Alarm</button>
+        <button class="button secondary tiny" type="button" data-autopause-feedback="looks_bad">Actually Looks Bad</button>
+      </div>
+    </div>
+    <div class="modal-actions auto-pause-actions">
+      <button id="autoPauseCancelButton" class="button secondary" type="button">Cancel Pause</button>
+      <button id="autoPauseNowButton" class="button danger" type="button"><span class="button-label">Pause Now</span></button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
