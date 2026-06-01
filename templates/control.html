@@ -12,6 +12,28 @@
     {% endif %}
   </article>
 
+  <article class="card control-camera-card">
+    <div class="card-title-row file-title-row">
+      <div>
+        <h2>Camera</h2>
+        <p>Live relay view for jogging and printer checks. Scaled tighter here so the controls stay usable on mobile.</p>
+      </div>
+    </div>
+    <div class="camera-wrap control-camera-wrap" id="controlCameraWrap">
+      <div class="camera-placeholder" id="controlCameraPlaceholder">
+        <span class="spinner"></span>
+        <span>Loading camera stream...</span>
+      </div>
+      {% if printer and cfg.dashboard.camera_autoload %}
+        <img id="controlCameraStream" class="camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}" onerror="window.cc2ControlCameraFailed && window.cc2ControlCameraFailed()" />
+      {% else %}
+        <img id="controlCameraStream" class="camera-stream hidden" alt="Printer camera stream" />
+      {% endif %}
+      <span id="controlCameraRelayBadge" class="live-badge"><span id="controlCameraRelayDot" class="dot warn"></span><span id="controlCameraRelayText">RELAY</span></span>
+    </div>
+    <div id="controlCameraRelayStatus" class="camera-relay-status">Camera relay warming up...</div>
+  </article>
+
   <article class="card control-card">
     <div class="card-title-row file-title-row">
       <div>
@@ -23,8 +45,9 @@
 
     <div id="controlLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading control status...</span></div>
     <div id="controlStatusNote" class="mini-note">Loading printer control status...</div>
+    <div id="controlPrintLockNote" class="mini-note warn-text hidden">Control page commands are locked while a print job is active.</div>
 
-    <section class="stock-control-panel" aria-label="Printer motion and control panel">
+    <section id="stockControlPanel" class="stock-control-panel" aria-label="Printer motion and control panel">
       <div class="control-motion-cluster">
         <div class="control-z-rail" aria-label="Z axis controls">
           <button class="jog-pill" type="button" data-control-move="Z" data-control-dir="up">Z↑</button>

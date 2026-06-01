@@ -144,7 +144,21 @@
         <div class="button-stack">
         {% for action_id, action in actions %}
           {% if action.visible %}
-            {% if action_id == 'set_speed_preset' %}
+            {% if action_id == 'light_toggle' %}
+            <div class="quick-action-row quick-toggle-action-row quick-light-action-row">
+              <div class="quick-toggle-copy">
+                <span id="dashboardLightIcon" class="quick-light-icon" aria-hidden="true">◐</span>
+                <div>
+                  <strong>{{ action.label }}</strong>
+                  <small id="dashboardLightStateLabel">Checking light state...</small>
+                </div>
+              </div>
+              <label class="switch-toggle settings-switch quick-light-switch" title="Toggle printer light" aria-label="Toggle printer light">
+                <input id="dashboardLightToggle" type="checkbox" data-action-light-toggle data-action="{{ action_id }}" data-confirm="{{ action.confirm_text }}" data-requires-confirm="{{ 'true' if action.requires_confirm else 'false' }}" data-action-enabled="{{ 'true' if action.enabled else 'false' }}" {{ 'disabled' if not action.enabled else '' }}>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            {% elif action_id == 'set_speed_preset' %}
             <div class="quick-action-row speed-action-row">
               <select class="input speed-preset-select" aria-label="Speed preset for {{ action.label }}">
                 <option value="0">Silent</option>

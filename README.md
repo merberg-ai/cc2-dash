@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.53-blue)
+![Version](https://img.shields.io/badge/version-1.2.54-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -62,7 +62,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.53 stock-style-control-page
+1.2.54 control-page-print-lock-camera-light-toggle
 ```
 
 Major current capabilities:
@@ -1184,6 +1184,14 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.54 control page print lock, camera, and light toggle polish
+
+- The Control page now locks all printer command controls while a print job is active, including movement, homing, speed, fans, and the Control-page light switch. The Refresh/status path remains available.
+- Added a compact live camera relay panel at the top of the Control page so movement/control checks can be done without jumping back to the dashboard.
+- Added backend active-print protection for Control page fan, speed, move, home, and Control-page light commands.
+- Changed Dashboard → Quick Actions → Light from a push button into a themed pill toggle with an on/off icon and live state sync from printer telemetry.
+- Exposed `light_on` in dashboard status payloads so the dashboard and Control page can share the same light state.
 
 ### v1.2.53 stock-style control page
 

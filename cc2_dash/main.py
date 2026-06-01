@@ -2322,6 +2322,7 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "hotend_target": nozzle.get("target"),
         "bed_current": bed.get("actual"),
         "bed_target": bed.get("target"),
+        "light_on": _extract_light_on(n, snap.get("raw_status") or {}),
         "file": n.get("file") or "-",
         "gcode_thumbnail_url": None,
         "show_gcode_thumbnail": bool((load_config().get("dashboard") or {}).get("show_gcode_thumbnail", True)),
@@ -3236,20 +3237,28 @@ def _control_speed_percent(n: dict[str, Any], raw: dict[str, Any]) -> int:
         return 100
 
 
+def _extract_light_on(n: dict[str, Any], raw: dict[str, Any]) -> bool:
+    light_raw = _find_first_key(raw, "SecondLight", "LightStatus", "led", max_depth=6)
+    light_on = bool((n.get("led") or {}).get("status")) if isinstance(n, dict) else False
+    if isinstance(light_raw, dict):
+        light_on = bool(_dig(light_raw, "SecondLight", "secondLight", "status", default=light_on))
+    elif light_raw not in (None, ""):
+        light_on = bool(light_raw)
+    return light_on
+
+
 def _control_status_payload(printer_id: str) -> dict[str, Any]:
     pdata = _require_printer_running(printer_id)
     snap = runtime.snapshot(printer_id) or {}
     n = (snap.get("normalized") or {}) if isinstance(snap, dict) else {}
     raw = (snap.get("raw_status") or {}) if isinstance(snap, dict) else {}
     connected = bool(snap.get("connected") or snap.get("registered"))
-    state = str(n.get("sub_state") or n.get("state") or ("connected" if connected else "offline"))
+    base_status = _status_from_snapshot(printer_id, pdata, snap, attach_ai=False) if isinstance(snap, dict) else {}
+    state = str(n.get("sub_state") or n.get("state") or base_status.get("state") or ("connected" if connected else "offline"))
     speed_pct = _control_speed_percent(n, raw)
-    light_raw = _find_first_key(raw, "SecondLight", "LightStatus", "led", max_depth=6)
-    light_on = bool((n.get("led") or {}).get("status"))
-    if isinstance(light_raw, dict):
-        light_on = bool(_dig(light_raw, "SecondLight", "secondLight", "status", default=light_on))
-    elif light_raw not in (None, ""):
-        light_on = bool(light_raw)
+    active_print = bool(base_status.get("active_print"))
+    phase = base_status.get("print_phase") if isinstance(base_status.get("print_phase"), dict) else _print_phase_from_status(base_status, snap)
+    camera_relay = camera_relays.get(printer_id, printer_dict_to_config(printer_id, pdata)).status()
     return {
         "ok": True,
         "printer_id": printer_id,
@@ -3257,7 +3266,13 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
         "host": pdata.get("host"),
         "connected": connected,
         "state": state,
-        "status_text": _nice_status(state),
+        "status_text": base_status.get("status_text") or _nice_status(state),
+        "status_code": base_status.get("status_code"),
+        "sub_status_code": base_status.get("sub_status_code"),
+        "print_phase": phase,
+        "active_print": active_print,
+        "controls_locked": active_print,
+        "controls_locked_reason": "Control page commands are locked while a print job is active." if active_print else "",
         "allow_commands": bool(snap.get("allow_commands", pdata.get("allow_commands", True))),
         "allow_dangerous_commands": bool(snap.get("allow_dangerous_commands", pdata.get("allow_dangerous_commands", False))),
         "position": _control_position(n),
@@ -3269,9 +3284,19 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
             "auxiliary": _control_fan_percent(n, raw, "auxiliary", "aux", "AuxiliaryFan"),
             "case": _control_fan_percent(n, raw, "case", "box", "BoxFan"),
         },
-        "light_on": light_on,
+        "light_on": _extract_light_on(n, raw),
+        "camera_url": f"/api/printers/{printer_id}/camera/stream",
+        "camera_snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
+        "camera_relay": camera_relay,
         "last_message_age_sec": snap.get("last_message_age_sec"),
     }
+
+
+def _raise_if_control_locked(printer_id: str) -> dict[str, Any]:
+    status = _control_status_payload(printer_id)
+    if status.get("active_print"):
+        raise HTTPException(409, "Control page commands are locked while a print job is active. Use the stock portal or pause/finish the print first.")
+    return status
 
 
 @app.get("/api/printers/{printer_id}/control/status")
@@ -3284,7 +3309,10 @@ async def api_control_fan(printer_id: str, body: ControlFanRequest):
     fan = str(body.fan or "").strip().lower().replace("-", "_")
     percent = int(max(0, min(100, body.percent)))
     try:
-        current = _control_status_payload(printer_id).get("fans", {}) or {}
+        current_status = _raise_if_control_locked(printer_id)
+        current = current_status.get("fans", {}) or {}
+    except HTTPException:
+        raise
     except Exception:
         current = {}
     model = int(current.get("model") or 0)
@@ -3307,6 +3335,7 @@ async def api_control_fan(printer_id: str, body: ControlFanRequest):
 
 @app.post("/api/printers/{printer_id}/control/speed")
 async def api_control_speed(printer_id: str, body: ControlSpeedRequest):
+    _raise_if_control_locked(printer_id)
     percent = int(max(1, min(300, body.percent)))
     result = await asyncio.to_thread(_send_command, printer_id, SET_PRINT_SPEED, print_speed_pct_params(percent), True, 12.0)
     log("info", f"Control print speed set to {percent}%", "command", printer=printer_id)
@@ -3315,6 +3344,7 @@ async def api_control_speed(printer_id: str, body: ControlSpeedRequest):
 
 @app.post("/api/printers/{printer_id}/control/move")
 async def api_control_move(printer_id: str, body: ControlMoveRequest):
+    _raise_if_control_locked(printer_id)
     axis = str(body.axis or "").upper().strip()
     if axis not in {"X", "Y", "Z"}:
         raise HTTPException(400, "Axis must be X, Y, or Z.")
@@ -3328,6 +3358,7 @@ async def api_control_move(printer_id: str, body: ControlMoveRequest):
 
 @app.post("/api/printers/{printer_id}/control/home")
 async def api_control_home(printer_id: str, body: ControlHomeRequest):
+    _raise_if_control_locked(printer_id)
     axis = str(body.axis or "XYZ").upper().strip()
     if axis not in {"X", "Y", "Z", "XY", "XYZ"}:
         raise HTTPException(400, "Axis must be X, Y, Z, XY, or XYZ.")
@@ -4096,6 +4127,14 @@ async def api_timelapse_export(printer_id: str, body: TimelapseExportRequest):
 @app.post("/api/printers/{printer_id}/history/delete")
 async def api_history_delete(printer_id: str, body: HistoryDeleteRequest):
     return await asyncio.to_thread(_send_command, printer_id, HISTORY_DELETE, history_delete_params(body.task_ids), True, 20.0)
+
+
+@app.post("/api/printers/{printer_id}/control/light")
+async def api_control_light(printer_id: str, body: LightRequest):
+    _raise_if_control_locked(printer_id)
+    result = await asyncio.to_thread(_send_command, printer_id, SET_LIGHT, light_params(body.on), True, 10.0)
+    log("info", f"Control light set to {'on' if body.on else 'off'}", "command", printer=printer_id)
+    return {"ok": True, "message": f"Light {'on' if body.on else 'off'}", "result": result.get("result")}
 
 
 @app.post("/api/printers/{printer_id}/light")
