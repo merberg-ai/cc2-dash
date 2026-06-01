@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.46-blue)
+![Version](https://img.shields.io/badge/version-1.2.49-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.46 configurable-navigation
+1.2.49 dashboard-title-and-idle-ai-summary
 ```
 
 Major current capabilities:
@@ -1143,6 +1143,28 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.49 dashboard title and idle AI summary
+
+- Updated the collapsed AI Info summary pill so idle/standby telemetry shows `Idle` instead of the generic `Looks Good` label.
+- Added live browser tab title updates on the dashboard using the current printer status, progress percentage, and time remaining when available.
+- Connection trouble now also reflects in the page title so a stale/offline tab is easier to spot.
+- No changes to Portal AI scoring, print-prep guards, printer commands, or advisory-only behavior.
+
+### v1.2.48 collapsed status summary
+
+- Updated the collapsed Print Status card to show the printer telemetry status label, such as Bed Preheating, Extruder Preheating, Homing, Printing, or Idle, instead of always showing PRINTING during active/prep states.
+- The collapsed summary now keeps the progress bar visible for active print-preparation phases and uses warning-colored styling for preparation states, green for real printing, muted for idle, and red for error/offline states.
+- No changes to Portal AI scoring, print-prep guards, printer commands, or advisory-only behavior.
+
+### v1.2.47 print-prep AI guard
+
+- Added explicit print-preparation state detection for bed preheating, extruder preheating, homing, auto-leveling, self-checking, and initializing.
+- Portal AI now reports these phases as Preparing instead of Failure Likely, and the dashboard summary pill shows Preparing instead of a scary false alarm.
+- Vision/Ollama failure checks are paused during normal start-of-job preparation, preventing dark/empty-bed camera frames from causing false alarms.
+- Temperature-gap, filament-out, and progress-stall rules are also paused during preparation and resume when actual printing starts.
+- Added `print_phase`, `status_code`, and `sub_status_code` fields to status payloads for better debugging and future UI work.
+- No printer-control/autopause behavior changes; Portal AI remains advisory-only.
 
 ### v1.2.46 configurable navigation
 

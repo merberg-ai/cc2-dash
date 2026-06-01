@@ -22,6 +22,95 @@ def _text_contains(text: str, *needles: str) -> bool:
     return any(n.lower() in hay for n in needles)
 
 
+PREP_MACHINE_STATUS_CODES = {0, 5, 8, 10}
+PREP_SUB_STATUS_CODES = {1041, 1045, 1096, 1405, 1906, 2801, 2802, 2901, 2902}
+PREP_TEXT_TERMS = (
+    "preheating",
+    "extruder heating",
+    "extruder preheating",
+    "bed heating",
+    "bed preheating",
+    "heating bed",
+    "homing",
+    "auto leveling",
+    "leveling",
+    "self checking",
+    "initializing",
+    "warming",
+    "warmup",
+    "warm up",
+)
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _prep_context_from_status(status: dict[str, Any], normalized: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Detect normal print-prep states that should not be scored as failures.
+
+    The Centauri firmware reports start-of-job phases as active job states while the
+    bed/nozzle are cold, the head is homing, or the camera view is dark/empty. Those
+    are noisy for failure detection, so the watchdog pauses print-failure scoring
+    until the machine reaches actual printing/resume/pause states.
+    """
+    normalized = normalized or {}
+    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else {}
+    if phase.get("is_preparing"):
+        return dict(phase)
+
+    machine_code = _coerce_int(status.get("status_code", normalized.get("status_code")))
+    sub_code = _coerce_int(status.get("sub_status_code", normalized.get("sub_status_code")))
+    state_text = " ".join(
+        str(x or "")
+        for x in (
+            status.get("status_text"),
+            status.get("state"),
+            normalized.get("state"),
+            normalized.get("sub_state"),
+        )
+    ).strip().lower()
+
+    is_preparing = bool(
+        machine_code in PREP_MACHINE_STATUS_CODES
+        or sub_code in PREP_SUB_STATUS_CODES
+        or any(term in state_text for term in PREP_TEXT_TERMS)
+    )
+    label = str(status.get("status_text") or normalized.get("sub_state") or status.get("state") or normalized.get("state") or "Preparing")
+    if "bed preheating" in state_text or sub_code in {1405, 1906}:
+        kind = "bed_preheating"
+        label = "Bed Preheating"
+    elif ("extruder" in state_text and ("preheat" in state_text or "heating" in state_text)) or sub_code in {1045, 1096}:
+        kind = "extruder_preheating"
+        label = "Extruder Preheating"
+    elif "homing" in state_text or machine_code == 10 or sub_code in {2801, 2802}:
+        kind = "homing"
+        label = "Homing"
+    elif "level" in state_text or machine_code == 5 or sub_code in {2901, 2902}:
+        kind = "auto_leveling"
+        label = "Auto Leveling"
+    elif "self" in state_text or machine_code == 8:
+        kind = "self_checking"
+        label = "Self Checking"
+    elif "initial" in state_text or machine_code == 0:
+        kind = "initializing"
+        label = "Initializing"
+    else:
+        kind = "preparing"
+    return {
+        "is_preparing": is_preparing,
+        "kind": kind,
+        "label": label,
+        "status_code": machine_code,
+        "sub_status_code": sub_code,
+    }
+
+
 class PortalAIDetector:
     """Small explainable rule engine for cc2-dash Portal AI.
 
@@ -121,6 +210,8 @@ class PortalAIDetector:
         filament = normalized.get("filament") or {}
         status_code = normalized.get("status_code")
         sub_status_code = normalized.get("sub_status_code")
+        prep_context = _prep_context_from_status(status, normalized)
+        is_print_prep = bool(prep_context.get("is_preparing"))
 
         multi_color_mode = str(ai_cfg.get("multi_color_mode", "auto") or "auto").lower()
         multi_color_grace_minutes = _as_float(ai_cfg.get("multi_color_progress_stuck_minutes"), 30.0)
@@ -204,6 +295,45 @@ class PortalAIDetector:
         if exceptions:
             risk += 45
             reasons.append(f"Printer reported exception status: {exceptions}.")
+
+        if is_print_prep:
+            prev["progress"] = progress
+            prev["progress_changed_at"] = now
+            prep_label = str(prep_context.get("label") or "Preparing")
+            if not reasons:
+                reasons.append(f"Printer is in a normal start-of-job state: {prep_label}.")
+            reasons.append("Print-failure, filament-out, temperature-gap, progress-stall, and vision failure alerts are paused until actual printing begins.")
+            positives.append("Telemetry state says the printer is preparing the job, not failing it.")
+            risk = min(risk, 40)
+            level = "watch" if risk >= 25 else "low"
+            state = "preparing"
+            summary = "Preparing"
+            result = {
+                "enabled": True,
+                "state": state,
+                "level": level,
+                "risk": max(0, min(100, int(round(risk)))),
+                "summary": summary,
+                "reasons": reasons[:5],
+                "positives": positives[:5],
+                "active_print": active_print,
+                "print_phase": prep_context,
+                "multi_color_grace_active": bool(multi_color_grace_active),
+                "multi_color_mode": multi_color_mode,
+                "progress_stuck_threshold_minutes": _as_float(ai_cfg.get("progress_stuck_minutes"), 8.0),
+                "last_check_epoch": now,
+                "last_check": time.strftime("%H:%M:%S"),
+                "source": source,
+                "background_monitor_enabled": bool(ai_cfg.get("background_monitor_enabled", True)),
+                "rules": {
+                    "telemetry": bool(ai_cfg.get("telemetry_rules_enabled", True)),
+                    "camera": bool(ai_cfg.get("camera_rules_enabled", True)),
+                    "vision": bool(ai_cfg.get("vision_ai_enabled", False)),
+                },
+                "vision": status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None,
+            }
+            prev["last_result"] = result
+            return result
 
         if active_print:
             positives.append("A print appears to be active or recently active.")

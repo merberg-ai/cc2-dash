@@ -6,6 +6,7 @@
   let cfg = cfgEl ? JSON.parse(cfgEl.textContent) : {};
   let dashboardThumbnailUrl = '';
   let dashboardThumbnailFile = '';
+  const baseDocumentTitle = document.title || 'cc2-dash';
 
   function toast(message, type = 'info', timeout = 4200) {
     const host = $('#toastHost');
@@ -55,6 +56,58 @@
     return `${c} / ${t}`;
   }
 
+  function niceStatusLabel(value, fallback = 'Unknown') {
+    const raw = String(value || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!raw) return fallback;
+    if (raw === raw.toUpperCase() || raw === raw.toLowerCase()) {
+      return raw.toLowerCase().replace(/\b[a-z]/g, ch => ch.toUpperCase());
+    }
+    return raw;
+  }
+
+  function printSummaryState(status, activePrint, progress) {
+    const st = status || {};
+    const phase = st.print_phase && typeof st.print_phase === 'object' ? st.print_phase : {};
+    const preparing = !!phase.is_preparing;
+    const rawLabel = preparing
+      ? (phase.label || st.status_text || st.state || 'Preparing')
+      : (st.status_text || st.state || (activePrint ? 'Printing' : 'Idle'));
+    const label = niceStatusLabel(rawLabel, activePrint ? 'Printing' : 'Idle');
+    const rawState = `${st.status_text || ''} ${st.state || ''} ${label}`.toLowerCase();
+    const errored = !st.reachable || /error|fail|fault|offline|disconnect|lost/.test(rawState);
+    const tone = errored ? 'error' : (preparing ? 'preparing' : (activePrint ? 'printing' : 'idle'));
+    const busy = !!(activePrint || preparing);
+    const pct = Number.isFinite(Number(progress)) ? Number(progress).toFixed(1) : '0.0';
+    const title = errored
+      ? `${label} · printer needs attention`
+      : (busy ? `${label} · ${pct}% complete` : label);
+    return { label, tone, busy, preparing, title };
+  }
+
+  function compactTitleText(value, fallback = '') {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (!text || text === '-' || text.toLowerCase() === 'none') return fallback;
+    return text.length > 34 ? `${text.slice(0, 31)}…` : text;
+  }
+
+  function updateDashboardTitle(status, summaryState, progress) {
+    const st = status || {};
+    const state = summaryState || printSummaryState(st, !!st.active_print, progress);
+    const label = compactTitleText(state.label || st.status_text || st.state, 'cc2-dash');
+    const pct = Number.isFinite(Number(progress)) ? `${Number(progress).toFixed(1)}%` : '';
+    const timeLeft = compactTitleText(st.time_left || st.remaining || st.remaining_time || '', '');
+    const elapsed = compactTitleText(st.print_time || st.elapsed || '', '');
+    const parts = [label];
+    if (state.busy || Number(progress) > 0) parts.push(pct);
+    if (timeLeft && timeLeft !== '0s') parts.push(`${timeLeft} left`);
+    else if (elapsed && (state.busy || Number(progress) > 0)) parts.push(`${elapsed} elapsed`);
+    document.title = `${parts.filter(Boolean).join(' · ')} · ${baseDocumentTitle}`;
+  }
+
+  function setDashboardTitleOffline(message = 'Connection Trouble') {
+    document.title = `${compactTitleText(message, 'Connection Trouble')} · ${baseDocumentTitle}`;
+  }
+
   function setText(id, value) {
     const el = $('#' + id);
     if (el) el.textContent = value ?? '-';
@@ -66,6 +119,18 @@
     const level = String(ai.level || 'low').toLowerCase();
     const risk = Math.max(0, Math.min(100, Number(ai.risk || 0)));
     const vState = String(vision.visual_state || '').toLowerCase();
+    const aiState = String(ai.state || '').toLowerCase();
+    const summary = String(ai.summary || '').toLowerCase();
+    const activeHint = ai.active_print;
+    if (ai.enabled === false) {
+      return { tone: 'idle', label: 'Disabled' };
+    }
+    if (aiState === 'idle_standby' || (summary === 'idle' && activeHint === false)) {
+      return { tone: 'idle', label: 'Idle' };
+    }
+    if (aiState === 'preparing') {
+      return { tone: 'good', label: 'Preparing' };
+    }
     const badVision = ['failure_likely', 'camera_bad', 'failed', 'error'].includes(vState);
     const fishyVision = ['possible_failure', 'uncertain'].includes(vState) && !(vision.benign_uncertainty || vision.normalized_from === 'uncertain');
     const highLevel = ['high', 'critical', 'bad', 'error', 'failure'].includes(level);
@@ -428,17 +493,20 @@
         : (/print|printing|running|pause|paused|filament operating/i.test(`${st.status_text || ''} ${st.state || ''}`) && !/idle|ready|standby|complete|finished/i.test(`${st.status_text || ''} ${st.state || ''}`));
       const printSummary = $('#printStatusSummary');
       const printStatePill = $('#summaryPrintState');
+      const summaryState = printSummaryState(st, activePrint, progress);
       if (printSummary) {
-        printSummary.classList.toggle('printing', !!activePrint);
-        printSummary.classList.toggle('idle', !activePrint);
+        printSummary.classList.toggle('printing', summaryState.tone === 'printing');
+        printSummary.classList.toggle('preparing', summaryState.tone === 'preparing');
+        printSummary.classList.toggle('error', summaryState.tone === 'error');
+        printSummary.classList.toggle('idle', summaryState.tone === 'idle');
+        printSummary.classList.toggle('busy', !!summaryState.busy);
       }
       if (printStatePill) {
-        printStatePill.className = `summary-print-state ${activePrint ? 'printing' : 'idle'}`;
-        printStatePill.textContent = activePrint ? 'PRINTING' : 'IDLE';
-        printStatePill.title = activePrint
-          ? `Active print · ${progress.toFixed(1)}% complete`
-          : 'Printer idle';
+        printStatePill.className = `summary-print-state ${summaryState.tone}`;
+        printStatePill.textContent = summaryState.label;
+        printStatePill.title = summaryState.title;
       }
+      updateDashboardTitle(st, summaryState, progress);
 
       setText('statusText', st.status_text || st.state || 'Unknown');
       renderPortalAI(st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Connection Lost', level: st.reachable ? 'low' : 'watch', risk: st.reachable ? 0 : 35, reasons: [st.message || 'Waiting for printer telemetry.'] });
@@ -472,6 +540,7 @@
       if (ph && cam && !cam.classList.contains('hidden')) ph.classList.add('hidden');
     } catch (err) {
       renderPortalAI({ summary: 'Connection Trouble', level: 'high', risk: 75, reasons: [err.message || 'Dashboard could not load printer status.'] });
+      setDashboardTitleOffline('Connection Trouble');
       const statusEl = $('#statusText');
       if (statusEl) {
         statusEl.textContent = 'Printer Error';

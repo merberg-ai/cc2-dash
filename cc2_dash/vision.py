@@ -755,6 +755,27 @@ class VisionMonitor:
             state["last_result"] = result
             return result
 
+        phase = (status or {}).get("print_phase") if isinstance((status or {}).get("print_phase"), dict) else {}
+        if status is not None and phase.get("is_preparing"):
+            cached = state.get("last_result")
+            label = str(phase.get("label") or "Preparing")
+            result = {
+                "enabled": True,
+                "skipped": True,
+                "visual_state": "standby",
+                "summary": f"Printer is {label}; vision failure checks are paused until actual printing begins.",
+                "learning_thresholds": learning_thresholds,
+                "consecutive_bad": 0,
+                "last_check_epoch": now,
+                "last_check": time.strftime("%H:%M:%S"),
+                "previous": cached if isinstance(cached, dict) else None,
+                "active_print": bool((status or {}).get("active_print")),
+                "print_phase": phase,
+            }
+            state["consecutive_bad"] = 0
+            state["last_result"] = result
+            return result
+
         active_print = bool((status or {}).get("portal_ai", {}).get("active_print") or (status or {}).get("active_print"))
         if ai_cfg.get("vision_require_active_print", True) and status is not None:
             # The rule engine may not be attached yet, so fall back to simple status hints.
