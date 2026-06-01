@@ -306,7 +306,10 @@
 
   function setFailureDetectionToggle(enabled) {
     $$('.failure-detection-toggle-input, #portalAIEnabled').forEach(input => {
-      if (input) input.checked = !!enabled;
+      if (!input) return;
+      input.checked = !!enabled;
+      const switchLabel = input.closest('.switch-toggle');
+      if (switchLabel) switchLabel.setAttribute('aria-checked', enabled ? 'true' : 'false');
     });
   }
 
@@ -328,18 +331,37 @@
     }
   }
 
-  function initFailureDetectionToggle() {
-    const dashboardToggle = $('#failureDetectionToggle');
-    const switchLabel = dashboardToggle?.closest('.failure-detection-switch');
+  function bindFailureDetectionSwitch(input, source = 'dashboard') {
+    if (!input || input.dataset.failureSwitchBound === '1') return;
+    input.dataset.failureSwitchBound = '1';
+    const switchLabel = input.closest('.switch-toggle');
     if (switchLabel) {
-      switchLabel.addEventListener('click', event => event.stopPropagation());
-    }
-    if (dashboardToggle) {
-      dashboardToggle.addEventListener('change', event => {
+      switchLabel.setAttribute('role', 'switch');
+      switchLabel.setAttribute('tabindex', '0');
+      switchLabel.setAttribute('aria-checked', input.checked ? 'true' : 'false');
+      switchLabel.addEventListener('click', event => {
+        event.preventDefault();
         event.stopPropagation();
-        updateFailureDetectionEnabled(!!dashboardToggle.checked, 'dashboard');
+        if (input.disabled) return;
+        updateFailureDetectionEnabled(!input.checked, source);
+      });
+      switchLabel.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (input.disabled) return;
+        updateFailureDetectionEnabled(!input.checked, source);
       });
     }
+    input.addEventListener('change', event => {
+      event.stopPropagation();
+      updateFailureDetectionEnabled(!!input.checked, source);
+    });
+  }
+
+  function initFailureDetectionToggle() {
+    bindFailureDetectionSwitch($('#failureDetectionToggle'), 'dashboard');
+    bindFailureDetectionSwitch($('#portalAIEnabled'), 'settings');
     setFailureDetectionToggle(cfg?.portal_ai?.enabled !== false);
   }
 
@@ -1825,10 +1847,7 @@
       refreshConfigEditor();
     }).catch(err => toast(err.message, 'error'));
 
-    const settingsFailureToggle = $('#portalAIEnabled');
-    if (settingsFailureToggle) {
-      settingsFailureToggle.addEventListener('change', () => updateFailureDetectionEnabled(!!settingsFailureToggle.checked, 'settings'));
-    }
+    initFailureDetectionToggle();
 
     const managerScan = $('#managerScanButton');
     if (managerScan) managerScan.addEventListener('click', async () => {

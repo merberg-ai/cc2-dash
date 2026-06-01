@@ -239,64 +239,89 @@ body[data-page="settings"] .button.tiny { min-height:2.05rem; }
 .setting-row { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:.75rem; }
 .setting-controls { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; justify-content:flex-end; }
 .setting-controls input[type="number"] { width:5.2rem; }
-.toggle { width:1.2rem; height:1.2rem; accent-color:var(--cc2-primary); }
+.toggle {
+  width:1.2rem;
+  height:1.2rem;
+  accent-color:var(--cc2-primary);
+}
 .switch-toggle {
+  --switch-w:3.45rem;
+  --switch-h:1.82rem;
+  --switch-pad:.2rem;
+  --switch-knob:calc(var(--switch-h) - (var(--switch-pad) * 2));
   position:relative;
   display:inline-flex;
   align-items:center;
-  width:3.35rem;
-  height:1.7rem;
+  width:var(--switch-w);
+  height:var(--switch-h);
   flex:0 0 auto;
   cursor:pointer;
   vertical-align:middle;
+  touch-action:manipulation;
+  user-select:none;
 }
-.switch-toggle input {
+.switch-toggle input[type="checkbox"] {
   position:absolute;
   inset:0;
+  width:100%;
+  height:100%;
   opacity:0;
   margin:0;
+  padding:0;
+  border:0;
+  -webkit-appearance:none;
+  appearance:none;
   cursor:pointer;
+  pointer-events:none;
 }
 .switch-slider {
   position:absolute;
   inset:0;
   border-radius:999px;
-  background:color-mix(in srgb, var(--cc2-muted) 28%, var(--cc2-card-soft));
-  border:1px solid color-mix(in srgb, var(--cc2-border) 78%, var(--cc2-muted));
-  box-shadow:inset 0 1px 3px rgba(0,0,0,.45), 0 8px 18px color-mix(in srgb, var(--cc2-shadow) 40%, transparent);
-  transition:background .18s ease, border-color .18s ease, box-shadow .18s ease;
+  pointer-events:none;
+  background:linear-gradient(180deg,
+    color-mix(in srgb, var(--cc2-card-soft) 92%, var(--cc2-muted) 8%),
+    color-mix(in srgb, var(--cc2-card) 86%, black 14%)
+  );
+  border:1px solid color-mix(in srgb, var(--cc2-border) 72%, var(--cc2-muted) 28%);
+  box-shadow:inset 0 1px 4px rgba(0,0,0,.55), 0 7px 16px color-mix(in srgb, var(--cc2-shadow) 34%, transparent);
+  transition:background .18s ease, border-color .18s ease, box-shadow .18s ease, filter .18s ease;
 }
 .switch-slider::after {
   content:"";
   position:absolute;
-  width:1.28rem;
-  height:1.28rem;
-  left:.18rem;
+  width:var(--switch-knob);
+  height:var(--switch-knob);
+  left:var(--switch-pad);
   top:50%;
   transform:translateY(-50%);
   border-radius:50%;
-  background:#fff;
-  box-shadow:0 3px 9px rgba(0,0,0,.38);
+  background:linear-gradient(180deg, #fff, #eef2ff);
+  box-shadow:0 2px 7px rgba(0,0,0,.42), inset 0 -1px 1px rgba(0,0,0,.08);
   transition:transform .18s ease;
 }
-.switch-toggle input:checked + .switch-slider {
-  background:var(--cc2-primary);
-  border-color:color-mix(in srgb, var(--cc2-primary-hover) 72%, white 10%);
-  box-shadow:0 0 0 1px color-mix(in srgb, var(--cc2-primary) 24%, transparent), 0 10px 24px color-mix(in srgb, var(--cc2-primary) 28%, transparent);
+.switch-toggle input[type="checkbox"]:checked + .switch-slider {
+  background:linear-gradient(90deg, var(--cc2-primary), var(--cc2-primary-hover));
+  border-color:color-mix(in srgb, var(--cc2-primary-hover) 78%, white 12%);
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--cc2-primary) 30%, transparent), 0 9px 22px color-mix(in srgb, var(--cc2-primary) 32%, transparent);
 }
-.switch-toggle input:checked + .switch-slider::after {
-  transform:translate(1.62rem, -50%);
+.switch-toggle input[type="checkbox"]:checked + .switch-slider::after {
+  transform:translate(calc(var(--switch-w) - var(--switch-knob) - (var(--switch-pad) * 2)), -50%);
 }
-.switch-toggle input:focus-visible + .switch-slider {
-  outline:2px solid var(--cc2-primary-hover);
+.switch-toggle:focus-within .switch-slider,
+.switch-toggle:focus-visible .switch-slider {
+  outline:2px solid color-mix(in srgb, var(--cc2-primary-hover) 72%, white 8%);
   outline-offset:3px;
 }
-.switch-toggle input:disabled + .switch-slider {
+.switch-toggle:hover .switch-slider { filter:brightness(1.07); }
+.switch-toggle input[type="checkbox"]:disabled + .switch-slider,
+.switch-toggle.disabled .switch-slider {
   opacity:.55;
   cursor:not-allowed;
+  filter:saturate(.6);
 }
 .failure-detection-switch { margin-left:.35rem; }
-.settings-switch { width:3.5rem; height:1.75rem; }
+.settings-switch { --switch-w:3.55rem; --switch-h:1.84rem; }
 
 .console-output { height: min(58vh, 560px); overflow:auto; background:#07080a; border:1px solid var(--cc2-border); border-radius:.85rem; padding:.65rem; font-family:var(--font-number); }
 .log-line { display:block; padding:.45rem .55rem; margin-bottom:.45rem; font-size:.8rem; color:var(--cc2-muted); background:#111318; }
@@ -1852,7 +1877,5 @@ body.kiosk-page .camera-placeholder span:last-child {
 @media (max-width: 560px) { .ai-training-grid { grid-template-columns:1fr; } .ai-training-sample-card { grid-template-columns:4.7rem minmax(0, 1fr); } .ai-training-thumb { width:4.7rem; } .ai-training-review-actions { grid-template-columns:1fr; } }
 
 @media (max-width: 520px) {
-  .failure-detection-switch { width:3rem; height:1.52rem; margin-left:.25rem; }
-  .failure-detection-switch .switch-slider::after { width:1.14rem; height:1.14rem; }
-  .failure-detection-switch input:checked + .switch-slider::after { transform:translate(1.42rem, -50%); }
+  .failure-detection-switch { --switch-w:3.05rem; --switch-h:1.58rem; margin-left:.25rem; }
 }

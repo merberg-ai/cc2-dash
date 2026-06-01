@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.50-blue)
+![Version](https://img.shields.io/badge/version-1.2.51-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -61,7 +61,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.50 failure-detection-auto-pause
+1.2.51 themed-failure-toggle-fix
 ```
 
 Major current capabilities:
@@ -1143,6 +1143,14 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.51 themed failure toggle fix
+
+- Fixed the Failure Detection enable/disable switch so tapping it inside the collapsed dashboard card header reliably toggles detection instead of being eaten by the accordion summary click behavior.
+- The same switch behavior is now shared by the dashboard card and Settings toggle, so enabling/disabling Failure Detection stays synchronized immediately.
+- Restyled the dashboard and Settings switch controls with a fully custom themed pill toggle using the active cc2-dash theme color instead of browser/default checkbox styling.
+- The Auto-pause on high-risk failure switch now uses the same themed control style.
+- No changes to auto-pause safety behavior, pause command behavior, or failure scoring thresholds in this release.
 
 ### v1.2.50 failure detection auto-pause
 
