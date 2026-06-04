@@ -116,7 +116,7 @@
           <div class="setting-controls"><label><input id="setupAITelemetryRules" class="toggle" type="checkbox" {% if cfg.portal_ai.telemetry_rules_enabled %}checked{% endif %}> enabled</label></div>
         </div>
         <div class="setting-row">
-          <div><strong>Local frame heuristics</strong><small>Detects dark/flat camera frames and stringing-ish edge changes.</small></div>
+          <div><strong>Local frame heuristics</strong><small>Detects dark/flat camera frames and fine-edge changes.</small></div>
           <div class="setting-controls"><label><input id="setupAIHeuristics" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_heuristics_enabled|default(true) %}checked{% endif %}> enabled</label></div>
         </div>
         <div class="setting-row">

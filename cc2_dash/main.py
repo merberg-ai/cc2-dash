@@ -27,6 +27,8 @@ from .config import (
     APP_ROOT,
     DATA_DIR,
     default_printer,
+    experimental_feature_locks,
+    is_feature_locked,
     load_config,
     needs_setup,
     printer_dict_to_config,
@@ -1873,7 +1875,23 @@ def view_context(request: Request) -> dict[str, Any]:
         "printer_id": pid,
         "printer": public_printer,
         "default_subnet": default_subnet_guess(),
+        "experimental_feature_locks": experimental_feature_locks(),
     }
+
+
+def _locked_feature_page(request: Request, feature_key: str):
+    meta = experimental_feature_locks().get(feature_key, {})
+    context = view_context(request)
+    context["feature_name"] = meta.get("label", "Feature")
+    context["feature_summary"] = meta.get("summary", "This feature is temporarily disabled in this build.")
+    context["feature_path"] = meta.get("path", "")
+    return templates.TemplateResponse("feature_disabled.html", context, status_code=403)
+
+
+def _raise_if_feature_locked(feature_key: str) -> None:
+    meta = experimental_feature_locks().get(feature_key)
+    if meta:
+        raise HTTPException(403, f"{meta.get('label', 'Feature')} is temporarily disabled in this community test build.")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1909,6 +1927,8 @@ async def logs_page(request: Request):
 
 @app.get("/files", response_class=HTMLResponse)
 async def files_page(request: Request):
+    if is_feature_locked("file_manager_enabled"):
+        return _locked_feature_page(request, "file_manager_enabled")
     cfg = load_config()
     if needs_setup(cfg):
         return RedirectResponse("/setup")
@@ -1917,6 +1937,8 @@ async def files_page(request: Request):
 
 @app.get("/filaments", response_class=HTMLResponse)
 async def filaments_page(request: Request):
+    if is_feature_locked("filament_manager_enabled"):
+        return _locked_feature_page(request, "filament_manager_enabled")
     cfg = load_config()
     if needs_setup(cfg):
         return RedirectResponse("/setup")
@@ -1925,6 +1947,8 @@ async def filaments_page(request: Request):
 
 @app.get("/control", response_class=HTMLResponse)
 async def control_page(request: Request):
+    if is_feature_locked("control_page_enabled"):
+        return _locked_feature_page(request, "control_page_enabled")
     cfg = load_config()
     if needs_setup(cfg):
         return RedirectResponse("/setup")
@@ -2105,7 +2129,7 @@ async def api_health():
 
 @app.get("/api/config")
 async def api_get_config():
-    return {"ok": True, "config": load_config(), "themes": THEMES, "font_stacks": list(FONT_STACKS.keys())}
+    return {"ok": True, "config": load_config(), "themes": THEMES, "font_stacks": list(FONT_STACKS.keys()), "experimental_feature_locks": experimental_feature_locks()}
 
 
 @app.post("/api/config")
@@ -2114,7 +2138,7 @@ async def api_save_config(req: SaveConfigRequest):
     runtime.reload()
     camera_relays.configure_from_config(cfg)
     log("info", "Configuration saved", "settings")
-    return {"ok": True, "config": cfg}
+    return {"ok": True, "config": cfg, "experimental_feature_locks": experimental_feature_locks()}
 
 
 def _discovery_targets(subnet_or_host: str) -> list[str]:
@@ -3501,6 +3525,7 @@ def _extract_light_on(n: dict[str, Any], raw: dict[str, Any]) -> bool:
 
 
 def _control_status_payload(printer_id: str) -> dict[str, Any]:
+    _raise_if_feature_locked("control_page_enabled")
     pdata = _require_printer_running(printer_id)
     snap = runtime.snapshot(printer_id) or {}
     n = (snap.get("normalized") or {}) if isinstance(snap, dict) else {}
@@ -3713,6 +3738,7 @@ def _require_printer_running(printer_id: str) -> dict[str, Any]:
 
 @app.get("/api/printers/{printer_id}/filaments")
 async def api_filaments(printer_id: str, refresh: bool = Query(False)):
+    _raise_if_feature_locked("filament_manager_enabled")
     pdata = _require_printer_running(printer_id)
     command_result = None
     # The stock Elegoo filament sync UI requests printer MMS/filament info. In
@@ -3737,6 +3763,7 @@ async def api_filaments_refresh(printer_id: str):
 
 @app.post("/api/printers/{printer_id}/filaments/auto-refill")
 async def api_filaments_auto_refill(printer_id: str, body: FilamentAutoRefillRequest):
+    _raise_if_feature_locked("filament_manager_enabled")
     result = await asyncio.to_thread(_send_command, printer_id, SET_AUTO_REFILL, auto_refill_params(body.enabled), True, 12.0, True)
     log("info", f"Auto filament refill set to {'on' if body.enabled else 'off'}", "filament", printer=printer_id)
     info = await api_filaments(printer_id, refresh=True)
@@ -3753,6 +3780,7 @@ async def api_filaments_auto_refill(printer_id: str, body: FilamentAutoRefillReq
 
 @app.post("/api/printers/{printer_id}/filaments/load")
 async def api_filaments_load(printer_id: str, body: FilamentMotionRequest):
+    _raise_if_feature_locked("filament_manager_enabled")
     _require_filament_idle(printer_id)
     params = filament_motion_params(body.canvas_id, body.tray_id)
     result = await asyncio.to_thread(_send_command, printer_id, LOAD_FILAMENT, params, True, 300.0, True)
@@ -3766,6 +3794,7 @@ async def api_filaments_load(printer_id: str, body: FilamentMotionRequest):
 
 @app.post("/api/printers/{printer_id}/filaments/unload")
 async def api_filaments_unload(printer_id: str, body: FilamentMotionRequest):
+    _raise_if_feature_locked("filament_manager_enabled")
     _require_filament_idle(printer_id)
     params = filament_motion_params(body.canvas_id, body.tray_id)
     result = await asyncio.to_thread(_send_command, printer_id, UNLOAD_FILAMENT, params, True, 300.0, True)
@@ -3779,6 +3808,7 @@ async def api_filaments_unload(printer_id: str, body: FilamentMotionRequest):
 
 @app.post("/api/printers/{printer_id}/filaments/edit")
 async def api_filaments_edit(printer_id: str, body: FilamentInfoRequest):
+    _raise_if_feature_locked("filament_manager_enabled")
     _require_filament_idle(printer_id)
     params = filament_info_params(model_to_dict(body))
     result = await asyncio.to_thread(_send_command, printer_id, SET_FILAMENT_INFO, params, True, 20.0, True)
@@ -3792,6 +3822,7 @@ async def api_filaments_edit(printer_id: str, body: FilamentInfoRequest):
 
 @app.post("/api/printers/{printer_id}/filaments/mono/edit")
 async def api_filaments_mono_edit(printer_id: str, body: FilamentInfoRequest):
+    _raise_if_feature_locked("filament_manager_enabled")
     _require_filament_idle(printer_id)
     params = mono_filament_info_params(model_to_dict(body))
     result = await asyncio.to_thread(_send_command, printer_id, SET_MONO_FILAMENT_INFO, params, True, 20.0, True)
@@ -3805,12 +3836,14 @@ async def api_filaments_mono_edit(printer_id: str, body: FilamentInfoRequest):
 
 @app.get("/api/printers/{printer_id}/filaments/mono")
 async def api_filaments_mono(printer_id: str):
+    _raise_if_feature_locked("filament_manager_enabled")
     result = await asyncio.to_thread(_send_command, printer_id, GET_MONO_FILAMENT_INFO, {}, True, 12.0, False)
     return result
 
 
 @app.get("/api/printers/{printer_id}/files")
 async def api_files(printer_id: str, path: str = "/", storage_media: str = "local", page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), offset: Optional[int] = None, limit: Optional[int] = None):
+    _raise_if_feature_locked("file_manager_enabled")
     media = normalize_storage_media(storage_media)
     directory = normalize_file_dir(path)
     payload = await asyncio.to_thread(
@@ -3827,11 +3860,13 @@ async def api_files(printer_id: str, path: str = "/", storage_media: str = "loca
 
 @app.get("/api/printers/{printer_id}/files/detail")
 async def api_file_detail(printer_id: str, filename: str, storage_media: str = "local", directory: Optional[str] = None):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, GET_FILE_DETAIL, file_detail_params(filename, storage_media, directory), True, 15.0)
 
 
 @app.get("/api/printers/{printer_id}/files/thumbnail")
 async def api_file_thumbnail(printer_id: str, filename: str, storage_media: str = "local"):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, GET_FILE_THUMBNAIL, file_thumbnail_params(filename, storage_media), True, 15.0)
 
 
@@ -3867,11 +3902,13 @@ async def api_file_thumbnail_image(printer_id: str, filename: str, storage_media
 
 @app.post("/api/printers/{printer_id}/files/delete")
 async def api_file_delete(printer_id: str, body: DeleteFileRequest):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, DELETE_FILE, delete_file_params(body.file_path, body.storage_media), True, 15.0)
 
 
 @app.post("/api/printers/{printer_id}/files/start")
 async def api_file_start(printer_id: str, body: StartPrintRequest):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(
         _send_command,
         printer_id,
@@ -3884,11 +3921,13 @@ async def api_file_start(printer_id: str, body: StartPrintRequest):
 
 @app.get("/api/printers/{printer_id}/disk")
 async def api_disk(printer_id: str, storage_media: str = "local"):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, GET_DISK_INFO, {"storage_media": normalize_storage_media(storage_media)}, True, 10.0)
 
 
 @app.get("/api/printers/{printer_id}/canvas")
 async def api_canvas(printer_id: str):
+    _raise_if_feature_locked("filament_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, GET_CANVAS_STATUS, {}, True, 10.0)
 
 
@@ -4238,6 +4277,7 @@ def _try_history_details(printer_id: str, ids: list[Any]) -> list[Any]:
 
 @app.get("/api/printers/{printer_id}/history/list")
 async def api_history_list(printer_id: str, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=300), include_details: bool = Query(False)):
+    _raise_if_feature_locked("file_manager_enabled")
     payload = await asyncio.to_thread(_send_command, printer_id, GET_HISTORY_TASK, {}, True, 20.0, False)
     root = _unwrap_command_payload(payload)
     if isinstance(root, dict) and _error_code(root) != 0:
@@ -4265,11 +4305,13 @@ async def api_history_list(printer_id: str, page: int = Query(1, ge=1), page_siz
 
 @app.get("/api/printers/{printer_id}/history")
 async def api_history(printer_id: str):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, GET_HISTORY_TASK, {}, True, 20.0, False)
 
 
 @app.get("/api/printers/{printer_id}/timelapse")
 async def api_timelapse(printer_id: str):
+    _raise_if_feature_locked("file_manager_enabled")
     # The stock Elegoo portal's "Video List" is derived from Print History, not
     # the file-list endpoint. It filters history rows where TimeLapseVideoStatus
     # is 1 (captured but not generated) or 2 (generated), then export/downloads
@@ -4311,6 +4353,7 @@ async def api_timelapse(printer_id: str):
 
 @app.get("/api/printers/{printer_id}/timelapse/download")
 async def api_timelapse_download(printer_id: str, file_name: str = Query(..., min_length=1), media: str = Query("local")):
+    _raise_if_feature_locked("file_manager_enabled")
     pcfg = _portal_target(printer_id)
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
@@ -4372,6 +4415,7 @@ async def api_timelapse_download(printer_id: str, file_name: str = Query(..., mi
 
 @app.post("/api/printers/{printer_id}/timelapse/export")
 async def api_timelapse_export(printer_id: str, body: TimelapseExportRequest):
+    _raise_if_feature_locked("file_manager_enabled")
     token = _download_file_name_from_token(body.url)
     data = await asyncio.to_thread(_send_command, printer_id, GET_TIME_LAPSE_VIDEO_LIST, timelapse_export_params(token), True, 180.0)
     pcfg = _portal_target(printer_id)
@@ -4393,6 +4437,7 @@ async def api_timelapse_export(printer_id: str, body: TimelapseExportRequest):
 
 @app.post("/api/printers/{printer_id}/history/delete")
 async def api_history_delete(printer_id: str, body: HistoryDeleteRequest):
+    _raise_if_feature_locked("file_manager_enabled")
     return await asyncio.to_thread(_send_command, printer_id, HISTORY_DELETE, history_delete_params(body.task_ids), True, 20.0)
 
 

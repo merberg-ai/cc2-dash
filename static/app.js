@@ -4,10 +4,37 @@
   const page = document.body.dataset.page;
   const cfgEl = $('#bootConfig');
   let cfg = cfgEl ? JSON.parse(cfgEl.textContent) : {};
+  let experimentalFeatureLocks = {};
   let dashboardThumbnailUrl = '';
   let dashboardThumbnailFile = '';
   const baseDocumentTitle = document.title || 'cc2-dash';
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
+
+  function featureLocked(key) {
+    return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
+  }
+
+  function applyExperimentalFeatureLocksToConfig(target = cfg) {
+    if (!target) return target;
+    target.features = target.features || {};
+    Object.keys(experimentalFeatureLocks || {}).forEach(key => { target.features[key] = false; });
+    return target;
+  }
+
+  function syncLockedFeatureControls() {
+    const map = {
+      file_manager_enabled: 'fileManagerEnabled',
+      filament_manager_enabled: 'filamentManagerEnabled',
+      control_page_enabled: 'controlPageEnabled',
+    };
+    Object.entries(map).forEach(([key, id]) => {
+      const el = $('#' + id);
+      if (!el || !featureLocked(key)) return;
+      el.checked = false;
+      el.disabled = true;
+      el.setAttribute('aria-disabled', 'true');
+    });
+  }
 
   function toast(message, type = 'info', timeout = 4200) {
     const host = $('#toastHost');
@@ -642,9 +669,9 @@
       cam.src = `${src}${src.includes('?') ? '&' : '?'}kiosk=1&t=${Date.now()}`;
     }
     setKioskCameraPlaceholder('Starting camera relay...', 'warming');
-    // MJPEG load events can be weird across browsers. Do not leave a giant
-    // spinner pinned over the stream forever; after a short grace period, let
-    // the overlay badges explain whether the relay is live/warming/stale.
+    // MJPEG load events vary by browser. Do not leave the loading indicator
+    // pinned over the stream forever; after a short grace period, let the
+    // overlay badges explain whether the relay is live, warming, or stale.
     window.setTimeout(() => {
       const ph = $('#kioskCameraPlaceholder');
       const relayText = ($('#kioskRelayText')?.textContent || '').toLowerCase();
@@ -1440,7 +1467,9 @@
 
   async function loadFreshConfig() {
     const data = await api('/api/config');
-    cfg = data.config;
+    experimentalFeatureLocks = data.experimental_feature_locks || {};
+    cfg = applyExperimentalFeatureLocksToConfig(data.config);
+    syncLockedFeatureControls();
     return data;
   }
 
@@ -1990,6 +2019,8 @@
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
+      applyExperimentalFeatureLocksToConfig(cfg);
+      syncLockedFeatureControls();
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -2085,6 +2116,8 @@
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
+      applyExperimentalFeatureLocksToConfig(cfg);
+      syncLockedFeatureControls();
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -2173,7 +2206,7 @@
       setButtonBusy(button, true, 'Saving...');
       try {
         if (rawOverride) {
-          try { cfg = JSON.parse($('#configEditor')?.value || '{}'); }
+          try { cfg = applyExperimentalFeatureLocksToConfig(JSON.parse($('#configEditor')?.value || '{}')); }
           catch (err) { throw new Error('Invalid raw JSON: ' + err.message); }
         } else {
           applySettingsFormToConfig();

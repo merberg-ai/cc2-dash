@@ -95,7 +95,7 @@
       <small>Show or hide top navigation features.</small>
     </summary>
     <div class="settings-panel-body">
-    <p class="muted">Dash and Settings stay pinned. Every other top navigation item can be shown or hidden here; hidden pages remain available by direct URL for testing.</p>
+    <p class="muted">Dash and Settings stay pinned. Public-test features can be shown or hidden here. Experimental pages may be locked off in release builds until they are fully validated.</p>
     <div class="settings-list">
       <div class="setting-row">
         <div>
@@ -106,31 +106,31 @@
           <label><input id="portalMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.portal_menu_enabled|default(true) %}checked{% endif %}> show</label>
         </div>
       </div>
-      <div class="setting-row">
+      <div class="setting-row {% if experimental_feature_locks.get('file_manager_enabled') %}locked-feature-row{% endif %}">
         <div>
           <strong>File Manager menu option</strong>
-          <small>Shows or hides the Files link. The page remains available directly for testing.</small>
+          <small>{% if experimental_feature_locks.get('file_manager_enabled') %}Locked off for this public test build. Code is retained and can be re-enabled when the release gate is removed.{% else %}Shows or hides the Files link. The page remains available directly for testing.{% endif %}</small>
         </div>
         <div class="setting-controls">
-          <label><input id="fileManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.file_manager_enabled %}checked{% endif %}> show</label>
+          <label><input id="fileManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.file_manager_enabled and not experimental_feature_locks.get('file_manager_enabled') %}checked{% endif %} {% if experimental_feature_locks.get('file_manager_enabled') %}disabled aria-disabled="true"{% endif %}> {% if experimental_feature_locks.get('file_manager_enabled') %}locked{% else %}show{% endif %}</label>
         </div>
       </div>
-      <div class="setting-row">
+      <div class="setting-row {% if experimental_feature_locks.get('filament_manager_enabled') %}locked-feature-row{% endif %}">
         <div>
           <strong>Filament Manager menu option</strong>
-          <small>Shows or hides the Filament link. The page remains available directly for testing.</small>
+          <small>{% if experimental_feature_locks.get('filament_manager_enabled') %}Locked off for this public test build while CANVAS/MMS command behavior gets more real-printer testing.{% else %}Shows or hides the Filament link. The page remains available directly for testing.{% endif %}</small>
         </div>
         <div class="setting-controls">
-          <label><input id="filamentManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.filament_manager_enabled %}checked{% endif %}> show</label>
+          <label><input id="filamentManagerEnabled" class="toggle" type="checkbox" {% if cfg.features.filament_manager_enabled and not experimental_feature_locks.get('filament_manager_enabled') %}checked{% endif %} {% if experimental_feature_locks.get('filament_manager_enabled') %}disabled aria-disabled="true"{% endif %}> {% if experimental_feature_locks.get('filament_manager_enabled') %}locked{% else %}show{% endif %}</label>
         </div>
       </div>
-      <div class="setting-row">
+      <div class="setting-row {% if experimental_feature_locks.get('control_page_enabled') %}locked-feature-row{% endif %}">
         <div>
           <strong>Control page menu option</strong>
-          <small>Shows or hides the Control link. Motion/home controls stay locked behind printer command safety settings.</small>
+          <small>{% if experimental_feature_locks.get('control_page_enabled') %}Locked off for this public test build while motion/home/fan/speed controls receive more safety validation.{% else %}Shows or hides the Control link. Motion/home controls stay locked behind printer command safety settings.{% endif %}</small>
         </div>
         <div class="setting-controls">
-          <label><input id="controlPageEnabled" class="toggle" type="checkbox" {% if cfg.features.control_page_enabled|default(false) %}checked{% endif %}> show</label>
+          <label><input id="controlPageEnabled" class="toggle" type="checkbox" {% if cfg.features.control_page_enabled|default(false) and not experimental_feature_locks.get('control_page_enabled') %}checked{% endif %} {% if experimental_feature_locks.get('control_page_enabled') %}disabled aria-disabled="true"{% endif %}> {% if experimental_feature_locks.get('control_page_enabled') %}locked{% else %}show{% endif %}</label>
         </div>
       </div>
       <div class="setting-row">
@@ -335,7 +335,7 @@
         <div class="setting-controls"><label><input id="aiVisionRequireActivePrint" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_require_active_print|default(true) %}checked{% endif %}> enabled</label></div>
       </div>
       <div class="setting-row">
-        <div><strong>Local frame heuristics</strong><small>Cheap server-side checks catch dark frames and high fine-edge/stringing-ish changes before the model gets involved.</small></div>
+        <div><strong>Local frame heuristics</strong><small>Lightweight server-side checks catch dark frames, low contrast, and fine-edge changes before the model runs.</small></div>
         <div class="setting-controls"><label><input id="aiVisionHeuristicsEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.vision_heuristics_enabled|default(true) %}checked{% endif %}> enabled</label></div>
       </div>
       <div class="setting-row">
@@ -355,7 +355,7 @@
         <div class="setting-controls"><input id="aiVisionRequiredBadChecks" class="input" type="number" min="1" max="10" step="1" value="{{ cfg.portal_ai.vision_required_bad_checks|default(2) }}"></div>
       </div>
       <div class="setting-row tall">
-        <div><strong>Vision prompt</strong><small>Editable system prompt sent with each camera image. Keep JSON-only instructions unless you enjoy parsing soup.</small></div>
+        <div><strong>Vision prompt</strong><small>Editable system prompt sent with each camera image. Keep the JSON-only instructions for reliable parsing.</small></div>
         <div class="setting-controls"><textarea id="aiVisionPrompt" class="input config-textarea small-textarea">{{ cfg.portal_ai.vision_prompt|default('') }}</textarea></div>
       </div>
       <div class="setting-row">

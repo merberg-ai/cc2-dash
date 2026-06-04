@@ -12,6 +12,53 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("CC2_DATA_DIR", APP_ROOT / "data"))
 CONFIG_PATH = Path(os.environ.get("CC2_CONFIG", DATA_DIR / "config.json"))
 
+# Release safety gate for community test builds. Flip this one value to False
+# when the experimental pages are ready to ship publicly. The code, routes, and
+# config keys stay in place; this only forces the public build defaults off.
+COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = True
+
+EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
+    "file_manager_enabled": {
+        "label": "File Manager",
+        "path": "/files",
+        "summary": "Temporarily disabled for public test builds while file/history and timelapse behavior is validated across firmware versions.",
+    },
+    "filament_manager_enabled": {
+        "label": "Filament Manager",
+        "path": "/filaments",
+        "summary": "Temporarily disabled for public test builds while CANVAS/MMS commands are tested more broadly.",
+    },
+    "control_page_enabled": {
+        "label": "Control System",
+        "path": "/control",
+        "summary": "Temporarily disabled for public test builds while motion, fan, speed, and safety behavior receives more real-printer validation.",
+    },
+}
+
+
+def experimental_feature_locks() -> dict[str, dict[str, str]]:
+    if not COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS:
+        return {}
+    return copy.deepcopy(EXPERIMENTAL_FEATURE_LOCKS)
+
+
+def is_feature_locked(feature_key: str) -> bool:
+    return bool(COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS and feature_key in EXPERIMENTAL_FEATURE_LOCKS)
+
+
+def sanitize_experimental_features(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Force release-locked experimental features off without deleting config.
+
+    Existing installs may already have these booleans set to true. In community
+    test builds we keep the saved keys but force them false at load/save time so
+    the UI and APIs cannot accidentally expose unfinished command surfaces.
+    """
+    features = cfg.setdefault("features", {})
+    if COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS:
+        for key in EXPERIMENTAL_FEATURE_LOCKS:
+            features[key] = False
+    return cfg
+
 
 @dataclass
 class PrinterConfig:
@@ -69,7 +116,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     return data
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "config_version": 6,
+    "config_version": 8,
     "app": {
         "name": "cc2-dash",
         "bind_host": "0.0.0.0",
@@ -320,7 +367,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
             features["filament_manager_enabled"] = False
         dashboard = cfg.setdefault("dashboard", {})
         dashboard.setdefault("show_gcode_thumbnail", True)
-        cfg["config_version"] = 7
+        cfg["config_version"] = 8
     except Exception:
         pass
     try:
@@ -406,7 +453,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
             ai["vision_prompt"] = str(DEFAULT_CONFIG["portal_ai"]["vision_prompt"])
     except Exception:
         pass
-    return cfg
+    return sanitize_experimental_features(cfg)
 
 
 def ensure_data_dir() -> None:

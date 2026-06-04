@@ -2144,3 +2144,6 @@ body[data-page="control"] .app-shell { width:min(100%, 1040px); }
   .step-button { padding:.5rem .35rem; font-size:.82rem; }
   .control-coords { gap:.45rem; font-size:.78rem; }
 }
+.locked-feature-row { opacity:.72; }
+.locked-feature-row .setting-controls label { cursor:not-allowed; color:var(--cc2-muted); }
+.locked-feature-row input[disabled] { cursor:not-allowed; }
