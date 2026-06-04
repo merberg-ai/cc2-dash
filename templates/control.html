@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block page_id %}control{% endblock %}
+{% block content %}
+<section class="control-stack fade-in">
+  <article class="card hero-card">
+    <h1>Control</h1>
+    {% if printer %}
+    <div class="mini-note">Active printer: <strong>{{ printer.name }}</strong> · {{ printer.host }}</div>
+    {% else %}
+    <div class="mini-note warn-text">No active printer configured. Run setup first.</div>
+    {% endif %}
+  </article>
+
+  <article class="card control-camera-card">
+    <div class="card-title-row file-title-row">
+      <div>
+        <h2>Camera</h2>
+      </div>
+    </div>
+    <div class="camera-wrap control-camera-wrap" id="controlCameraWrap">
+      <div class="camera-placeholder" id="controlCameraPlaceholder">
+        <span class="spinner"></span>
+        <span>Loading camera stream...</span>
+      </div>
+      {% if printer and cfg.dashboard.camera_autoload %}
+        <img id="controlCameraStream" class="camera-stream" alt="Printer camera stream" src="{{ printer.camera_url }}" onload="window.cc2ControlCameraLoaded && window.cc2ControlCameraLoaded()" onerror="window.cc2ControlCameraFailed && window.cc2ControlCameraFailed()" />
+      {% else %}
+        <img id="controlCameraStream" class="camera-stream hidden" alt="Printer camera stream" onload="window.cc2ControlCameraLoaded && window.cc2ControlCameraLoaded()" onerror="window.cc2ControlCameraFailed && window.cc2ControlCameraFailed()" />
+      {% endif %}
+      <span id="controlCameraRelayBadge" class="live-badge"><span id="controlCameraRelayDot" class="dot warn"></span><span id="controlCameraRelayText">RELAY</span></span>
+    </div>
+    <div id="controlCameraRelayStatus" class="camera-relay-status">Camera relay warming up...</div>
+  </article>
+
+  <article class="card control-card">
+    <div class="card-title-row file-title-row">
+      <div>
+        <h2>Printer Controls</h2>
+        <p>Modeled after the Elegoo portal controls. Fan/speed/light need commands enabled; movement and homing also need dangerous commands enabled.</p>
+      </div>
+      <button class="button secondary tiny" id="refreshControlButton" type="button"><span class="button-label">Refresh</span></button>
+    </div>
+
+    <div id="controlLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading control status...</span></div>
+    <div id="controlStatusNote" class="mini-note">Loading printer control status...</div>
+    <div id="controlPrintLockNote" class="mini-note warn-text hidden">Control page commands are locked while a print job is active.</div>
+
+    <section id="stockControlPanel" class="stock-control-panel" aria-label="Printer motion and control panel">
+      <div class="control-motion-cluster">
+        <div class="control-z-rail" aria-label="Z axis controls">
+          <button class="jog-pill" type="button" data-control-move="Z" data-control-dir="up">Z↑</button>
+          <button class="jog-home" type="button" data-control-home="XYZ" title="Home all axes">⌂</button>
+          <button class="jog-pill" type="button" data-control-move="Z" data-control-dir="down">Z↓</button>
+        </div>
+
+        <div class="control-xy-pad" aria-label="XY axis controls">
+          <button class="jog-button y-plus" type="button" data-control-move="Y" data-control-dir="plus">Y+</button>
+          <button class="jog-button x-minus" type="button" data-control-move="X" data-control-dir="minus">X−</button>
+          <button class="jog-button home-center" type="button" data-control-home="XY" title="Home X/Y">⌂</button>
+          <button class="jog-button x-plus" type="button" data-control-move="X" data-control-dir="plus">X+</button>
+          <button class="jog-button y-minus" type="button" data-control-move="Y" data-control-dir="minus">Y−</button>
+        </div>
+
+        <div class="control-home-rail" aria-label="Axis home controls">
+          <button class="jog-home small" type="button" data-control-home="X" title="Home X">X⌂</button>
+          <button class="jog-home small" type="button" data-control-home="Y" title="Home Y">Y⌂</button>
+          <button class="jog-home small" type="button" data-control-home="Z" title="Home Z">Z⌂</button>
+        </div>
+      </div>
+
+      <div class="control-main-cluster">
+        <div class="control-coords" aria-label="Current position">
+          <span>X:<strong id="controlPosX">-</strong></span>
+          <span>Y:<strong id="controlPosY">-</strong></span>
+          <span>Z:<strong id="controlPosZ">-</strong></span>
+        </div>
+
+        <div class="control-step-row" aria-label="Jog distance">
+          <button class="step-button" type="button" data-control-step="0.1">0.1mm</button>
+          <button class="step-button" type="button" data-control-step="1">1mm</button>
+          <button class="step-button active" type="button" data-control-step="10">10mm</button>
+          <button class="step-button" type="button" data-control-step="30">30mm</button>
+        </div>
+
+        <div class="control-speed-panel">
+          <div class="control-section-title">
+            <strong>Print Speed</strong>
+            <span id="controlSpeedLabel">100%</span>
+          </div>
+          <div class="control-step-row speed-presets" aria-label="Print speed presets">
+            <button class="step-button" type="button" data-control-speed="50">Silent</button>
+            <button class="step-button active" type="button" data-control-speed="100">Balanced</button>
+            <button class="step-button" type="button" data-control-speed="130">Sport</button>
+            <button class="step-button" type="button" data-control-speed="160">Ludicrous</button>
+          </div>
+        </div>
+
+        <div class="control-fan-grid" aria-label="Fan controls">
+          <div class="control-fan-card" data-control-fan-card="model">
+            <div class="control-fan-head">
+              <strong>⚙ Model</strong>
+              <label class="switch-toggle settings-switch" title="Toggle model fan">
+                <input id="controlFanModelToggle" type="checkbox" data-control-fan-toggle="model">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="control-fan-row">
+              <button class="fan-bump" type="button" data-control-fan-bump="model" data-delta="-10">−</button>
+              <input id="controlFanModel" type="number" min="0" max="100" step="1" value="0" data-control-fan-input="model">
+              <button class="fan-bump" type="button" data-control-fan-bump="model" data-delta="10">+</button>
+            </div>
+          </div>
+
+          <div class="control-fan-card" data-control-fan-card="auxiliary">
+            <div class="control-fan-head">
+              <strong>⚙ Assistance</strong>
+              <label class="switch-toggle settings-switch" title="Toggle auxiliary fan">
+                <input id="controlFanAuxToggle" type="checkbox" data-control-fan-toggle="auxiliary">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="control-fan-row">
+              <button class="fan-bump" type="button" data-control-fan-bump="auxiliary" data-delta="-10">−</button>
+              <input id="controlFanAux" type="number" min="0" max="100" step="1" value="0" data-control-fan-input="auxiliary">
+              <button class="fan-bump" type="button" data-control-fan-bump="auxiliary" data-delta="10">+</button>
+            </div>
+          </div>
+
+          <div class="control-fan-card" data-control-fan-card="case">
+            <div class="control-fan-head">
+              <strong>⚙ Case</strong>
+              <label class="switch-toggle settings-switch" title="Toggle case fan">
+                <input id="controlFanCaseToggle" type="checkbox" data-control-fan-toggle="case">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="control-fan-row">
+              <button class="fan-bump" type="button" data-control-fan-bump="case" data-delta="-10">−</button>
+              <input id="controlFanCase" type="number" min="0" max="100" step="1" value="0" data-control-fan-input="case">
+              <button class="fan-bump" type="button" data-control-fan-bump="case" data-delta="10">+</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-light-panel">
+          <div>
+            <strong>Light</strong>
+            <small>Uses the same light command as the dashboard quick action.</small>
+          </div>
+          <label class="switch-toggle settings-switch" title="Toggle printer light">
+            <input id="controlLightToggle" type="checkbox">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <div class="mini-note warn-text">Motion and homing are intentionally safety-gated. Enable both <strong>allow commands</strong> and <strong>allow dangerous commands</strong> for this printer before using jog/home controls.</div>
+  </article>
+</section>
+{% endblock %}

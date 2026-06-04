@@ -126,6 +126,15 @@
       </div>
       <div class="setting-row">
         <div>
+          <strong>Control page menu option</strong>
+          <small>Shows or hides the Control link. Motion/home controls stay locked behind printer command safety settings.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="controlPageEnabled" class="toggle" type="checkbox" {% if cfg.features.control_page_enabled|default(false) %}checked{% endif %}> show</label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div>
           <strong>Kiosk menu option</strong>
           <small>Shows or hides the Kiosk link. The Kiosk page opens in a new tab with a minimal camera-first layout.</small>
         </div>

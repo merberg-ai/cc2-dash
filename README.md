@@ -1,11 +1,11 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.52-blue)
+![Version](https://img.shields.io/badge/version-1.2.55-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
 
-**cc2-dash** is a lightweight local dashboard and portal shell for the **Elegoo Centauri Carbon 2 / CC2** ecosystem. It gives you a clean LAN dashboard, printer discovery and pairing, camera relay/fanout, a stock Elegoo portal bridge, optional Ollama-powered visual monitoring, feedback-aware AI review tools, kiosk mode, file/history helpers, CANVAS filament controls, and a themeable mobile-friendly UI.
+**cc2-dash** is a lightweight local dashboard and portal shell for the **Elegoo Centauri Carbon 2 / CC2** ecosystem. It gives you a clean LAN dashboard, printer discovery and pairing, camera relay/fanout, a stock Elegoo portal bridge, optional Ollama-powered visual monitoring, feedback-aware AI review tools, kiosk mode, stock-style control tools, file/history helpers, CANVAS filament controls, and a themeable mobile-friendly UI.
 
 It is designed for a Raspberry Pi-style board sitting on your trusted home network. Think: printer-room companion dashboard, not enterprise print-farm overlord.
 
@@ -41,6 +41,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 - [AI Training review page](#ai-training-review-page)
 - [File Manager](#file-manager)
 - [Filament Manager / CANVAS controls](#filament-manager--canvas-controls)
+- [Control page](#control-page)
 - [Stock Elegoo portal bridge](#stock-elegoo-portal-bridge)
 - [Themes and appearance](#themes-and-appearance)
 - [Logs and diagnostics](#logs-and-diagnostics)
@@ -61,7 +62,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.52 themed-toggle-cleanup
+1.2.55 control-camera-relay-fix
 ```
 
 Major current capabilities:
@@ -80,6 +81,7 @@ Major current capabilities:
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
 | Filament Manager / CANVAS | Available but hidden by default while command behavior is tested on real firmware |
+| Control page | Available but hidden by default; fan/speed/light controls require commands, motion/home require dangerous commands |
 | Themes | Built-in theme library with preview cards |
 | Windows support | Not tested; may work manually, but scripts are Linux/systemd focused |
 
@@ -117,7 +119,7 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Collapsible dashboard sections.
 - Saved dashboard accordion state per printer.
 - Compact build/version chips in the header.
-- Configurable top navigation visibility for Portal, Files, Filament, Kiosk, AI Training, and Logs.
+- Configurable top navigation visibility for Portal, Files, Filament, Control, Kiosk, AI Training, and Logs.
 - `/health` and `/api/version` diagnostics.
 
 ### Printer discovery and pairing
@@ -156,7 +158,7 @@ Command buttons are controlled by per-printer safety settings. Dangerous command
 - Optional Ollama vision analysis.
 - Local image heuristics for dark frames, contrast, fine-edge/stringing-like changes, and stale/frozen-looking frames.
 - Active-print-only monitoring so idle printers do not waste cycles or create meaningless warnings.
-- Advisory-only: no automatic pause/cancel in this version.
+- Optional guarded auto-pause can pause on high-risk failures after a configurable warning countdown. Auto-pause is off by default and never cancels a print.
 
 ### Feedback-aware AI review
 
@@ -173,12 +175,13 @@ Command buttons are controlled by per-printer safety settings. Dangerous command
 - Fullscreen portal route.
 - Portal camera rewrite shim that tries to route embedded camera views through cc2-dash's camera relay.
 
-### File and filament tools
+### File, filament, and control tools
 
 - File Manager can list stock-style printer files, USB files, print history, and video records where firmware supports it.
 - Timelapse export/download helpers are included, but printer firmware may not reliably generate/export videos.
 - Filament Manager can display and control CANVAS/MMS filament slots using stock command shapes.
 - Filament load/unload/edit controls are idle-only.
+- Control page provides stock-style jog/home controls, speed presets, model/assistance/case fan controls, and light toggle.
 
 ### Themes
 
@@ -740,6 +743,41 @@ Stock command IDs used include:
 
 ---
 
+## Control page
+
+The Control page is available but hidden by default because it exposes live printer controls.
+
+Enable it here:
+
+```text
+Settings → Menu / Features → Control page
+```
+
+Current control features:
+
+- Stock-style X/Y jog wheel and Z jog rail.
+- Home all axes, home X/Y, and individual X/Y/Z home buttons.
+- Jog step buttons for **0.1mm**, **1mm**, **10mm**, and **30mm**.
+- Print speed presets: **Silent 50%**, **Balanced 100%**, **Sport 130%**, and **Ludicrous 160%**.
+- Model, Assistance/Auxiliary, and Case/Box fan controls using stock fan fields.
+- Light toggle using the same dashboard light command path.
+- Live position, speed, fan, light, command-permission, and telemetry status refresh.
+
+Stock command IDs used include:
+
+```text
+1026  Home axes
+1027  Move/jog axes
+1029  Light toggle
+1030  Set fan speed
+1031  Set print speed percent
+```
+
+> [!CAUTION]
+> Fan, speed, and light controls require **Commands enabled** for the printer. Jog and home controls require both **Commands enabled** and **Dangerous commands enabled**. Keep eyes on the printer; a web page should not be your only safety plan.
+
+---
+
 ## Stock Elegoo portal bridge
 
 Routes:
@@ -859,12 +897,14 @@ Current command mapping summary:
 | File listing/history | `1036`, `1037`, `1044`, `1046`, `1051` |
 | File/history delete | `1038`, `1047` |
 | Filament Manager | `2001`, `2002`, `2003`, `2004`, `2005`, `1055`, `1061` |
+| Control page jog/home | `1026`, `1027` gated by dangerous-command permission |
+| Control page fans/speed/light | `1030`, `1031`, `1029` gated by command permission |
 | Light toggle | `1029` |
 | Pause print | `1021` |
 | Resume print | `1023` |
 | Cancel print | `1022` |
 | Camera wake/enable | `1042` / `1054` |
-| Speed preset | `1031` with mode `0-3` |
+| Speed preset | `1031` with percent presets on Control page; dashboard legacy speed action remains available |
 | Analyze Camera Now | Server-side advisory vision check only |
 
 Speed preset modes:
@@ -1125,6 +1165,7 @@ cc2-dash/
 │   └── app.js
 ├── templates/
 │   ├── base.html
+│   ├── control.html
 │   ├── filaments.html
 │   ├── files.html
 │   ├── index.html
@@ -1143,6 +1184,28 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.55 control camera relay fix
+
+- Fixed the Control page camera panel so it explicitly uses the cc2-dash camera relay stream endpoint from Control status instead of relying only on the initial template image state.
+- Added Control-page camera load/failure handlers that hide the loading overlay when the relay starts producing frames and retry the relay stream if the browser drops the MJPEG connection.
+- Removed the extra descriptive blurbs from the Control page hero and camera card to keep the page tighter on mobile.
+
+### v1.2.54 control page print lock, camera, and light toggle polish
+
+- The Control page now locks all printer command controls while a print job is active, including movement, homing, speed, fans, and the Control-page light switch. The Refresh/status path remains available.
+- Added a compact live camera relay panel at the top of the Control page so movement/control checks can be done without jumping back to the dashboard.
+- Added backend active-print protection for Control page fan, speed, move, home, and Control-page light commands.
+- Changed Dashboard → Quick Actions → Light from a push button into a themed pill toggle with an on/off icon and live state sync from printer telemetry.
+- Exposed `light_on` in dashboard status payloads so the dashboard and Control page can share the same light state.
+
+### v1.2.53 stock-style control page
+
+- Added a new stock-Elegoo-inspired Control page with XY/Z jog controls, homing buttons, step-size buttons, print-speed presets, fan controls for Model / Assistance / Case, and a light toggle.
+- Added `/control` plus `/api/printers/{printer_id}/control/*` endpoints for status, fan, speed, move, and home actions.
+- Added a configurable Control top-nav item in Settings → Menu / Features. It is hidden by default, like the experimental Files/Filament pages.
+- Reused the existing command safety gates: fan/speed/light require Commands enabled; jog/home require both Commands enabled and Dangerous commands enabled.
+- Extended CC2 state normalization for stock position and fan-speed fields, including `CurrentFanSpeed.ModelFan`, `AuxiliaryFan`, and `BoxFan`.
 
 ### v1.2.52 themed toggle cleanup
 

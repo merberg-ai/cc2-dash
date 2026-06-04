@@ -114,6 +114,56 @@
     if (el) el.textContent = value ?? '-';
   }
 
+  function updateDashboardLightToggle(isOn, disabled = false) {
+    const toggle = $('#dashboardLightToggle');
+    const label = $('#dashboardLightStateLabel');
+    const icon = $('#dashboardLightIcon');
+    const on = !!isOn;
+    const actionEnabled = !toggle || toggle.dataset.actionEnabled !== 'false';
+    if (toggle) toggle.checked = on;
+    if (toggle) toggle.disabled = !!disabled || !actionEnabled;
+    if (label) label.textContent = !actionEnabled ? 'Light action disabled' : (disabled ? 'Light unavailable' : (on ? 'Light is on' : 'Light is off'));
+    if (icon) {
+      icon.textContent = on ? '☀' : '☾';
+      icon.classList.toggle('on', on);
+      icon.classList.toggle('off', !on);
+    }
+  }
+
+  async function setDashboardLightFromToggle(toggle) {
+    const printerId = document.body.dataset.printerId;
+    const on = !!toggle.checked;
+    const requires = toggle.dataset.requiresConfirm === 'true';
+    if (toggle.dataset.actionEnabled === 'false') {
+      toggle.checked = !on;
+      updateDashboardLightToggle(!on);
+      return toast('Light action is disabled in Settings.', 'warn');
+    }
+    if (!printerId) {
+      toggle.checked = !on;
+      updateDashboardLightToggle(!on, true);
+      return toast('No printer configured for light control.', 'warn');
+    }
+    if (requires && !confirm(toggle.dataset.confirm || 'Toggle printer light?')) {
+      toggle.checked = !on;
+      updateDashboardLightToggle(!on);
+      return;
+    }
+    toggle.disabled = true;
+    updateDashboardLightToggle(on, true);
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/light`, { method:'POST', body:JSON.stringify({ on }) });
+      toast(data.message || `Light ${on ? 'on' : 'off'}`, 'success');
+      await refreshDashboard();
+    } catch (err) {
+      toggle.checked = !on;
+      updateDashboardLightToggle(!on);
+      toast(err.message, 'error', 7000);
+    } finally {
+      toggle.disabled = false;
+    }
+  }
+
   function summarizeAIHeaderStatus(ai, vision) {
     ai = ai || {};
     vision = vision || ai.vision || ai.vision_ai || {};
@@ -718,6 +768,7 @@
       if (st.portal_url) setText('portalState', st.portal_url);
       if (st.camera_url) setText('cameraState', st.camera_url);
       renderCameraRelay(st.camera_relay || st.cameraRelay || {});
+      updateDashboardLightToggle(!!st.light_on, !st.reachable);
 
       const portalButton = $('#portalButton');
       if (portalButton && st.portal_url) portalButton.href = st.portal_url;
@@ -732,6 +783,7 @@
       if (ph && cam && !cam.classList.contains('hidden')) ph.classList.add('hidden');
     } catch (err) {
       renderPortalAI({ summary: 'Connection Trouble', level: 'high', risk: 75, reasons: [err.message || 'Dashboard could not load printer status.'] });
+      updateDashboardLightToggle(false, true);
       setDashboardTitleOffline('Connection Trouble');
       const statusEl = $('#statusText');
       if (statusEl) {
@@ -949,6 +1001,11 @@
           setButtonBusy(btn, false);
         }
       });
+    });
+
+    $('#dashboardLightToggle')?.addEventListener('change', e => {
+      e.stopPropagation();
+      setDashboardLightFromToggle(e.currentTarget).catch(() => {});
     });
 
     $$('.action-button').forEach(btn => {
@@ -1915,6 +1972,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
+      cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -2009,6 +2067,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
+      cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -3421,6 +3480,287 @@
   }
 
 
+  const controlState = {
+    step: 10,
+    refreshTimer: null,
+    fans: { model: 0, auxiliary: 0, case: 0 },
+    lastNonZeroFan: { model: 60, auxiliary: 60, case: 60 },
+    allowCommands: false,
+    allowDangerous: false,
+    activePrint: false,
+    controlsLocked: false,
+  };
+
+  function showControlCameraPlaceholder(message, mode = 'warming') {
+    const ph = $('#controlCameraPlaceholder');
+    if (!ph) return;
+    ph.classList.remove('hidden');
+    ph.classList.toggle('camera-placeholder-warn', mode === 'warn');
+    ph.classList.toggle('camera-placeholder-bad', mode === 'bad');
+    ph.innerHTML = `<span class="spinner"></span><span>${message}</span>`;
+  }
+
+  function hideControlCameraPlaceholder() {
+    const ph = $('#controlCameraPlaceholder');
+    if (ph) ph.classList.add('hidden');
+  }
+
+  window.cc2ControlCameraLoaded = function () {
+    hideControlCameraPlaceholder();
+    const cam = $('#controlCameraStream');
+    if (cam) cam.classList.remove('hidden');
+  };
+
+  window.cc2ControlCameraFailed = function () {
+    showControlCameraPlaceholder('Camera relay reconnecting...', 'warn');
+    const cam = $('#controlCameraStream');
+    if (cam) {
+      cam.classList.add('hidden');
+      window.clearTimeout(window.__cc2ControlCameraRetryTimer);
+      window.__cc2ControlCameraRetryTimer = window.setTimeout(() => {
+        const src = cam.dataset.relaySrc || cam.getAttribute('src');
+        if (src) {
+          cam.src = `${src.split('?')[0]}?t=${Date.now()}`;
+          cam.classList.remove('hidden');
+        }
+      }, 3000);
+    }
+  };
+
+  function ensureControlCameraStream(url) {
+    const cam = $('#controlCameraStream');
+    if (!cam || !url) return;
+    const current = cam.dataset.relaySrc || cam.getAttribute('src') || '';
+    if (!current || current !== url) {
+      cam.dataset.relaySrc = url;
+      cam.src = `${url}?t=${Date.now()}`;
+    }
+    cam.classList.remove('hidden');
+  }
+
+  function renderControlCameraRelay(relay) {
+    relay = relay || {};
+    const dot = $('#controlCameraRelayDot');
+    const text = $('#controlCameraRelayText');
+    const detail = $('#controlCameraRelayStatus');
+    const ok = !!relay.ok;
+    const running = !!relay.running;
+    const connected = !!relay.upstream_connected;
+    const stale = !!relay.stale;
+    let cls = ok ? 'good' : (running || connected ? 'warn' : 'bad');
+    let label = ok ? 'RELAY LIVE' : (running ? 'RELAY WARMING' : 'RELAY DOWN');
+    if (stale && running) label = 'RELAY STALE';
+    if (dot) dot.className = `dot ${cls}`;
+    if (text) text.textContent = label;
+    if (detail) {
+      const bits = [];
+      bits.push(connected ? 'one upstream camera connection' : 'no upstream camera connection yet');
+      const age = Number(relay.last_frame_age_seconds);
+      if (Number.isFinite(age)) bits.push(`last frame ${age.toFixed(age < 10 ? 1 : 0)}s ago`);
+      bits.push(`${Number(relay.client_count || 0)} viewer${Number(relay.client_count || 0) === 1 ? '' : 's'}`);
+      if (relay.last_error && !ok) bits.push(String(relay.last_error).slice(0, 90));
+      detail.textContent = bits.join(' · ');
+    }
+  }
+
+  function controlClamp(value, min, max) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, Math.round(n)));
+  }
+
+  function setControlNote(message, tone = '') {
+    const el = $('#controlStatusNote');
+    if (!el) return;
+    el.className = `mini-note ${tone === 'bad' ? 'bad-text' : tone === 'warn' ? 'warn-text' : tone === 'good' ? 'good-text' : ''}`.trim();
+    el.innerHTML = message;
+  }
+
+  function updateControlCommandLocks() {
+    const locked = !!(controlState.activePrint || controlState.controlsLocked);
+    const canCommand = !!controlState.allowCommands && !locked;
+    const canMove = !!controlState.allowDangerous && !locked;
+    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], #controlLightToggle').forEach(el => {
+      el.disabled = !canCommand;
+    });
+    $$('[data-control-move], [data-control-home]').forEach(el => {
+      el.disabled = !canMove;
+    });
+    const panel = $('#stockControlPanel');
+    if (panel) panel.dataset.printLocked = locked ? 'true' : 'false';
+    const note = $('#controlPrintLockNote');
+    if (note) {
+      note.classList.toggle('hidden', !locked);
+      if (locked) note.textContent = 'Control page commands are locked while a print job is active. Finish, cancel, or pause/handle the job before using these controls.';
+    }
+  }
+
+  function setControlFanUi(fan, percent, quiet = false) {
+    const value = controlClamp(percent, 0, 100);
+    controlState.fans[fan] = value;
+    if (value > 0) controlState.lastNonZeroFan[fan] = value;
+    const input = $(`[data-control-fan-input="${fan}"]`);
+    const toggle = $(`[data-control-fan-toggle="${fan}"]`);
+    const card = $(`[data-control-fan-card="${fan}"]`);
+    if (input && !quiet) input.value = value;
+    if (toggle) toggle.checked = value > 0;
+    if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
+  }
+
+  function updateControlSpeedUi(percent) {
+    const pct = controlClamp(percent, 1, 300);
+    setText('controlSpeedLabel', `${pct}%`);
+    $$('[data-control-speed]').forEach(btn => {
+      const preset = Number(btn.dataset.controlSpeed);
+      btn.classList.toggle('active', Math.abs(preset - pct) <= 2);
+    });
+  }
+
+  function updateControlStepUi(step) {
+    controlState.step = Number(step) || 10;
+    $$('[data-control-step]').forEach(btn => btn.classList.toggle('active', Number(btn.dataset.controlStep) === controlState.step));
+  }
+
+  function renderControlStatus(data) {
+    if (!data) return;
+    controlState.allowCommands = !!data.allow_commands;
+    controlState.allowDangerous = !!data.allow_dangerous_commands;
+    controlState.activePrint = !!data.active_print;
+    controlState.controlsLocked = !!data.controls_locked;
+    const relay = data.camera_relay || {};
+    renderControlCameraRelay(relay);
+    ensureControlCameraStream(data.camera_url || data.camera_stream_url || '');
+    const cam = $('#controlCameraStream');
+    const ph = $('#controlCameraPlaceholder');
+    if (cam && ph && (relay.running || relay.ok || relay.upstream_connected || Number(relay.frames_received || 0) > 0)) {
+      cam.classList.remove('hidden');
+      ph.classList.add('hidden');
+    } else if (relay.enabled === false) {
+      showControlCameraPlaceholder('Camera relay disabled in settings.', 'bad');
+    } else if (relay.running === false) {
+      showControlCameraPlaceholder('Camera relay is not running yet.', 'warn');
+    }
+    setText('controlPosX', data.position?.x ?? '-');
+    setText('controlPosY', data.position?.y ?? '-');
+    setText('controlPosZ', data.position?.z ?? '-');
+    updateControlSpeedUi(data.speed_percent ?? 100);
+    setControlFanUi('model', data.fans?.model ?? 0);
+    setControlFanUi('auxiliary', data.fans?.auxiliary ?? 0);
+    setControlFanUi('case', data.fans?.case ?? 0);
+    const light = $('#controlLightToggle');
+    if (light) light.checked = !!data.light_on;
+    updateControlCommandLocks();
+    const connected = !!data.connected;
+    const safety = controlState.allowDangerous ? 'motion unlocked' : 'motion locked';
+    const commandStatus = controlState.allowCommands ? 'commands enabled' : 'commands disabled';
+    const lockedText = (controlState.activePrint || controlState.controlsLocked) ? ' · controls locked during active print' : '';
+    const tone = !connected ? 'bad' : ((controlState.activePrint || controlState.controlsLocked || !controlState.allowCommands || !controlState.allowDangerous) ? 'warn' : 'good');
+    const age = Number(data.last_message_age_sec);
+    const ageText = Number.isFinite(age) ? ` · telemetry ${age.toFixed(age < 10 ? 1 : 0)}s old` : '';
+    setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${connected ? 'connected' : 'offline'} · ${commandStatus} · ${safety}${lockedText}${ageText}`, tone);
+  }
+
+  async function refreshControlStatus(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    const load = $('#controlLoadStatus');
+    if (load) load.classList.remove('hidden');
+    try {
+      const data = await printerApi('/control/status');
+      renderControlStatus(data);
+      return data;
+    } catch (err) {
+      setControlNote(esc(err.message), 'bad');
+      throw err;
+    } finally {
+      if (load) load.classList.add('hidden');
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function controlCommand(path, body, button = null, successMessage = 'Command sent') {
+    setButtonBusy(button, true, 'Sending...');
+    try {
+      const data = await printerApi(path, { method:'POST', body:JSON.stringify(body || {}) });
+      toast(data.message || successMessage, 'success');
+      await refreshControlStatus();
+      return data;
+    } catch (err) {
+      toast(err.message, 'error', 8500);
+      await refreshControlStatus().catch(() => {});
+      throw err;
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function controlMoveStep(axis, dir) {
+    const step = Number(controlState.step || 10);
+    const lower = String(dir || '').toLowerCase();
+    let sign = ['minus', 'down', 'negative'].includes(lower) ? -1 : 1;
+    // Stock Elegoo UI reverses the Z move sign before sending the command.
+    if (String(axis).toUpperCase() === 'Z') sign *= -1;
+    return step * sign;
+  }
+
+  async function controlMove(axis, dir, button = null) {
+    const step = controlMoveStep(axis, dir);
+    await controlCommand('/control/move', { axis, step }, button, `Moved ${axis} ${step}mm`);
+  }
+
+  async function controlHome(axis, button = null) {
+    const label = String(axis || 'XYZ').toUpperCase();
+    if (!confirm(`Home ${label}? Make sure the printer has clearance.`)) return;
+    await controlCommand('/control/home', { axis: label }, button, `Homing ${label}`);
+  }
+
+  async function controlSetSpeed(percent, button = null) {
+    const value = controlClamp(percent, 1, 300);
+    updateControlSpeedUi(value);
+    await controlCommand('/control/speed', { percent: value }, button, `Print speed set to ${value}%`);
+  }
+
+  async function controlSetFan(fan, percent, button = null) {
+    const value = controlClamp(percent, 0, 100);
+    setControlFanUi(fan, value, true);
+    await controlCommand('/control/fan', { fan, percent: value }, button, `${fan} fan set to ${value}%`);
+  }
+
+  function currentFanInputValue(fan) {
+    const input = $(`[data-control-fan-input="${fan}"]`);
+    return controlClamp(input?.value ?? controlState.fans[fan] ?? 0, 0, 100);
+  }
+
+  function initControl() {
+    updateControlStepUi(controlState.step);
+    $('#refreshControlButton')?.addEventListener('click', e => refreshControlStatus(e.currentTarget).catch(err => toast(err.message, 'error')));
+    $$('[data-control-step]').forEach(btn => btn.addEventListener('click', () => updateControlStepUi(btn.dataset.controlStep)));
+    $$('[data-control-move]').forEach(btn => btn.addEventListener('click', () => controlMove(btn.dataset.controlMove, btn.dataset.controlDir, btn).catch(() => {})));
+    $$('[data-control-home]').forEach(btn => btn.addEventListener('click', () => controlHome(btn.dataset.controlHome, btn).catch(() => {})));
+    $$('[data-control-speed]').forEach(btn => btn.addEventListener('click', () => controlSetSpeed(btn.dataset.controlSpeed, btn).catch(() => {})));
+    $$('[data-control-fan-bump]').forEach(btn => btn.addEventListener('click', () => {
+      const fan = btn.dataset.controlFanBump;
+      const next = currentFanInputValue(fan) + Number(btn.dataset.delta || 0);
+      setControlFanUi(fan, next);
+      controlSetFan(fan, next, btn).catch(() => {});
+    }));
+    $$('[data-control-fan-input]').forEach(input => {
+      input.addEventListener('change', () => controlSetFan(input.dataset.controlFanInput, input.value).catch(() => {}));
+      input.addEventListener('input', () => setControlFanUi(input.dataset.controlFanInput, input.value, true));
+    });
+    $$('[data-control-fan-toggle]').forEach(toggle => toggle.addEventListener('change', () => {
+      const fan = toggle.dataset.controlFanToggle;
+      const value = toggle.checked ? (controlState.lastNonZeroFan[fan] || 60) : 0;
+      setControlFanUi(fan, value);
+      controlSetFan(fan, value).catch(() => {});
+    }));
+    $('#controlLightToggle')?.addEventListener('change', e => {
+      controlCommand('/control/light', { on: !!e.currentTarget.checked }, null, e.currentTarget.checked ? 'Light on' : 'Light off').catch(() => {});
+    });
+    refreshControlStatus().catch(err => toast(err.message, 'error'));
+    controlState.refreshTimer = setInterval(() => refreshControlStatus().catch(() => {}), 10000);
+  }
+
+
   function initFiles() {
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
     $('#refreshPrinterFilesButton')?.addEventListener('click', loadPrinterFiles);
@@ -3460,4 +3800,5 @@
   if (page === 'logs') initLogs();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();
+  if (page === 'control') initControl();
 })();

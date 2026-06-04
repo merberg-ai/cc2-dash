@@ -44,6 +44,7 @@
         {% endif %}
         {% if cfg.features.file_manager_enabled %}<a href="/files" class="navlink">Files</a>{% endif %}
         {% if cfg.features.filament_manager_enabled %}<a href="/filaments" class="navlink">Filament</a>{% endif %}
+        {% if cfg.features.control_page_enabled|default(false) %}<a href="/control" class="navlink">Control</a>{% endif %}
         {% if cfg.features.kiosk_enabled|default(true) %}
           {% if printer %}<a href="{{ printer.kiosk_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open Kiosk camera view in a new tab">Kiosk</a>{% else %}<a href="/setup" class="navlink">Kiosk</a>{% endif %}
         {% endif %}

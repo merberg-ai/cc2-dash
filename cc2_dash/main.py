@@ -53,6 +53,9 @@ from .cc2.commands import (
     GET_HISTORY_TASK_DETAIL,
     GET_TIME_LAPSE_VIDEO_LIST,
     LOAD_FILAMENT,
+    HOME_AXES,
+    MOVE_AXES,
+    SET_FAN_SPEED,
     SET_FILAMENT_INFO,
     SET_MONO_FILAMENT_INFO,
     PAUSE_PRINT,
@@ -76,12 +79,16 @@ from .cc2.commands import (
     start_print_params,
     timelapse_export_params,
     auto_refill_params,
+    fan_params,
     filament_info_params,
     filament_motion_params,
     mono_filament_info_params,
     light_params,
+    home_axes_params,
     method_allowed,
+    move_axes_params,
     print_speed_params,
+    print_speed_pct_params,
     webcam_params,
 )
 # Import CommandError from the client module explicitly for clarity.
@@ -713,6 +720,15 @@ def _extract_filament_info(snapshot: dict[str, Any] | None, command_result: dict
     }
 
 
+def _nice_status(value: Any, fallback: str = "Unknown") -> str:
+    raw = str(value or "").replace("_", " ").strip()
+    if not raw:
+        return fallback
+    if raw.isupper() or raw.islower():
+        return raw.title()
+    return raw
+
+
 def _speed_label(mode: Any, raw_speed: Any = None, speed_percent: Any = None) -> str:
     try:
         value = int(float(mode))
@@ -1154,6 +1170,24 @@ class CommandRequest(BaseModel):
 
 class LightRequest(BaseModel):
     on: bool
+
+
+class ControlFanRequest(BaseModel):
+    fan: str
+    percent: int = Field(ge=0, le=100)
+
+
+class ControlSpeedRequest(BaseModel):
+    percent: int = Field(ge=1, le=300)
+
+
+class ControlMoveRequest(BaseModel):
+    axis: str
+    step: float = Field(gt=-301, lt=301)
+
+
+class ControlHomeRequest(BaseModel):
+    axis: str = "XYZ"
 
 
 class FilamentAutoRefillRequest(BaseModel):
@@ -1675,6 +1709,12 @@ async def filaments_page(request: Request):
     return templates.TemplateResponse("filaments.html", view_context(request))
 
 
+@app.get("/control", response_class=HTMLResponse)
+async def control_page(request: Request):
+    cfg = load_config()
+    if needs_setup(cfg):
+        return RedirectResponse("/setup")
+    return templates.TemplateResponse("control.html", view_context(request))
 
 
 @app.get("/kiosk", response_class=HTMLResponse)
@@ -2282,6 +2322,7 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "hotend_target": nozzle.get("target"),
         "bed_current": bed.get("actual"),
         "bed_target": bed.get("target"),
+        "light_on": _extract_light_on(n, snap.get("raw_status") or {}),
         "file": n.get("file") or "-",
         "gcode_thumbnail_url": None,
         "show_gcode_thumbnail": bool((load_config().get("dashboard") or {}).get("show_gcode_thumbnail", True)),
@@ -3122,6 +3163,210 @@ async def api_command(printer_id: str, body: CommandRequest):
     return await asyncio.to_thread(_send_command, printer_id, body.method, body.params, body.wait, body.timeout)
 
 
+def _fan_percent_from_raw(raw: Any) -> int | None:
+    if raw in (None, ""):
+        return None
+    try:
+        value = float(raw)
+    except Exception:
+        return None
+    if value <= 100:
+        return int(max(0, min(100, round(value))))
+    return int(max(0, min(100, round(value / 255.0 * 100.0))))
+
+
+def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) -> int:
+    fans = n.get("fans") if isinstance(n, dict) else {}
+    if isinstance(fans, dict):
+        for name in names:
+            fan = fans.get(name)
+            if isinstance(fan, dict):
+                pct = fan.get("percent")
+                if pct is not None:
+                    try:
+                        return int(max(0, min(100, round(float(pct)))))
+                    except Exception:
+                        pass
+                pct = _fan_percent_from_raw(fan.get("speed"))
+                if pct is not None:
+                    return pct
+    stock = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", "fans", default={})
+    if isinstance(stock, dict):
+        for name in names:
+            candidates = {
+                "model": ("ModelFan", "modelFan", "fan"),
+                "auxiliary": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "aux": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "case": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+                "box": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+            }.get(str(name).lower(), (name,))
+            for key in candidates:
+                pct = _fan_percent_from_raw(_dig(stock, key, default=None))
+                if pct is not None:
+                    return pct
+    return 0
+
+
+def _control_position(n: dict[str, Any]) -> dict[str, Any]:
+    pos = (n.get("position") or {}) if isinstance(n, dict) else {}
+
+    def fmt(value: Any) -> str:
+        if value in (None, ""):
+            return "-"
+        try:
+            return f"{float(value):.1f}".rstrip("0").rstrip(".")
+        except Exception:
+            return str(value)
+
+    return {"x": fmt(pos.get("x")), "y": fmt(pos.get("y")), "z": fmt(pos.get("z"))}
+
+
+def _control_speed_percent(n: dict[str, Any], raw: dict[str, Any]) -> int:
+    pos = (n.get("position") or {}) if isinstance(n, dict) else {}
+    for value in (pos.get("speed_percent"), _find_first_key(raw, "PrintSpeedPct", "print_speed_pct", max_depth=6)):
+        try:
+            if value not in (None, ""):
+                return int(max(1, min(300, round(float(value)))))
+        except Exception:
+            pass
+    mode = pos.get("speed_mode")
+    try:
+        mode_i = int(float(mode))
+        return {0: 50, 1: 100, 2: 130, 3: 160}.get(mode_i, 100)
+    except Exception:
+        return 100
+
+
+def _extract_light_on(n: dict[str, Any], raw: dict[str, Any]) -> bool:
+    light_raw = _find_first_key(raw, "SecondLight", "LightStatus", "led", max_depth=6)
+    light_on = bool((n.get("led") or {}).get("status")) if isinstance(n, dict) else False
+    if isinstance(light_raw, dict):
+        light_on = bool(_dig(light_raw, "SecondLight", "secondLight", "status", default=light_on))
+    elif light_raw not in (None, ""):
+        light_on = bool(light_raw)
+    return light_on
+
+
+def _control_status_payload(printer_id: str) -> dict[str, Any]:
+    pdata = _require_printer_running(printer_id)
+    snap = runtime.snapshot(printer_id) or {}
+    n = (snap.get("normalized") or {}) if isinstance(snap, dict) else {}
+    raw = (snap.get("raw_status") or {}) if isinstance(snap, dict) else {}
+    connected = bool(snap.get("connected") or snap.get("registered"))
+    base_status = _status_from_snapshot(printer_id, pdata, snap, attach_ai=False) if isinstance(snap, dict) else {}
+    state = str(n.get("sub_state") or n.get("state") or base_status.get("state") or ("connected" if connected else "offline"))
+    speed_pct = _control_speed_percent(n, raw)
+    active_print = bool(base_status.get("active_print"))
+    phase = base_status.get("print_phase") if isinstance(base_status.get("print_phase"), dict) else _print_phase_from_status(base_status, snap)
+    camera_relay = camera_relays.get(printer_id, printer_dict_to_config(printer_id, pdata)).status()
+    return {
+        "ok": True,
+        "printer_id": printer_id,
+        "name": pdata.get("name") or printer_id,
+        "host": pdata.get("host"),
+        "connected": connected,
+        "state": state,
+        "status_text": base_status.get("status_text") or _nice_status(state),
+        "status_code": base_status.get("status_code"),
+        "sub_status_code": base_status.get("sub_status_code"),
+        "print_phase": phase,
+        "active_print": active_print,
+        "controls_locked": active_print,
+        "controls_locked_reason": "Control page commands are locked while a print job is active." if active_print else "",
+        "allow_commands": bool(snap.get("allow_commands", pdata.get("allow_commands", True))),
+        "allow_dangerous_commands": bool(snap.get("allow_dangerous_commands", pdata.get("allow_dangerous_commands", False))),
+        "position": _control_position(n),
+        "speed_percent": speed_pct,
+        "speed_label": _speed_label(None, None, speed_pct),
+        "speed_presets": [50, 100, 130, 160],
+        "fans": {
+            "model": _control_fan_percent(n, raw, "model", "ModelFan"),
+            "auxiliary": _control_fan_percent(n, raw, "auxiliary", "aux", "AuxiliaryFan"),
+            "case": _control_fan_percent(n, raw, "case", "box", "BoxFan"),
+        },
+        "light_on": _extract_light_on(n, raw),
+        "camera_url": f"/api/printers/{printer_id}/camera/stream",
+        "camera_snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
+        "camera_relay": camera_relay,
+        "last_message_age_sec": snap.get("last_message_age_sec"),
+    }
+
+
+def _raise_if_control_locked(printer_id: str) -> dict[str, Any]:
+    status = _control_status_payload(printer_id)
+    if status.get("active_print"):
+        raise HTTPException(409, "Control page commands are locked while a print job is active. Use the stock portal or pause/finish the print first.")
+    return status
+
+
+@app.get("/api/printers/{printer_id}/control/status")
+async def api_control_status(printer_id: str):
+    return await asyncio.to_thread(_control_status_payload, printer_id)
+
+
+@app.post("/api/printers/{printer_id}/control/fan")
+async def api_control_fan(printer_id: str, body: ControlFanRequest):
+    fan = str(body.fan or "").strip().lower().replace("-", "_")
+    percent = int(max(0, min(100, body.percent)))
+    try:
+        current_status = _raise_if_control_locked(printer_id)
+        current = current_status.get("fans", {}) or {}
+    except HTTPException:
+        raise
+    except Exception:
+        current = {}
+    model = int(current.get("model") or 0)
+    aux = int(current.get("auxiliary") or 0)
+    box = int(current.get("case") or 0)
+    params: dict[str, Any]
+    if fan in {"model", "part", "tool", "fan"}:
+        model = percent
+    elif fan in {"aux", "auxiliary", "assist", "assistance", "side"}:
+        aux = percent
+    elif fan in {"case", "box", "chassis", "chamber"}:
+        box = percent
+    else:
+        raise HTTPException(400, "Unknown fan. Use model, auxiliary, or case.")
+    params = fan_params(model=model, aux=aux, box=box)
+    result = await asyncio.to_thread(_send_command, printer_id, SET_FAN_SPEED, params, True, 12.0)
+    log("info", f"Control fan {fan} set to {percent}%", "command", printer=printer_id)
+    return {"ok": True, "message": f"{fan.title()} fan set to {percent}%", "result": result.get("result")}
+
+
+@app.post("/api/printers/{printer_id}/control/speed")
+async def api_control_speed(printer_id: str, body: ControlSpeedRequest):
+    _raise_if_control_locked(printer_id)
+    percent = int(max(1, min(300, body.percent)))
+    result = await asyncio.to_thread(_send_command, printer_id, SET_PRINT_SPEED, print_speed_pct_params(percent), True, 12.0)
+    log("info", f"Control print speed set to {percent}%", "command", printer=printer_id)
+    return {"ok": True, "message": f"Print speed set to {percent}%", "result": result.get("result")}
+
+
+@app.post("/api/printers/{printer_id}/control/move")
+async def api_control_move(printer_id: str, body: ControlMoveRequest):
+    _raise_if_control_locked(printer_id)
+    axis = str(body.axis or "").upper().strip()
+    if axis not in {"X", "Y", "Z"}:
+        raise HTTPException(400, "Axis must be X, Y, or Z.")
+    step = float(body.step or 0)
+    if step == 0:
+        raise HTTPException(400, "Step cannot be zero.")
+    result = await asyncio.to_thread(_send_command, printer_id, MOVE_AXES, move_axes_params(axis, step), True, 20.0)
+    log("warning", f"Control moved {axis} by {step:g}mm", "command", printer=printer_id)
+    return {"ok": True, "message": f"Moved {axis} by {step:g}mm", "result": result.get("result")}
+
+
+@app.post("/api/printers/{printer_id}/control/home")
+async def api_control_home(printer_id: str, body: ControlHomeRequest):
+    _raise_if_control_locked(printer_id)
+    axis = str(body.axis or "XYZ").upper().strip()
+    if axis not in {"X", "Y", "Z", "XY", "XYZ"}:
+        raise HTTPException(400, "Axis must be X, Y, Z, XY, or XYZ.")
+    result = await asyncio.to_thread(_send_command, printer_id, HOME_AXES, home_axes_params(axis), True, 60.0)
+    log("warning", f"Control homing requested for {axis}", "command", printer=printer_id)
+    return {"ok": True, "message": f"Homing {axis}", "result": result.get("result")}
+
+
 @app.post("/api/action/{action_id}")
 async def api_action(action_id: str, req: ActionRequest | None = None):
     cfg = load_config()
@@ -3882,6 +4127,14 @@ async def api_timelapse_export(printer_id: str, body: TimelapseExportRequest):
 @app.post("/api/printers/{printer_id}/history/delete")
 async def api_history_delete(printer_id: str, body: HistoryDeleteRequest):
     return await asyncio.to_thread(_send_command, printer_id, HISTORY_DELETE, history_delete_params(body.task_ids), True, 20.0)
+
+
+@app.post("/api/printers/{printer_id}/control/light")
+async def api_control_light(printer_id: str, body: LightRequest):
+    _raise_if_control_locked(printer_id)
+    result = await asyncio.to_thread(_send_command, printer_id, SET_LIGHT, light_params(body.on), True, 10.0)
+    log("info", f"Control light set to {'on' if body.on else 'off'}", "command", printer=printer_id)
+    return {"ok": True, "message": f"Light {'on' if body.on else 'off'}", "result": result.get("result")}
 
 
 @app.post("/api/printers/{printer_id}/light")

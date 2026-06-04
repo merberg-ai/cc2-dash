@@ -103,6 +103,20 @@ def fan_to_percent(speed: Any) -> Optional[int]:
         return None
 
 
+def _coord_value(full_status: Dict[str, Any], index: int, fallback: Any = None) -> Any:
+    coord = get_path(full_status, "CurrenCoord", "CurrentCoord", "current_coord", "currentCoord")
+    if isinstance(coord, str):
+        parts = [p.strip() for p in coord.split(",")]
+        if len(parts) > index:
+            try:
+                return round(float(parts[index]), 3)
+            except Exception:
+                return parts[index]
+    if isinstance(coord, (list, tuple)) and len(coord) > index:
+        return coord[index]
+    return fallback
+
+
 def seconds_to_hms(seconds: Any) -> Optional[str]:
     try:
         total = int(float(seconds))
@@ -123,7 +137,7 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
     sub_status_code = get_path(full_status, "machine_status.sub_status")
     progress = get_path(full_status, "print_status.progress", "machine_status.progress", default=0)
 
-    fans = get_path(full_status, "fans", default={}) or {}
+    fans = get_path(full_status, "fans", "CurrentFanSpeed", default={}) or {}
     move = get_path(full_status, "gcode_move_inf", "gcode_move", default={}) or {}
     extruder_e = move.get("e", move.get("extruder")) if isinstance(move, dict) else None
     speed_mode = None
@@ -210,9 +224,9 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
         },
         "fans": {},
         "position": {
-            "x": move.get("x") if isinstance(move, dict) else None,
-            "y": move.get("y") if isinstance(move, dict) else None,
-            "z": move.get("z") if isinstance(move, dict) else None,
+            "x": _coord_value(full_status, 0, move.get("x") if isinstance(move, dict) else None),
+            "y": _coord_value(full_status, 1, move.get("y") if isinstance(move, dict) else None),
+            "z": _coord_value(full_status, 2, move.get("z") if isinstance(move, dict) else None),
             "e": extruder_e,
             "speed": (move.get("speed", move.get("Speed")) if isinstance(move, dict) else None) or get_path(full_status, "print_status.speed", "print_status.feedrate", "gcode_move.speed", "PrintInfo.PrintSpeedPct", "print_info.print_speed_pct", "print_status.PrintSpeedPct"),
             "speed_percent": get_path(full_status, "PrintInfo.PrintSpeedPct", "print_info.print_speed_pct", "print_status.PrintSpeedPct", "print_status.speed_percent"),
@@ -244,12 +258,26 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
     }
 
     if isinstance(fans, dict):
+        stock_fan_names = {
+            "ModelFan": "model",
+            "AuxiliaryFan": "auxiliary",
+            "BoxFan": "case",
+            "ChamberFan": "case",
+        }
         for name, fan in fans.items():
+            key = stock_fan_names.get(str(name), str(name))
             if isinstance(fan, dict):
-                normalized["fans"][name] = {
-                    "speed": fan.get("speed"),
-                    "percent": fan_to_percent(fan.get("speed")),
-                    "rpm": fan.get("rpm"),
+                speed = fan.get("speed", fan.get("Speed"))
+                normalized["fans"][key] = {
+                    "speed": speed,
+                    "percent": fan_to_percent(speed),
+                    "rpm": fan.get("rpm", fan.get("RPM")),
+                }
+            elif isinstance(fan, (int, float, str)) and str(fan).strip() != "":
+                normalized["fans"][key] = {
+                    "speed": fan,
+                    "percent": fan_to_percent(fan),
+                    "rpm": None,
                 }
 
     return normalized
