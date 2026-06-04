@@ -194,6 +194,40 @@ class PortalAIDetector:
         reachable = bool(status.get("reachable"))
         connected = bool(status.get("connected"))
         registered = bool(status.get("registered"))
+        connection_state = str(status.get("connection_state") or ("online" if reachable else "offline")).lower()
+        if status.get("offline") or status.get("stale") or connection_state not in {"", "online"}:
+            result = {
+                "enabled": True,
+                "state": "printer_offline",
+                "level": "watch",
+                "risk": 0,
+                "summary": state_text if state_text and state_text != "unknown" else "Offline",
+                "reasons": [
+                    str(status.get("connection_reason") or status.get("message") or "Printer telemetry is disconnected."),
+                    "Failure Detection is paused until the printer heartbeat and telemetry reconnect.",
+                ],
+                "positives": [],
+                "active_print": False,
+                "monitor_active_prints_only": bool(ai_cfg.get("monitor_active_prints_only", True)),
+                "connection_state": connection_state,
+                "multi_color_grace_active": False,
+                "multi_color_mode": str(ai_cfg.get("multi_color_mode", "auto") or "auto").lower(),
+                "last_check_epoch": now,
+                "last_check": time.strftime("%H:%M:%S"),
+                "source": source,
+                "background_monitor_enabled": bool(ai_cfg.get("background_monitor_enabled", True)),
+                "rules": {
+                    "telemetry": bool(ai_cfg.get("telemetry_rules_enabled", True)),
+                    "camera": bool(ai_cfg.get("camera_rules_enabled", True)),
+                    "vision": bool(ai_cfg.get("vision_ai_enabled", False)),
+                },
+                "vision": status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None,
+            }
+            prev["progress"] = _as_float(status.get("progress"), 0.0)
+            prev["progress_changed_at"] = now
+            prev["last_result"] = result
+            return result
+
         message_age = _as_float(status.get("updated_at"), 999999.0)
 
         progress = _as_float(status.get("progress"), 0.0)

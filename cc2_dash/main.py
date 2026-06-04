@@ -169,6 +169,9 @@ PRINT_PREP_TEXT_TERMS = (
     "warmup",
     "warm up",
 )
+CONNECTION_STALE_AFTER_SEC = 35.0
+CONNECTION_OFFLINE_AFTER_SEC = 75.0
+CONNECTION_MESSAGE_STALE_AFTER_SEC = 90.0
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -187,6 +190,15 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
 
 
 def _has_real_file(value: Any) -> bool:
@@ -303,6 +315,206 @@ def _status_looks_active_print(status: dict[str, Any] | None, snap: dict[str, An
     if has_file and elapsed > 0 and progress < 99.9 and (hot_target > 0 or bed_target > 0):
         return True
     return False
+
+
+def _connection_health_from_snapshot(snap: dict[str, Any] | None) -> dict[str, Any]:
+    """Classify printer connection health separately from printer job state.
+
+    A disconnected/stale MQTT client can still have old normalized telemetry in
+    memory. This helper is the single source of truth for deciding whether the UI
+    should show Online, Stale, Offline, or Auth Error instead of repeating stale
+    job states like Printing or Idle.
+    """
+    if not isinstance(snap, dict) or not snap:
+        return {
+            "connection_state": "offline",
+            "label": "Offline",
+            "reachable": False,
+            "online": False,
+            "offline": True,
+            "stale": False,
+            "reason": "CC2 MQTT client is not running.",
+            "last_message_age_sec": None,
+            "last_pong_age_sec": None,
+            "stale_after_sec": CONNECTION_STALE_AFTER_SEC,
+            "offline_after_sec": CONNECTION_OFFLINE_AFTER_SEC,
+        }
+
+    connected = bool(snap.get("connected"))
+    registered = bool(snap.get("registered"))
+    registration_error = snap.get("registration_error")
+    last_error = str(snap.get("last_error") or "").strip()
+    last_message_age = _coerce_optional_float(snap.get("last_message_age_sec"))
+    last_pong_age = _coerce_optional_float(snap.get("last_pong_age_sec"))
+
+    base = {
+        "last_message_age_sec": last_message_age,
+        "last_pong_age_sec": last_pong_age,
+        "stale_after_sec": CONNECTION_STALE_AFTER_SEC,
+        "offline_after_sec": CONNECTION_OFFLINE_AFTER_SEC,
+    }
+
+    if registration_error:
+        return {
+            **base,
+            "connection_state": "auth_error",
+            "label": "Registration Error",
+            "reachable": False,
+            "online": False,
+            "offline": True,
+            "stale": False,
+            "reason": f"Printer registration failed: {registration_error}",
+        }
+
+    if not connected:
+        return {
+            **base,
+            "connection_state": "offline",
+            "label": "Offline",
+            "reachable": False,
+            "online": False,
+            "offline": True,
+            "stale": False,
+            "reason": last_error or "MQTT connection is closed.",
+        }
+
+    if not registered:
+        return {
+            **base,
+            "connection_state": "connecting",
+            "label": "Connecting",
+            "reachable": False,
+            "online": False,
+            "offline": False,
+            "stale": True,
+            "reason": last_error or "MQTT is connected, but printer registration is not confirmed yet.",
+        }
+
+    # Prefer the explicit PING/PONG heartbeat. Normal idle printers may not emit
+    # rich status changes often, but a fresh PONG means the telemetry path is alive.
+    if last_pong_age is not None:
+        if last_pong_age > CONNECTION_OFFLINE_AFTER_SEC:
+            return {
+                **base,
+                "connection_state": "offline",
+                "label": "Offline",
+                "reachable": False,
+                "online": False,
+                "offline": True,
+                "stale": True,
+                "reason": f"Printer heartbeat timed out ({int(last_pong_age)}s since last PONG).",
+            }
+        if last_pong_age > CONNECTION_STALE_AFTER_SEC:
+            return {
+                **base,
+                "connection_state": "stale",
+                "label": "Connection Stale",
+                "reachable": False,
+                "online": False,
+                "offline": False,
+                "stale": True,
+                "reason": f"Printer heartbeat is stale ({int(last_pong_age)}s since last PONG).",
+            }
+        return {
+            **base,
+            "connection_state": "online",
+            "label": "Online",
+            "reachable": True,
+            "online": True,
+            "offline": False,
+            "stale": False,
+            "reason": "MQTT is registered and heartbeat is fresh.",
+        }
+
+    # Older/partial snapshots may not have PONG age. Fall back to last MQTT
+    # message age, but use a slightly looser threshold to avoid idle false alarms.
+    if last_message_age is not None:
+        if last_message_age > CONNECTION_OFFLINE_AFTER_SEC:
+            return {
+                **base,
+                "connection_state": "offline",
+                "label": "Offline",
+                "reachable": False,
+                "online": False,
+                "offline": True,
+                "stale": True,
+                "reason": f"No printer telemetry for {int(last_message_age)}s.",
+            }
+        if last_message_age > CONNECTION_STALE_AFTER_SEC:
+            return {
+                **base,
+                "connection_state": "stale",
+                "label": "Connection Stale",
+                "reachable": False,
+                "online": False,
+                "offline": False,
+                "stale": True,
+                "reason": f"Printer telemetry is stale ({int(last_message_age)}s old).",
+            }
+
+    return {
+        **base,
+        "connection_state": "online",
+        "label": "Online",
+        "reachable": True,
+        "online": True,
+        "offline": False,
+        "stale": False,
+        "reason": "MQTT is connected and registered.",
+    }
+
+
+def _connection_status_label(health: dict[str, Any] | None) -> str:
+    return str((health or {}).get("label") or "Offline")
+
+
+def _offline_vision_result(printer_id: str, status: dict[str, Any], source: str = "request") -> dict[str, Any]:
+    now = time.time()
+    label = str(status.get("status_text") or status.get("connection_state") or "Offline")
+    result = {
+        "enabled": True,
+        "skipped": True,
+        "visual_state": "offline",
+        "summary": f"Printer is {label}; vision monitoring is paused until telemetry reconnects.",
+        "consecutive_bad": 0,
+        "last_check_epoch": now,
+        "last_check": time.strftime("%H:%M:%S"),
+        "source": source,
+        "active_print": False,
+        "connection_state": status.get("connection_state"),
+    }
+    return vision_monitor.set_cached_result(printer_id, result)
+
+
+def _offline_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any], source: str = "request") -> dict[str, Any]:
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    now = time.time()
+    label = str(status.get("status_text") or "Offline")
+    reason = str(status.get("connection_reason") or status.get("message") or "Printer telemetry is disconnected.")
+    vision = status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None
+    result = {
+        "enabled": bool(ai_cfg.get("enabled", True)),
+        "state": "printer_offline",
+        "level": "watch",
+        "risk": 0,
+        "summary": label,
+        "reasons": [reason, "Failure Detection and auto-pause are paused until the printer telemetry reconnects."],
+        "positives": [],
+        "active_print": False,
+        "monitor_active_prints_only": bool(ai_cfg.get("monitor_active_prints_only", True)),
+        "last_check_epoch": now,
+        "last_check": time.strftime("%H:%M:%S"),
+        "source": source,
+        "background_monitor_enabled": bool(ai_cfg.get("background_monitor_enabled", True)),
+        "connection_state": status.get("connection_state"),
+        "rules": {
+            "telemetry": bool(ai_cfg.get("telemetry_rules_enabled", True)),
+            "camera": bool(ai_cfg.get("camera_rules_enabled", True)),
+            "vision": bool(ai_cfg.get("vision_ai_enabled", False)),
+        },
+        "vision": vision,
+    }
+    return portal_ai.set_cached_result(printer_id, result)
 
 
 def _idle_vision_result(printer_id: str, source: str = "request") -> dict[str, Any]:
@@ -950,6 +1162,8 @@ async def _enrich_status_with_file_layer_total(printer_id: str, status: dict[str
     if not isinstance(status, dict):
         return status
     if not status.get("layer_total_missing"):
+        return status
+    if not status.get("reachable"):
         return status
     filename = status.get("file")
     if not _has_real_file(filename):
@@ -2166,6 +2380,11 @@ async def api_set_default_printer(printer_id: str):
 
 def _maybe_attach_vision(printer_id: str, printer: dict[str, Any] | None, status: dict[str, Any], cfg: dict[str, Any], ai_source: str = "request", force: bool = False) -> dict[str, Any]:
     ai_cfg = cfg.get("portal_ai", {}) or {}
+    connection_state = str(status.get("connection_state") or "online").lower()
+    if status.get("offline") or status.get("stale") or connection_state not in {"", "online"}:
+        if ai_cfg.get("vision_ai_enabled", False):
+            status["vision_ai"] = _offline_vision_result(printer_id, status, ai_source)
+        return status
     phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status)
     if phase.get("is_preparing"):
         status["print_phase"] = phase
@@ -2218,6 +2437,13 @@ def _maybe_attach_vision(printer_id: str, printer: dict[str, Any] | None, status
 def _attach_ai_status(printer_id: str, status: dict[str, Any], snap: Optional[dict[str, Any]], cfg: dict[str, Any], ai_source: str = "request", force_ai_evaluate: bool = False, printer: dict[str, Any] | None = None) -> dict[str, Any]:
     ai_cfg = cfg.get("portal_ai", {}) or {}
     schedule_auto_pause = ai_source == "background" or (ai_source == "request" and not bool(ai_cfg.get("background_monitor_enabled", True)))
+    connection_state = str(status.get("connection_state") or "online").lower()
+    if status.get("offline") or status.get("stale") or connection_state not in {"", "online"}:
+        if ai_cfg.get("vision_ai_enabled", False):
+            status["vision_ai"] = _offline_vision_result(printer_id, status, ai_source)
+        result = _offline_ai_result(printer_id, status, cfg, ai_source)
+        status["portal_ai"] = _process_auto_pause(printer_id, status, result, cfg, schedule=False)
+        return status
     if not ai_cfg.get("enabled", True):
         result = portal_ai.evaluate(printer_id, status, snap, cfg, source=ai_source)
         status["portal_ai"] = _process_auto_pause(printer_id, status, result, cfg, schedule=False)
@@ -2263,10 +2489,27 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
     pcfg = printer_dict_to_config(printer_id, printer)
     if not snap:
         cfg = load_config()
+        health = _connection_health_from_snapshot(None)
         status = PrinterClient(printer_id, printer, cfg)._empty_status("CC2 client is not running", reachable=False)
+        status.update({
+            "connection_state": health["connection_state"],
+            "connection_health": health,
+            "connection_reason": health["reason"],
+            "offline": health["offline"],
+            "stale": health["stale"],
+            "reachable": health["reachable"],
+            "connected": False,
+            "registered": False,
+            "state": health["connection_state"],
+            "status_text": health["label"],
+            "message": health["reason"],
+            "active_print": False,
+            "print_phase": {"is_preparing": False, "kind": "offline", "label": health["label"], "status_code": None, "sub_status_code": None},
+        })
         if not attach_ai:
             return status
         return _attach_ai_status(printer_id, status, None, cfg, ai_source=ai_source, force_ai_evaluate=force_ai_evaluate, printer=printer)
+    health = _connection_health_from_snapshot(snap)
     n = snap.get("normalized") or {}
     temps = n.get("temps") or {}
     nozzle = temps.get("nozzle") or {}
@@ -2287,7 +2530,9 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         progress = 0.0
     print_metrics = _extract_print_metrics(snap, n)
     state = n.get("sub_state") or n.get("state") or ("registered" if snap.get("registered") else "offline")
-    reachable = bool(snap.get("connected") or snap.get("registered"))
+    reachable = bool(health.get("reachable"))
+    if not reachable:
+        state = health.get("connection_state") or "offline"
     status = {
         "printer_id": printer_id,
         "name": pcfg.name,
@@ -2296,11 +2541,16 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "reachable": reachable,
         "connected": bool(snap.get("connected")),
         "registered": bool(snap.get("registered")),
+        "connection_state": health.get("connection_state"),
+        "connection_health": health,
+        "connection_reason": health.get("reason"),
+        "offline": bool(health.get("offline")),
+        "stale": bool(health.get("stale")),
         "state": str(state).lower(),
-        "status_text": str(state).replace("_", " ").title(),
+        "status_text": str(health.get("label") if not reachable else state).replace("_", " ").title(),
         "status_code": n.get("status_code"),
         "sub_status_code": n.get("sub_status_code"),
-        "message": snap.get("last_error") or ("Registered with printer" if snap.get("registered") else "Waiting for MQTT registration"),
+        "message": health.get("reason") if not reachable else (snap.get("last_error") or "Registered with printer"),
         "progress": round(progress, 1),
         "print_time": seconds_to_hms((n.get("time") or {}).get("elapsed_sec")) or "-",
         "time_left": (n.get("time") or {}).get("remaining_human") or seconds_to_hms((n.get("time") or {}).get("remaining_sec")) or "-",
@@ -2338,8 +2588,8 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "direct_portal_url": f"http://{pcfg.host}/",
         "raw": snap,
     }
-    status["print_phase"] = _print_phase_from_status(status, snap)
-    status["active_print"] = _status_looks_active_print(status, snap)
+    status["print_phase"] = _print_phase_from_status(status, snap) if reachable else {"is_preparing": False, "kind": status.get("connection_state") or "offline", "label": status.get("status_text") or "Offline", "status_code": n.get("status_code"), "sub_status_code": n.get("sub_status_code")}
+    status["active_print"] = _status_looks_active_print(status, snap) if reachable else False
     if status.get("show_gcode_thumbnail") and _has_real_file(status.get("file")):
         status["gcode_thumbnail_url"] = f"/api/printers/{printer_id}/files/thumbnail-image?filename={quote(str(status.get('file') or ''))}&storage_media=local"
     if not attach_ai:
@@ -2370,11 +2620,11 @@ def _attach_cached_ai_for_kiosk(printer_id: str, status: dict[str, Any], cfg: di
     else:
         status["portal_ai"] = {
             "enabled": bool(ai_cfg.get("enabled", True)),
-            "state": "standing_by",
+            "state": "standing_by" if status.get("reachable") else "printer_offline",
             "level": "low" if status.get("reachable") else "watch",
-            "risk": 0 if status.get("reachable") else 35,
-            "summary": "Standing By" if status.get("reachable") else "Waiting for printer telemetry",
-            "reasons": ["Kiosk is using the fast cached AI path; background AI will update this badge when available."],
+            "risk": 0,
+            "summary": "Standing By" if status.get("reachable") else (status.get("status_text") or "Offline"),
+            "reasons": ["Kiosk is using the fast cached AI path; background AI will update this badge when available." if status.get("reachable") else (status.get("connection_reason") or "Printer telemetry is disconnected.")],
             "last_check_epoch": None,
             "last_check": None,
             "kiosk_fast_path": True,
@@ -3149,6 +3399,9 @@ def _send_command(printer_id: str, method: int, params: dict[str, Any] | None = 
         client = runtime.get_client(printer_id)
     if not client:
         raise HTTPException(409, "Printer client is not running; check host, serial, and PIN/access code.")
+    health = _connection_health_from_snapshot(client.snapshot())
+    if not health.get("reachable"):
+        raise HTTPException(409, f"Printer is {health.get('label', 'Offline')}: {health.get('reason', 'telemetry unavailable')}")
     try:
         result = client.send_request(method, params or {}, wait=wait, timeout=timeout, raise_on_error_code=raise_on_result_error)
         return {"ok": True, "result": result}
@@ -3252,12 +3505,20 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
     snap = runtime.snapshot(printer_id) or {}
     n = (snap.get("normalized") or {}) if isinstance(snap, dict) else {}
     raw = (snap.get("raw_status") or {}) if isinstance(snap, dict) else {}
-    connected = bool(snap.get("connected") or snap.get("registered"))
+    health = _connection_health_from_snapshot(snap if isinstance(snap, dict) else None)
+    connected = bool(health.get("reachable"))
     base_status = _status_from_snapshot(printer_id, pdata, snap, attach_ai=False) if isinstance(snap, dict) else {}
-    state = str(n.get("sub_state") or n.get("state") or base_status.get("state") or ("connected" if connected else "offline"))
+    state = str(base_status.get("status_text") or n.get("sub_state") or n.get("state") or base_status.get("state") or ("connected" if connected else "offline"))
     speed_pct = _control_speed_percent(n, raw)
-    active_print = bool(base_status.get("active_print"))
+    active_print = bool(base_status.get("active_print")) if connected else False
     phase = base_status.get("print_phase") if isinstance(base_status.get("print_phase"), dict) else _print_phase_from_status(base_status, snap)
+    controls_locked = bool(active_print or not connected)
+    if active_print:
+        controls_locked_reason = "Control page commands are locked while a print job is active."
+    elif not connected:
+        controls_locked_reason = f"Control page commands are locked because the printer is {base_status.get('status_text') or health.get('label') or 'offline'}."
+    else:
+        controls_locked_reason = ""
     camera_relay = camera_relays.get(printer_id, printer_dict_to_config(printer_id, pdata)).status()
     return {
         "ok": True,
@@ -3265,14 +3526,18 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
         "name": pdata.get("name") or printer_id,
         "host": pdata.get("host"),
         "connected": connected,
+        "connection_state": health.get("connection_state"),
+        "connection_reason": health.get("reason"),
+        "offline": bool(health.get("offline")),
+        "stale": bool(health.get("stale")),
         "state": state,
         "status_text": base_status.get("status_text") or _nice_status(state),
         "status_code": base_status.get("status_code"),
         "sub_status_code": base_status.get("sub_status_code"),
         "print_phase": phase,
         "active_print": active_print,
-        "controls_locked": active_print,
-        "controls_locked_reason": "Control page commands are locked while a print job is active." if active_print else "",
+        "controls_locked": controls_locked,
+        "controls_locked_reason": controls_locked_reason,
         "allow_commands": bool(snap.get("allow_commands", pdata.get("allow_commands", True))),
         "allow_dangerous_commands": bool(snap.get("allow_dangerous_commands", pdata.get("allow_dangerous_commands", False))),
         "position": _control_position(n),
@@ -3296,6 +3561,8 @@ def _raise_if_control_locked(printer_id: str) -> dict[str, Any]:
     status = _control_status_payload(printer_id)
     if status.get("active_print"):
         raise HTTPException(409, "Control page commands are locked while a print job is active. Use the stock portal or pause/finish the print first.")
+    if status.get("controls_locked") or not status.get("connected"):
+        raise HTTPException(409, status.get("controls_locked_reason") or "Control page commands are locked because the printer is not online.")
     return status
 
 

@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.55-blue)
+![Version](https://img.shields.io/badge/version-1.2.56-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -62,7 +62,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.55 control-camera-relay-fix
+1.2.56 offline-state-detection
 ```
 
 Major current capabilities:
@@ -1184,6 +1184,15 @@ cc2-dash/
 ---
 
 ## Release notes
+
+
+### v1.2.56 offline state detection
+
+- Adds backend connection-health classification separate from printer job state: online, stale, offline, connecting, and registration/auth error.
+- Uses MQTT registration plus fresh heartbeat/PONG timing as the primary source of truth so stale cached telemetry no longer makes the dashboard keep saying Printing or Idle when the printer is disconnected.
+- Status payloads now include `connection_state`, `offline`, `stale`, `connection_reason`, and `connection_health` fields.
+- Dashboard, Kiosk, Control page, browser title, and Failure Detection now show Offline / Connection Stale / Connecting instead of stale job state text.
+- Failure Detection and auto-pause are paused while printer telemetry is offline/stale, and the Control page locks all command controls until the printer is online again.
 
 ### v1.2.55 control camera relay fix
 
