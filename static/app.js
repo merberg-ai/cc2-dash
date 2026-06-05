@@ -4,10 +4,37 @@
   const page = document.body.dataset.page;
   const cfgEl = $('#bootConfig');
   let cfg = cfgEl ? JSON.parse(cfgEl.textContent) : {};
+  let experimentalFeatureLocks = {};
   let dashboardThumbnailUrl = '';
   let dashboardThumbnailFile = '';
   const baseDocumentTitle = document.title || 'cc2-dash';
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
+
+  function featureLocked(key) {
+    return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
+  }
+
+  function applyExperimentalFeatureLocksToConfig(target = cfg) {
+    if (!target) return target;
+    target.features = target.features || {};
+    Object.keys(experimentalFeatureLocks || {}).forEach(key => { target.features[key] = false; });
+    return target;
+  }
+
+  function syncLockedFeatureControls() {
+    const map = {
+      file_manager_enabled: 'fileManagerEnabled',
+      filament_manager_enabled: 'filamentManagerEnabled',
+      control_page_enabled: 'controlPageEnabled',
+    };
+    Object.entries(map).forEach(([key, id]) => {
+      const el = $('#' + id);
+      if (!el || !featureLocked(key)) return;
+      el.checked = false;
+      el.disabled = true;
+      el.setAttribute('aria-disabled', 'true');
+    });
+  }
 
   function toast(message, type = 'info', timeout = 4200) {
     const host = $('#toastHost');
@@ -68,6 +95,14 @@
 
   function printSummaryState(status, activePrint, progress) {
     const st = status || {};
+    const conn = String(st.connection_state || '').toLowerCase();
+    const connectionTrouble = !!(st.offline || st.stale || (conn && conn !== 'online'));
+    if (connectionTrouble) {
+      const fallback = st.offline ? 'Offline' : (st.stale ? 'Connection Stale' : 'Connecting');
+      const label = niceStatusLabel(st.status_text || st.connection_reason || conn || fallback, fallback);
+      const tone = st.offline || conn === 'auth_error' || conn === 'offline' ? 'error' : 'preparing';
+      return { label, tone, busy: false, preparing: false, connectionTrouble: true, title: `${label} · ${st.connection_reason || st.message || 'printer telemetry unavailable'}` };
+    }
     const phase = st.print_phase && typeof st.print_phase === 'object' ? st.print_phase : {};
     const preparing = !!phase.is_preparing;
     const rawLabel = preparing
@@ -82,7 +117,7 @@
     const title = errored
       ? `${label} · printer needs attention`
       : (busy ? `${label} · ${pct}% complete` : label);
-    return { label, tone, busy, preparing, title };
+    return { label, tone, busy, preparing, connectionTrouble: false, title };
   }
 
   function compactTitleText(value, fallback = '') {
@@ -95,6 +130,12 @@
     const st = status || {};
     const state = summaryState || printSummaryState(st, !!st.active_print, progress);
     const label = compactTitleText(state.label || st.status_text || st.state, 'cc2-dash');
+    const conn = String(st.connection_state || '').toLowerCase();
+    const connectionTrouble = !!(state.connectionTrouble || st.offline || st.stale || (conn && conn !== 'online'));
+    if (connectionTrouble) {
+      document.title = `${label} · ${baseDocumentTitle}`;
+      return;
+    }
     const pct = Number.isFinite(Number(progress)) ? `${Number(progress).toFixed(1)}%` : '';
     const timeLeft = compactTitleText(st.time_left || st.remaining || st.remaining_time || '', '');
     const elapsed = compactTitleText(st.print_time || st.elapsed || '', '');
@@ -175,6 +216,9 @@
     const activeHint = ai.active_print;
     if (ai.enabled === false) {
       return { tone: 'idle', label: 'Disabled' };
+    }
+    if (aiState === 'printer_offline' || vState === 'offline') {
+      return { tone: 'idle', label: ai.summary || 'Offline' };
     }
     if (aiState === 'idle_standby' || (summary === 'idle' && activeHint === false)) {
       return { tone: 'idle', label: 'Idle' };
@@ -625,9 +669,9 @@
       cam.src = `${src}${src.includes('?') ? '&' : '?'}kiosk=1&t=${Date.now()}`;
     }
     setKioskCameraPlaceholder('Starting camera relay...', 'warming');
-    // MJPEG load events can be weird across browsers. Do not leave a giant
-    // spinner pinned over the stream forever; after a short grace period, let
-    // the overlay badges explain whether the relay is live/warming/stale.
+    // MJPEG load events vary by browser. Do not leave the loading indicator
+    // pinned over the stream forever; after a short grace period, let the
+    // overlay badges explain whether the relay is live, warming, or stale.
     window.setTimeout(() => {
       const ph = $('#kioskCameraPlaceholder');
       const relayText = ($('#kioskRelayText')?.textContent || '').toLowerCase();
@@ -749,7 +793,7 @@
       updateDashboardTitle(st, summaryState, progress);
 
       setText('statusText', st.status_text || st.state || 'Unknown');
-      const aiStatus = st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Connection Lost', level: st.reachable ? 'low' : 'watch', risk: st.reachable ? 0 : 35, reasons: [st.message || 'Waiting for printer telemetry.'] };
+      const aiStatus = st.portal_ai || { summary: st.reachable ? 'Standing By' : (st.status_text || 'Offline'), level: st.reachable ? 'low' : 'watch', risk: 0, reasons: [st.connection_reason || st.message || 'Waiting for printer telemetry.'] };
       renderPortalAI(aiStatus);
       handleAutoPause(st, aiStatus);
       setText('printTime', st.print_time || '-');
@@ -1059,7 +1103,7 @@
       if (bar) bar.style.width = `${progress}%`;
       if (text) text.textContent = `${progress.toFixed(1)}%`;
 
-      const ai = st.portal_ai || { level: st.reachable ? 'low' : 'watch', risk: st.reachable ? 0 : 35 };
+      const ai = st.portal_ai || { level: st.reachable ? 'low' : 'watch', risk: 0, summary: st.reachable ? 'Standing By' : (st.status_text || 'Offline') };
       const aiState = summarizeAIHeaderStatus(ai, ai.vision || ai.vision_ai || st.vision_ai || {});
       const aiBadge = $('#kioskAiBadge');
       if (aiBadge) {
@@ -1423,7 +1467,9 @@
 
   async function loadFreshConfig() {
     const data = await api('/api/config');
-    cfg = data.config;
+    experimentalFeatureLocks = data.experimental_feature_locks || {};
+    cfg = applyExperimentalFeatureLocksToConfig(data.config);
+    syncLockedFeatureControls();
     return data;
   }
 
@@ -1973,6 +2019,8 @@
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
+      applyExperimentalFeatureLocksToConfig(cfg);
+      syncLockedFeatureControls();
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -2068,6 +2116,8 @@
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
+      applyExperimentalFeatureLocksToConfig(cfg);
+      syncLockedFeatureControls();
       cfg.features.kiosk_enabled = !!$('#kioskMenuEnabled')?.checked;
       cfg.features.ai_training_menu_enabled = !!$('#aiTrainingMenuEnabled')?.checked;
       cfg.features.logs_menu_enabled = !!$('#logsMenuEnabled')?.checked;
@@ -2156,7 +2206,7 @@
       setButtonBusy(button, true, 'Saving...');
       try {
         if (rawOverride) {
-          try { cfg = JSON.parse($('#configEditor')?.value || '{}'); }
+          try { cfg = applyExperimentalFeatureLocksToConfig(JSON.parse($('#configEditor')?.value || '{}')); }
           catch (err) { throw new Error('Invalid raw JSON: ' + err.message); }
         } else {
           applySettingsFormToConfig();
@@ -3489,6 +3539,7 @@
     allowDangerous: false,
     activePrint: false,
     controlsLocked: false,
+    controlsLockedReason: '',
   };
 
   function showControlCameraPlaceholder(message, mode = 'warming') {
@@ -3591,7 +3642,7 @@
     const note = $('#controlPrintLockNote');
     if (note) {
       note.classList.toggle('hidden', !locked);
-      if (locked) note.textContent = 'Control page commands are locked while a print job is active. Finish, cancel, or pause/handle the job before using these controls.';
+      if (locked) note.textContent = controlState.controlsLockedReason || 'Control page commands are locked until the printer is online and idle.';
     }
   }
 
@@ -3626,7 +3677,8 @@
     controlState.allowCommands = !!data.allow_commands;
     controlState.allowDangerous = !!data.allow_dangerous_commands;
     controlState.activePrint = !!data.active_print;
-    controlState.controlsLocked = !!data.controls_locked;
+    controlState.controlsLocked = !!data.controls_locked || !!data.offline || !!data.stale || String(data.connection_state || '').toLowerCase() !== 'online';
+    controlState.controlsLockedReason = data.controls_locked_reason || '';
     const relay = data.camera_relay || {};
     renderControlCameraRelay(relay);
     ensureControlCameraStream(data.camera_url || data.camera_stream_url || '');
@@ -3653,11 +3705,13 @@
     const connected = !!data.connected;
     const safety = controlState.allowDangerous ? 'motion unlocked' : 'motion locked';
     const commandStatus = controlState.allowCommands ? 'commands enabled' : 'commands disabled';
-    const lockedText = (controlState.activePrint || controlState.controlsLocked) ? ' · controls locked during active print' : '';
+    const lockedReason = data.controls_locked_reason || (controlState.activePrint ? 'controls locked during active print' : (!connected ? 'controls locked while printer is offline' : ''));
+    const lockedText = (controlState.activePrint || controlState.controlsLocked) ? ` · ${esc(lockedReason)}` : '';
     const tone = !connected ? 'bad' : ((controlState.activePrint || controlState.controlsLocked || !controlState.allowCommands || !controlState.allowDangerous) ? 'warn' : 'good');
     const age = Number(data.last_message_age_sec);
     const ageText = Number.isFinite(age) ? ` · telemetry ${age.toFixed(age < 10 ? 1 : 0)}s old` : '';
-    setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${connected ? 'connected' : 'offline'} · ${commandStatus} · ${safety}${lockedText}${ageText}`, tone);
+    const connLabel = data.connection_state && data.connection_state !== 'online' ? niceStatusLabel(data.connection_state) : (connected ? 'connected' : 'offline');
+    setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${esc(connLabel)} · ${commandStatus} · ${safety}${lockedText}${ageText}`, tone);
   }
 
   async function refreshControlStatus(button = null) {

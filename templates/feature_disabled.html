@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block page_id %}feature-disabled{% endblock %}
+{% block content %}
+<section class="settings-stack fade-in">
+  <article class="card hero-card">
+    <h1>{{ feature_name }} is disabled</h1>
+    <p>{{ feature_summary }}</p>
+  </article>
+  <article class="card">
+    <h2>Community test build</h2>
+    <p>This experimental feature is still included in the source tree, but it is locked off for public testing until it has more firmware coverage and safety validation.</p>
+    <div class="button-row">
+      <a class="button primary" href="/">Back to dashboard</a>
+      <a class="button secondary" href="/settings">Open settings</a>
+    </div>
+  </article>
+</section>
+{% endblock %}

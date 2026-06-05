@@ -1,13 +1,13 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.55-blue)
+![Version](https://img.shields.io/badge/version-1.2.57-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
 
-**cc2-dash** is a lightweight local dashboard and portal shell for the **Elegoo Centauri Carbon 2 / CC2** ecosystem. It gives you a clean LAN dashboard, printer discovery and pairing, camera relay/fanout, a stock Elegoo portal bridge, optional Ollama-powered visual monitoring, feedback-aware AI review tools, kiosk mode, stock-style control tools, file/history helpers, CANVAS filament controls, and a themeable mobile-friendly UI.
+**cc2-dash** is a lightweight local dashboard and portal shell for the **Elegoo Centauri Carbon 2 / CC2** ecosystem. It gives you a clean LAN dashboard, printer discovery and pairing, camera relay/fanout, a stock Elegoo portal bridge, optional Ollama-powered visual monitoring, feedback-aware AI review tools, kiosk mode, and a themeable mobile-friendly UI. Experimental File Manager, Filament Manager, and Control System code is retained in the source tree but locked off for this public test build.
 
-It is designed for a Raspberry Pi-style board sitting on your trusted home network. Think: printer-room companion dashboard, not enterprise print-farm overlord.
+It is designed for a Raspberry Pi-style board sitting on your trusted home network. It is intended as a printer-room companion dashboard, not an enterprise print-farm controller.
 
 > [!WARNING]
 > **Private, home, hobbyist use only.** cc2-dash is not designed, tested, or recommended for production environments, commercial print farms, safety-critical workflows, unattended remote operation, or any situation where missed detection, a failed command, or an incorrect AI result could cause damage. Keep physical access to your printer and use the stock printer controls as the final authority.
@@ -62,7 +62,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.55 control-camera-relay-fix
+1.2.57 community-release-prep
 ```
 
 Major current capabilities:
@@ -79,9 +79,9 @@ Major current capabilities:
 | AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
-| File Manager | Available but hidden by default because firmware timelapse/export behavior can be flaky |
-| Filament Manager / CANVAS | Available but hidden by default while command behavior is tested on real firmware |
-| Control page | Available but hidden by default; fan/speed/light controls require commands, motion/home require dangerous commands |
+| File Manager | Experimental code retained, disabled and locked off for this public test build |
+| Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
+| Control page | Experimental code retained, disabled and locked off for this public test build |
 | Themes | Built-in theme library with preview cards |
 | Windows support | Not tested; may work manually, but scripts are Linux/systemd focused |
 
@@ -119,7 +119,7 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Collapsible dashboard sections.
 - Saved dashboard accordion state per printer.
 - Compact build/version chips in the header.
-- Configurable top navigation visibility for Portal, Files, Filament, Control, Kiosk, AI Training, and Logs.
+- Configurable top navigation visibility for Portal, Kiosk, AI Training, and Logs. File Manager, Filament Manager, and Control System are locked off in this public test build.
 - `/health` and `/api/version` diagnostics.
 
 ### Printer discovery and pairing
@@ -143,7 +143,7 @@ Optional dashboard actions include:
 - Speed preset selection.
 - Manual camera analysis.
 
-Command buttons are controlled by per-printer safety settings. Dangerous commands remain gated so an accidental phone tap does not become a tiny disaster opera.
+Command buttons are controlled by per-printer safety settings. Dangerous commands remain gated to reduce accidental activation from touch devices.
 
 ### Camera relay
 
@@ -175,13 +175,17 @@ Command buttons are controlled by per-printer safety settings. Dangerous command
 - Fullscreen portal route.
 - Portal camera rewrite shim that tries to route embedded camera views through cc2-dash's camera relay.
 
-### File, filament, and control tools
+### Experimental file, filament, and control tools
 
-- File Manager can list stock-style printer files, USB files, print history, and video records where firmware supports it.
-- Timelapse export/download helpers are included, but printer firmware may not reliably generate/export videos.
-- Filament Manager can display and control CANVAS/MMS filament slots using stock command shapes.
-- Filament load/unload/edit controls are idle-only.
-- Control page provides stock-style jog/home controls, speed presets, model/assistance/case fan controls, and light toggle.
+The File Manager, Filament Manager, and Control System are still present in the codebase, but they are disabled and locked off for this public test build. This keeps the community release focused on the stable dashboard, portal, camera relay, Failure Detection, kiosk, settings, logs, and AI training workflows while the command-heavy tools get more firmware testing.
+
+When the lock is removed in a future build, these retained tools include:
+
+- File Manager support for stock-style printer files, USB files, print history, and video records where firmware supports it.
+- Timelapse export/download helpers, subject to firmware behavior.
+- CANVAS/MMS filament slot display and command helpers.
+- Idle-only filament load/unload/edit controls.
+- Stock-style jog/home controls, speed presets, model/assistance/case fan controls, and light toggle.
 
 ### Themes
 
@@ -205,12 +209,12 @@ Theme preview cards are available in first-run setup and Settings.
 
 ## What cc2-dash does not do
 
-This matters, so here it is without the marketing fog machine:
+Important boundaries:
 
 - It does **not** make the printer safe to leave unattended.
 - It does **not** replace the stock Elegoo portal.
 - It does **not** guarantee failure detection.
-- It does **not** automatically pause/cancel prints from AI decisions in this version.
+- It does **not** cancel, resume, load/unload filament, jog axes, or override stock controls from AI decisions. Optional auto-pause is off by default and only sends pause after an explicit opt-in countdown.
 - It does **not** harden your LAN or provide production-grade authentication.
 - It does **not** fix firmware features that are broken in the stock portal itself.
 
@@ -589,7 +593,7 @@ Manual threshold values remain manual. Feedback suppression does not silently re
 
 ## Persistent AI learning
 
-cc2-dash now includes a lightweight SQLite-backed learning foundation for Portal AI feedback. The goal is long-term tuning without turning the Pi into a tiny screaming database furnace.
+cc2-dash now includes a lightweight SQLite-backed learning foundation for Portal AI feedback. The goal is long-term tuning while keeping resource use reasonable on Raspberry Pi-class hardware.
 
 Files used:
 
@@ -666,13 +670,7 @@ The page does **not** train an Ollama model, upload data, or send commands to th
 
 ## File Manager
 
-The File Manager is available but hidden by default.
-
-Enable it here:
-
-```text
-Settings → Menu / Features → File Manager
-```
+The File Manager is **experimental and locked off** in this public test build. The source code and API handlers remain in place, but the menu toggle is disabled and direct access returns a disabled-feature page until the release gate is removed.
 
 Sections:
 
@@ -703,13 +701,7 @@ Stock command IDs used include:
 
 ## Filament Manager / CANVAS controls
 
-The Filament Manager is available but hidden by default while real-printer behavior is tested.
-
-Enable it here:
-
-```text
-Settings → Menu / Features → Filament Manager
-```
+The Filament Manager is **experimental and locked off** in this public test build. The source code and API handlers remain in place, but the menu toggle is disabled and direct access returns a disabled-feature page until CANVAS/MMS behavior is tested more broadly.
 
 Current CANVAS/MMS features:
 
@@ -739,19 +731,13 @@ Stock command IDs used include:
 ```
 
 > [!WARNING]
-> Filament load/unload physically moves filament. Keep eyes on the printer while testing. The UI blocks these actions during active prints, but firmware behavior still deserves adult supervision and possibly a stern look.
+> Filament load/unload physically moves filament. Keep the printer supervised while testing. The UI blocks these actions during active prints, but firmware behavior still needs real-world validation.
 
 ---
 
 ## Control page
 
-The Control page is available but hidden by default because it exposes live printer controls.
-
-Enable it here:
-
-```text
-Settings → Menu / Features → Control page
-```
+The Control page is **experimental and locked off** in this public test build. The source code and API handlers remain in place, but the menu toggle is disabled and direct access returns a disabled-feature page until movement, fan, speed, and safety behavior receive more validation.
 
 Current control features:
 
@@ -1166,6 +1152,7 @@ cc2-dash/
 ├── templates/
 │   ├── base.html
 │   ├── control.html
+│   ├── feature_disabled.html
 │   ├── filaments.html
 │   ├── files.html
 │   ├── index.html
@@ -1184,6 +1171,24 @@ cc2-dash/
 ---
 
 ## Release notes
+
+
+### v1.2.57 community release prep
+
+- Locked the experimental File Manager, Filament Manager, and Control System off for public test builds while keeping their source, templates, routes, and command code in place for later re-enabling.
+- Added a single release-gate switch in `cc2_dash/config.py`: `COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS`. Set it to `False` to restore normal Settings toggles and direct access when these features are ready.
+- Server-side config migration and save handling now force locked experimental feature flags to `false`, including when users edit raw JSON.
+- Settings now shows locked experimental rows with disabled controls instead of presenting them as public-ready options.
+- Direct experimental pages now show a clean disabled-feature notice, and command-heavy experimental APIs return a clear 403 while locked. Dashboard G-code thumbnail image support remains available.
+- Polished README wording to make the public-test status, safety boundaries, and experimental feature status clearer.
+
+### v1.2.56 offline state detection
+
+- Adds backend connection-health classification separate from printer job state: online, stale, offline, connecting, and registration/auth error.
+- Uses MQTT registration plus fresh heartbeat/PONG timing as the primary source of truth so stale cached telemetry no longer makes the dashboard keep saying Printing or Idle when the printer is disconnected.
+- Status payloads now include `connection_state`, `offline`, `stale`, `connection_reason`, and `connection_health` fields.
+- Dashboard, Kiosk, Control page, browser title, and Failure Detection now show Offline / Connection Stale / Connecting instead of stale job state text.
+- Failure Detection and auto-pause are paused while printer telemetry is offline/stale, and the Control page locks all command controls until the printer is online again.
 
 ### v1.2.55 control camera relay fix
 
