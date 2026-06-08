@@ -15,7 +15,7 @@ CONFIG_PATH = Path(os.environ.get("CC2_CONFIG", DATA_DIR / "config.json"))
 # Release safety gate for community test builds. Flip this one value to False
 # when the experimental pages are ready to ship publicly. The code, routes, and
 # config keys stay in place; this only forces the public build defaults off.
-COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = True
+COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = False
 
 EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
     "file_manager_enabled": {
@@ -148,6 +148,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "features": {
         "portal_menu_enabled": True,
         "file_manager_enabled": False,
+        "upload_menu_enabled": True,
         "filament_manager_enabled": False,
         "control_page_enabled": False,
         "kiosk_enabled": True,
@@ -355,6 +356,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         # True default, so migrate once; users can re-enable it from Settings.
         features = cfg.setdefault("features", {})
         features.setdefault("portal_menu_enabled", True)
+        features.setdefault("upload_menu_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
         features.setdefault("control_page_enabled", False)
@@ -394,6 +396,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     try:
         features = cfg.setdefault("features", {})
         features.setdefault("portal_menu_enabled", True)
+        features.setdefault("upload_menu_enabled", True)
         features.setdefault("kiosk_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)

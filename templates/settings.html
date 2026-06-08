@@ -95,7 +95,7 @@
       <small>Show or hide top navigation features.</small>
     </summary>
     <div class="settings-panel-body">
-    <p class="muted">Dash and Settings stay pinned. Public-test features can be shown or hidden here. Experimental pages may be locked off in release builds until they are fully validated.</p>
+    <p class="muted">Dash and Settings stay pinned. This dev build has release locks disabled, so experimental pages can be shown or hidden here for testing.</p>
     <div class="settings-list">
       <div class="setting-row">
         <div>
@@ -104,6 +104,15 @@
         </div>
         <div class="setting-controls">
           <label><input id="portalMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.portal_menu_enabled|default(true) %}checked{% endif %}> show</label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Upload menu option</strong>
+          <small>Shows or hides the staged G-code upload page. Files are inspected by cc2-dash before you send them to the printer.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="uploadMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.upload_menu_enabled|default(true) %}checked{% endif %}> show</label>
         </div>
       </div>
       <div class="setting-row {% if experimental_feature_locks.get('file_manager_enabled') %}locked-feature-row{% endif %}">
