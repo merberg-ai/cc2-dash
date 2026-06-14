@@ -19,6 +19,36 @@ LOG = logging.getLogger("cc2_dash.cc2.client")
 class CommandError(RuntimeError):
     pass
 
+COMMAND_ERROR_CODES: dict[int, str] = {
+    1000: "Token/access-code validation failed",
+    1001: "Unknown interface",
+    1002: "Folder open failed",
+    1003: "Invalid parameter",
+    1004: "File write failed",
+    1007: "File delete failed",
+    1008: "Response data empty",
+    1009: "Printer busy",
+    1010: "Printer is not printing",
+    1014: "Invalid G-code file",
+    1015: "Thumbnail not found",
+    1017: "USB drive not detected",
+}
+
+
+def describe_command_error(result: Dict[str, Any]) -> str:
+    try:
+        code = int(result.get("error_code", 0) or 0)
+    except Exception:
+        code = 0
+    message = str(result.get("error_msg") or result.get("message") or "").strip()
+    label = COMMAND_ERROR_CODES.get(code)
+    if code and label:
+        suffix = f": {message}" if message and message.lower() != label.lower() else ""
+        return f"Printer command failed: {code} — {label}{suffix}"
+    if code:
+        return f"Printer command failed: {code}{(': ' + message) if message else ''}"
+    return message or f"Printer command failed: {result}"
+
 
 class PendingRequest:
     def __init__(self, raise_on_error_code: bool = True) -> None:
@@ -262,7 +292,7 @@ class Cc2Client:
                 and int(result.get("error_code", 0) or 0) != 0
                 and pending.raise_on_error_code
             ):
-                pending.error = str(result.get("error_msg") or result)
+                pending.error = describe_command_error(result)
             else:
                 pending.result = result if isinstance(result, dict) else {}
             pending.event.set()

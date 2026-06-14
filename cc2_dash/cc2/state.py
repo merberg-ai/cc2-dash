@@ -421,9 +421,16 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
     if isinstance(fans, dict):
         stock_fan_names = {
             "ModelFan": "model",
+            "modelFan": "model",
+            "fan": "model",
             "AuxiliaryFan": "auxiliary",
+            "auxiliaryFan": "auxiliary",
+            "aux_fan": "auxiliary",
             "BoxFan": "case",
+            "boxFan": "case",
+            "box_fan": "case",
             "ChamberFan": "case",
+            "chamber_fan": "case",
         }
         for name, fan in fans.items():
             key = stock_fan_names.get(str(name), str(name))

@@ -3628,31 +3628,25 @@ async def api_control_status(printer_id: str):
 
 @app.post("/api/printers/{printer_id}/control/fan")
 async def api_control_fan(printer_id: str, body: ControlFanRequest):
+    _raise_if_control_locked(printer_id)
     fan = str(body.fan or "").strip().lower().replace("-", "_")
     percent = int(max(0, min(100, body.percent)))
-    try:
-        current_status = _raise_if_control_locked(printer_id)
-        current = current_status.get("fans", {}) or {}
-    except HTTPException:
-        raise
-    except Exception:
-        current = {}
-    model = int(current.get("model") or 0)
-    aux = int(current.get("auxiliary") or 0)
-    box = int(current.get("case") or 0)
     params: dict[str, Any]
+    label: str
     if fan in {"model", "part", "tool", "fan"}:
-        model = percent
+        params = fan_params(model=percent)
+        label = "Model"
     elif fan in {"aux", "auxiliary", "assist", "assistance", "side"}:
-        aux = percent
+        params = fan_params(aux=percent)
+        label = "Auxiliary"
     elif fan in {"case", "box", "chassis", "chamber"}:
-        box = percent
+        params = fan_params(box=percent)
+        label = "Case"
     else:
         raise HTTPException(400, "Unknown fan. Use model, auxiliary, or case.")
-    params = fan_params(model=model, aux=aux, box=box)
     result = await asyncio.to_thread(_send_command, printer_id, SET_FAN_SPEED, params, True, 12.0)
-    log("info", f"Control fan {fan} set to {percent}%", "command", printer=printer_id)
-    return {"ok": True, "message": f"{fan.title()} fan set to {percent}%", "result": result.get("result")}
+    log("info", f"Control fan {label.lower()} set to {percent}%", "command", printer=printer_id)
+    return {"ok": True, "message": f"{label} fan set to {percent}%", "result": result.get("result")}
 
 
 @app.post("/api/printers/{printer_id}/control/speed")

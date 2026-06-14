@@ -3837,6 +3837,8 @@
     activePrint: false,
     controlsLocked: false,
     controlsLockedReason: '',
+    refreshing: false,
+    initialLoaded: false,
   };
 
   function showControlCameraPlaceholder(message, mode = 'warming') {
@@ -3950,7 +3952,7 @@
     const input = $(`[data-control-fan-input="${fan}"]`);
     const toggle = $(`[data-control-fan-toggle="${fan}"]`);
     const card = $(`[data-control-fan-card="${fan}"]`);
-    if (input && !quiet) input.value = value;
+    if (input && !quiet && input !== document.activeElement) input.value = value;
     if (toggle) toggle.checked = value > 0;
     if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
   }
@@ -4011,20 +4013,26 @@
     setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${esc(connLabel)} · ${commandStatus} · ${safety}${lockedText}${ageText}`, tone);
   }
 
-  async function refreshControlStatus(button = null) {
-    setButtonBusy(button, true, 'Refreshing...');
+  async function refreshControlStatus(button = null, options = {}) {
+    const silent = !!options.silent;
+    if (controlState.refreshing && !button) return null;
+    controlState.refreshing = true;
+    if (button) setButtonBusy(button, true, 'Refreshing...');
     const load = $('#controlLoadStatus');
-    if (load) load.classList.remove('hidden');
+    const showLoad = !!load && !silent && !controlState.initialLoaded;
+    if (showLoad) load.classList.remove('hidden');
     try {
       const data = await printerApi('/control/status');
       renderControlStatus(data);
+      controlState.initialLoaded = true;
       return data;
     } catch (err) {
-      setControlNote(esc(err.message), 'bad');
+      if (!silent || !controlState.initialLoaded) setControlNote(esc(err.message), 'bad');
       throw err;
     } finally {
-      if (load) load.classList.add('hidden');
-      setButtonBusy(button, false);
+      controlState.refreshing = false;
+      if (showLoad) load.classList.add('hidden');
+      if (button) setButtonBusy(button, false);
     }
   }
 
@@ -4033,11 +4041,11 @@
     try {
       const data = await printerApi(path, { method:'POST', body:JSON.stringify(body || {}) });
       toast(data.message || successMessage, 'success');
-      await refreshControlStatus();
+      window.setTimeout(() => refreshControlStatus(null, { silent: true }).catch(() => {}), 700);
       return data;
     } catch (err) {
       toast(err.message, 'error', 8500);
-      await refreshControlStatus().catch(() => {});
+      await refreshControlStatus(null, { silent: true }).catch(() => {});
       throw err;
     } finally {
       setButtonBusy(button, false);
@@ -4108,7 +4116,7 @@
       controlCommand('/control/light', { on: !!e.currentTarget.checked }, null, e.currentTarget.checked ? 'Light on' : 'Light off').catch(() => {});
     });
     refreshControlStatus().catch(err => toast(err.message, 'error'));
-    controlState.refreshTimer = setInterval(() => refreshControlStatus().catch(() => {}), 10000);
+    controlState.refreshTimer = setInterval(() => refreshControlStatus(null, { silent: true }).catch(() => {}), 12000);
   }
 
 

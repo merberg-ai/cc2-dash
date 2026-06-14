@@ -185,7 +185,14 @@ def start_print_params(
 
 
 def light_params(on: bool) -> Dict[str, Any]:
-    return {"brightness": 255 if on else 0, "power": 1 if on else 0}
+    """Return the stock ELEGOO MQTT/API light payload for method 1029.
+
+    The bundled stock portal's API-control path sends exactly ``{power: 1}``
+    or ``{power: 0}``.  Older cc2-dash builds also sent a friendly
+    ``brightness`` alias, but CC2 firmware can reject extra/unknown control
+    parameters with error 1003 (Invalid parameter).
+    """
+    return {"power": 1 if on else 0}
 
 
 def webcam_params(enable: bool) -> Dict[str, Any]:
@@ -202,47 +209,65 @@ def pct_to_pwm(value: Any) -> int:
 
 
 def fan_params(model: Optional[int] = None, box: Optional[int] = None, aux: Optional[int] = None, values_are_pwm: bool = False) -> Dict[str, Any]:
-    """Return the stock Elegoo fan-control payload for method 1030.
+    """Return the stock ELEGOO MQTT/API fan payload for method 1030.
 
-    The bundled stock portal sends ``TargetFanSpeed`` with PWM-ish 0-255 values
-    named ``ModelFan``, ``AuxiliaryFan``, and ``BoxFan``.  Keep this shape
-    deliberately close to stock for firmware builds that reject friendlier alias
-    fields.
+    The bundled stock portal's API-control path uses percentage values and the
+    exact keys ``fan`` (model/part fan), ``aux_fan`` (auxiliary/side fan), and
+    ``box_fan`` (case/chamber fan).  Sending the SDCP/websocket
+    ``TargetFanSpeed`` object through method 1030 can return success while not
+    actually changing the fan on CC2 firmware.
     """
     def conv(v: Optional[int]) -> Optional[int]:
         if v is None:
             return None
-        return int(max(0, min(255, v))) if values_are_pwm else pct_to_pwm(v)
+        if values_are_pwm:
+            return int(max(0, min(100, round(float(v) / 255.0 * 100.0))))
+        return int(max(0, min(100, round(float(v)))))
 
-    fans: Dict[str, Any] = {}
-    model_pwm, box_pwm, aux_pwm = conv(model), conv(box), conv(aux)
-    if model_pwm is not None:
-        fans["ModelFan"] = model_pwm
-    if aux_pwm is not None:
-        fans["AuxiliaryFan"] = aux_pwm
-    if box_pwm is not None:
-        fans["BoxFan"] = box_pwm
-    return {"TargetFanSpeed": fans}
+    out: Dict[str, Any] = {}
+    model_pct, box_pct, aux_pct = conv(model), conv(box), conv(aux)
+    if model_pct is not None:
+        out["fan"] = model_pct
+    if aux_pct is not None:
+        out["aux_fan"] = aux_pct
+    if box_pct is not None:
+        out["box_fan"] = box_pct
+    return out
 
 
 def print_speed_pct_params(percent: int | float) -> Dict[str, Any]:
-    value = int(max(1, min(300, round(float(percent)))))
-    return {"PrintSpeedPct": value}
+    """Return the stock ELEGOO MQTT/API print-speed payload for method 1031.
+
+    The CC2 API-control path uses speed modes, not literal percentage values:
+    0=silent, 1=balanced, 2=sport, 3=ludicrous.  Accept percent-like inputs
+    from the UI and map them to the closest stock mode.
+    """
+    try:
+        value = int(round(float(percent)))
+    except Exception:
+        value = 1
+    if value in {0, 1, 2, 3}:
+        mode = value
+    else:
+        mode = min(((50, 0), (100, 1), (130, 2), (160, 3)), key=lambda item: abs(item[0] - value))[1]
+    return {"mode": int(mode)}
 
 
 def home_axes_params(axis: str) -> Dict[str, Any]:
+    """Return stock ELEGOO API home-control params for method 1026."""
     value = str(axis or "XYZ").upper().strip()
     if value not in {"X", "Y", "Z", "XY", "XYZ"}:
         value = "XYZ"
-    return {"Axis": value}
+    return {"homed_axes": value.lower()}
 
 
 def move_axes_params(axis: str, step: int | float) -> Dict[str, Any]:
+    """Return stock ELEGOO API jog-control params for method 1027."""
     value = str(axis or "").upper().strip()
     if value not in {"X", "Y", "Z"}:
         value = "X"
     amount = float(step or 0)
-    return {"Axis": value, "Step": amount}
+    return {"axes": value.lower(), "distance": amount}
 
 
 def temperature_params(nozzle: Optional[int] = None, bed: Optional[int] = None) -> Dict[str, Any]:
