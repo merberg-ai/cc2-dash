@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block page_id %}upload{% endblock %}
+{% block content %}
+<section class="upload-stack fade-in">
+  <article class="card hero-card">
+    <h1>Upload G-code</h1>
+    <p>Stage a sliced <code>.gcode</code> file in cc2-dash first, inspect the details, then send it to the printer when it looks right.</p>
+    {% if printer %}
+    <div class="mini-note">Active printer: <strong>{{ printer.name }}</strong> · {{ printer.host }}</div>
+    {% else %}
+    <div class="mini-note warn-text">No active printer configured. Run setup first.</div>
+    {% endif %}
+  </article>
+
+  <article class="card upload-card">
+    <div class="card-title-row">
+      <div>
+        <h2>1. Stage file in cc2-dash</h2>
+        <p>Nothing is sent to the printer until you review the staged file and choose an action.</p>
+      </div>
+    </div>
+    <form id="stageUploadForm" class="stage-upload-form" action="" method="post" enctype="multipart/form-data" novalidate>
+      <div class="themed-file-picker">
+        <input id="stageUploadInput" class="file-input-hidden" name="file" type="file" accept=".gcode">
+        <label class="button secondary file-picker-button" for="stageUploadInput">Choose G-code</label>
+        <span id="stageUploadFileName" class="file-picker-name">No file selected</span>
+      </div>
+      <button class="button primary" id="stageUploadButton" type="button"><span class="button-label">Stage & Inspect</span></button>
+    </form>
+    <div id="stageUploadProgressWrap" class="upload-progress-wrap hidden" aria-live="polite">
+      <div class="upload-progress-meta">
+        <span id="stageUploadProgressLabel">Ready</span>
+        <strong id="stageUploadProgressPercent">0%</strong>
+      </div>
+      <div class="upload-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span id="stageUploadProgressBar" style="width:0%"></span>
+      </div>
+    </div>
+    <div id="stageUploadStatus" class="mini-note upload-status">No file staged.</div>
+  </article>
+
+  <article class="card upload-review-card hidden" id="stagedUploadCard">
+    <div class="card-title-row upload-review-title">
+      <div>
+        <h2>2. Review staged file</h2>
+        <p id="stagedUploadSubtitle">Inspect metadata before sending anything to the printer.</p>
+      </div>
+      <div class="button-row compact-actions">
+        <button class="button secondary tiny" id="clearStagedUploadButton" type="button">Clear</button>
+      </div>
+    </div>
+
+    <div class="upload-review-layout">
+      <div class="upload-thumbnail-panel" id="uploadThumbnailPanel">
+        <div class="upload-thumbnail-placeholder">No thumbnail found</div>
+      </div>
+      <div class="upload-summary-panel">
+        <div id="uploadSummaryGrid" class="upload-info-grid"></div>
+        <div class="upload-action-box">
+          <label>
+            <span>Printer storage</span>
+            <select id="stagedUploadStorage">
+              <option value="local" selected>Local printer storage</option>
+              <option value="u-disk">USB drive / u-disk</option>
+              <option value="sd-card">SD card</option>
+            </select>
+          </label>
+          <label class="printer-toggle-row compact-toggle"><input id="stagedUploadTimelapse" type="checkbox"><span>Request timelapse</span></label>
+          <div class="button-row compact-actions">
+            <button class="button secondary" id="sendStagedUploadButton" type="button"><span class="button-label">Upload to Printer</span></button>
+            <button class="button danger" id="printStagedUploadButton" type="button"><span class="button-label">Upload & Print</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <details class="upload-details" open>
+      <summary>Parsed print data</summary>
+      <div id="uploadKnownFields" class="upload-detail-grid"></div>
+    </details>
+
+    <details class="upload-details">
+      <summary>Raw slicer metadata</summary>
+      <div id="uploadRawMetadata" class="upload-metadata-table"></div>
+    </details>
+
+    <details class="upload-details">
+      <summary>G-code samples</summary>
+      <div class="gcode-sample-grid">
+        <div>
+          <strong>First commands</strong>
+          <pre id="uploadFirstCommands"></pre>
+        </div>
+        <div>
+          <strong>Last commands</strong>
+          <pre id="uploadLastCommands"></pre>
+        </div>
+      </div>
+    </details>
+  </article>
+</section>
+{% endblock %}

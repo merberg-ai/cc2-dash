@@ -14,7 +14,11 @@ CONFIG_PATH = Path(os.environ.get("CC2_CONFIG", DATA_DIR / "config.json"))
 
 # Release safety gate for community test builds. Flip this one value to False
 # when the experimental pages are ready to ship publicly. The code, routes, and
-# config keys stay in place; this only forces the public build defaults off.
+# config keys stay in place; this only forces the listed public-build locks off.
+#
+# Control is intentionally NOT listed below anymore. It has its own runtime
+# safety checks (offline/active-print command lockouts) and remains available in
+# this release branch.
 COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = True
 
 EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
@@ -27,11 +31,6 @@ EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
         "label": "Filament Manager",
         "path": "/filaments",
         "summary": "Temporarily disabled for public test builds while CANVAS/MMS commands are tested more broadly.",
-    },
-    "control_page_enabled": {
-        "label": "Control System",
-        "path": "/control",
-        "summary": "Temporarily disabled for public test builds while motion, fan, speed, and safety behavior receives more real-printer validation.",
     },
 }
 
@@ -116,7 +115,7 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     return data
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "config_version": 8,
+    "config_version": 9,
     "app": {
         "name": "cc2-dash",
         "bind_host": "0.0.0.0",
@@ -148,8 +147,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "features": {
         "portal_menu_enabled": True,
         "file_manager_enabled": False,
+        "upload_menu_enabled": True,
         "filament_manager_enabled": False,
-        "control_page_enabled": False,
+        "control_page_enabled": True,
         "kiosk_enabled": True,
         "ai_training_menu_enabled": True,
         "logs_menu_enabled": True,
@@ -355,9 +355,10 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         # True default, so migrate once; users can re-enable it from Settings.
         features = cfg.setdefault("features", {})
         features.setdefault("portal_menu_enabled", True)
+        features.setdefault("upload_menu_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
-        features.setdefault("control_page_enabled", False)
+        features.setdefault("control_page_enabled", True)
         if old_version < 2:
             features["file_manager_enabled"] = False
         # v1.2.28: Filament Manager is still experimental. Keep the route and
@@ -365,9 +366,15 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         # filament/CANVAS support is ready for normal use.
         if old_version < 3:
             features["filament_manager_enabled"] = False
+        # v1.2.56: Control has graduated from the public-build release lock.
+        # Turn the nav entry on for older saved configs that may have inherited
+        # the previous locked-off release default. Users can still hide it from
+        # Settings after this one-time migration.
+        if old_version < 9:
+            features["control_page_enabled"] = True
         dashboard = cfg.setdefault("dashboard", {})
         dashboard.setdefault("show_gcode_thumbnail", True)
-        cfg["config_version"] = 8
+        cfg["config_version"] = 9
     except Exception:
         pass
     try:
@@ -394,10 +401,11 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     try:
         features = cfg.setdefault("features", {})
         features.setdefault("portal_menu_enabled", True)
+        features.setdefault("upload_menu_enabled", True)
         features.setdefault("kiosk_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
-        features.setdefault("control_page_enabled", False)
+        features.setdefault("control_page_enabled", True)
         kiosk = cfg.setdefault("kiosk", {})
         kiosk.setdefault("refresh_interval_seconds", 3)
         kiosk.setdefault("camera_fit", "contain")

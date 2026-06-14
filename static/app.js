@@ -7,6 +7,8 @@
   let experimentalFeatureLocks = {};
   let dashboardThumbnailUrl = '';
   let dashboardThumbnailFile = '';
+  let stagedUploadInfo = null;
+  let stageUploadInProgress = false;
   const baseDocumentTitle = document.title || 'cc2-dash';
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
 
@@ -24,6 +26,7 @@
   function syncLockedFeatureControls() {
     const map = {
       file_manager_enabled: 'fileManagerEnabled',
+      upload_menu_enabled: 'uploadMenuEnabled',
       filament_manager_enabled: 'filamentManagerEnabled',
       control_page_enabled: 'controlPageEnabled',
     };
@@ -2017,6 +2020,7 @@
       cfg.features = cfg.features || {};
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
+      cfg.features.upload_menu_enabled = !!$('#uploadMenuEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       applyExperimentalFeatureLocksToConfig(cfg);
@@ -2114,6 +2118,7 @@
 
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
+      cfg.features.upload_menu_enabled = !!$('#uploadMenuEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       applyExperimentalFeatureLocksToConfig(cfg);
@@ -3097,6 +3102,298 @@
     }
   }
 
+
+  function setUploadStatus(message, tone = '') {
+    const status = $('#printerUploadStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.className = `mini-note upload-status ${tone || ''}`.trim();
+  }
+
+  async function uploadPrinterFile(event) {
+    event?.preventDefault?.();
+    const input = $('#printerUploadInput');
+    const file = input?.files?.[0];
+    if (!file) return toast('Pick a .gcode file first.', 'warn');
+    if (!String(file.name || '').toLowerCase().endsWith('.gcode')) {
+      setUploadStatus('Only .gcode files can be uploaded.', 'bad');
+      return toast('Only .gcode files can be uploaded.', 'warn');
+    }
+    const printAfter = !!$('#printerUploadPrintAfter')?.checked;
+    const timelapse = !!$('#printerUploadTimelapse')?.checked;
+    if (printAfter && !confirm(`Upload and start printing ${file.name}? Make sure the bed is clear.`)) return;
+    const id = activePrinterId();
+    if (!id) return toast('No printer configured. Run setup first.', 'error');
+    const button = $('#printerUploadButton');
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('storage_media', 'local');
+    form.append('print_after', printAfter ? 'true' : 'false');
+    form.append('start_layer', '0');
+    form.append('calibration', 'false');
+    form.append('platform_type', '0');
+    form.append('timelapse', timelapse ? 'true' : 'false');
+    setButtonBusy(button, true, 'Uploading...');
+    setUploadStatus(`Uploading ${file.name} to printer storage...`, 'warn');
+    try {
+      const resp = await fetch(`/api/printers/${encodeURIComponent(id)}/files/upload`, { method: 'POST', body: form });
+      const text = await resp.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+      if (!resp.ok) throw new Error(data.detail || data.message || `Upload failed with HTTP ${resp.status}`);
+      if (data.print_error) {
+        setUploadStatus(`Uploaded ${data.file_name || file.name}, but print did not start: ${data.print_error}`, 'warn');
+        toast('Uploaded, but start-print was blocked or failed.', 'warn', 9000);
+      } else {
+        const msg = data.printed ? `Uploaded and started ${data.file_name || file.name}.` : `Uploaded ${data.file_name || file.name}.`;
+        setUploadStatus(msg, 'good');
+        toast(msg, 'success', 6000);
+      }
+      input.value = '';
+      fileManagerState.loadedTabs.delete('printer');
+      await loadPrinterFiles();
+    } catch (err) {
+      setUploadStatus(err.message, 'bad');
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+
+  function setStageUploadStatus(message, tone = '') {
+    const status = $('#stageUploadStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.className = `mini-note upload-status ${tone || ''}`.trim();
+  }
+
+  function setStageUploadProgress(percent = 0, label = '', visible = true) {
+    const wrap = $('#stageUploadProgressWrap');
+    const bar = $('#stageUploadProgressBar');
+    const pct = $('#stageUploadProgressPercent');
+    const lab = $('#stageUploadProgressLabel');
+    const track = $('.upload-progress-track', wrap || document);
+    const clean = Math.max(0, Math.min(100, Number(percent) || 0));
+    if (wrap) wrap.classList.toggle('hidden', !visible);
+    if (bar) bar.style.width = `${clean}%`;
+    if (pct) pct.textContent = `${Math.round(clean)}%`;
+    if (lab && label) lab.textContent = label;
+    if (track) track.setAttribute('aria-valuenow', String(Math.round(clean)));
+  }
+
+  function setStageUploadFileName() {
+    const input = $('#stageUploadInput');
+    const label = $('#stageUploadFileName');
+    const file = input?.files?.[0];
+    if (!label) return;
+    label.textContent = file ? `${file.name} · ${bytesHuman(file.size)}` : 'No file selected';
+  }
+
+  function postStageUploadWithProgress(form, fileName) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/uploads/stage');
+      xhr.upload.addEventListener('loadstart', () => {
+        setStageUploadProgress(0, `Uploading ${fileName} to cc2-dash...`, true);
+      });
+      xhr.upload.addEventListener('progress', ev => {
+        if (!ev.lengthComputable) {
+          setStageUploadProgress(8, `Uploading ${fileName} to cc2-dash...`, true);
+          return;
+        }
+        const pct = Math.min(99, (ev.loaded / ev.total) * 100);
+        setStageUploadProgress(pct, `Uploading ${fileName} to cc2-dash...`, true);
+      });
+      xhr.upload.addEventListener('load', () => {
+        setStageUploadProgress(100, 'Upload received. Inspecting G-code...', true);
+      });
+      xhr.addEventListener('load', () => {
+        const text = xhr.responseText || '';
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(data.detail || data.message || `Stage failed with HTTP ${xhr.status}`));
+          return;
+        }
+        resolve(data);
+      });
+      xhr.addEventListener('error', () => reject(new Error('Upload failed before cc2-dash received the file.')));
+      xhr.addEventListener('abort', () => reject(new Error('Upload cancelled.')));
+      xhr.send(form);
+    });
+  }
+
+  function flattenUploadObject(value, prefix = '') {
+    const rows = [];
+    if (!value || typeof value !== 'object') return rows;
+    Object.entries(value).forEach(([key, val]) => {
+      const label = prefix ? `${prefix}.${key}` : key;
+      if (val && typeof val === 'object' && !Array.isArray(val)) rows.push(...flattenUploadObject(val, label));
+      else rows.push([label, Array.isArray(val) ? val.join(', ') : val]);
+    });
+    return rows;
+  }
+
+  function humanUploadValue(value) {
+    if (value === undefined || value === null || value === '') return '--';
+    if (typeof value === 'boolean') return value ? 'yes' : 'no';
+    return String(value);
+  }
+
+  function renderUploadPairs(container, pairs, emptyText = 'No data found.') {
+    if (!container) return;
+    const cleanPairs = pairs.filter(([k, v]) => k && v !== undefined && v !== null && v !== '');
+    if (!cleanPairs.length) {
+      container.innerHTML = `<div class="empty">${esc(emptyText)}</div>`;
+      return;
+    }
+    container.innerHTML = cleanPairs.map(([key, value]) => `
+      <div class="upload-info-row">
+        <span>${esc(String(key).replaceAll('_', ' '))}</span>
+        <strong>${esc(humanUploadValue(value))}</strong>
+      </div>
+    `).join('');
+  }
+
+  function renderStagedUpload(info) {
+    stagedUploadInfo = info || null;
+    const card = $('#stagedUploadCard');
+    if (!card || !info) return;
+    card.classList.remove('hidden');
+    $('#stagedUploadSubtitle').textContent = `${info.file_name || 'staged.gcode'} staged in cc2-dash. Review it, then upload when ready.`;
+
+    const thumbPanel = $('#uploadThumbnailPanel');
+    if (thumbPanel) {
+      if (info.thumbnail_url) {
+        const t = info.thumbnail || {};
+        const dims = t.width && t.height ? `${t.width}×${t.height}` : 'thumbnail';
+        thumbPanel.innerHTML = `<img class="upload-thumbnail" src="${esc(info.thumbnail_url)}" alt="G-code thumbnail"><div class="mini-note">${esc(dims)} · ${esc(t.media_type || 'image')}</div>`;
+      } else {
+        thumbPanel.innerHTML = '<div class="upload-thumbnail-placeholder">No thumbnail found</div>';
+      }
+    }
+
+    const summary = info.summary || {};
+    const dimensions = info.dimensions || {};
+    renderUploadPairs($('#uploadSummaryGrid'), [
+      ['File', info.file_name],
+      ['Size', bytesHuman(info.size)],
+      ['Uploaded', info.uploaded_at],
+      ['Lines', summary.line_count],
+      ['Commands', summary.command_lines],
+      ['Comments', summary.comment_lines],
+      ['Tool changes', summary.tool_changes],
+      ['Build width', dimensions.width ? `${dimensions.width} mm` : ''],
+      ['Build depth', dimensions.depth ? `${dimensions.depth} mm` : ''],
+      ['Build height', dimensions.height ? `${dimensions.height} mm` : ''],
+      ['MD5', info.md5],
+      ['SHA256', info.sha256],
+    ]);
+
+    const parsedPairs = [
+      ...flattenUploadObject(info.known_fields || {}, 'slicer'),
+      ...flattenUploadObject(info.dimensions || {}, 'bounds'),
+      ...flattenUploadObject(info.thumbnail || {}, 'thumbnail'),
+      ...flattenUploadObject(info.summary || {}, 'summary'),
+    ];
+    renderUploadPairs($('#uploadKnownFields'), parsedPairs, 'No slicer metadata or motion bounds could be parsed.');
+
+    const raw = info.raw_metadata || {};
+    renderUploadPairs($('#uploadRawMetadata'), Object.entries(raw), 'No raw slicer metadata comments found.');
+
+    const first = $('#uploadFirstCommands');
+    if (first) first.textContent = (info.first_commands || []).join('\n') || 'No commands found.';
+    const last = $('#uploadLastCommands');
+    if (last) last.textContent = (info.last_commands || []).join('\n') || 'No commands found.';
+  }
+
+  async function stageUploadGcode(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    if (stageUploadInProgress) return;
+    const input = $('#stageUploadInput');
+    const file = input?.files?.[0];
+    setStageUploadFileName();
+    if (!file) {
+      setStageUploadStatus('Pick a .gcode file first.', 'warn');
+      setStageUploadProgress(0, 'Waiting for a file...', false);
+      return toast('Pick a .gcode file first.', 'warn');
+    }
+    if (!String(file.name || '').toLowerCase().endsWith('.gcode')) {
+      setStageUploadStatus('Only .gcode files can be staged.', 'bad');
+      setStageUploadProgress(0, 'Invalid file type.', false);
+      return toast('Only .gcode files can be staged.', 'warn');
+    }
+    const button = $('#stageUploadButton');
+    const form = new FormData();
+    form.append('file', file, file.name);
+    stageUploadInProgress = true;
+    setButtonBusy(button, true, 'Uploading...');
+    setStageUploadStatus(`Uploading ${file.name} to cc2-dash...`, 'warn');
+    setStageUploadProgress(0, `Uploading ${file.name} to cc2-dash...`, true);
+    try {
+      const data = await postStageUploadWithProgress(form, file.name);
+      renderStagedUpload(data.upload || data);
+      setStageUploadProgress(100, 'Upload complete. Metadata ready.', true);
+      setStageUploadStatus(`Staged ${data.upload?.file_name || file.name}. Review the details below.`, 'good');
+      toast('G-code staged and inspected.', 'success');
+    } catch (err) {
+      setStageUploadProgress(0, 'Upload failed.', true);
+      setStageUploadStatus(err.message, 'bad');
+      toast(err.message, 'error', 9000);
+    } finally {
+      stageUploadInProgress = false;
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function sendStagedUpload(printAfter, button = null) {
+    if (!stagedUploadInfo?.id) return toast('Stage a G-code file first.', 'warn');
+    const id = activePrinterId();
+    if (!id) return toast('No printer configured. Run setup first.', 'error');
+    const fileName = stagedUploadInfo.file_name || 'staged.gcode';
+    if (printAfter && !confirm(`Upload and start printing ${fileName}? Make sure the bed is clear.`)) return;
+    const body = {
+      storage_media: $('#stagedUploadStorage')?.value || 'local',
+      print_after: !!printAfter,
+      start_layer: 0,
+      calibration: false,
+      platform_type: 0,
+      timelapse: !!$('#stagedUploadTimelapse')?.checked,
+    };
+    setButtonBusy(button, true, printAfter ? 'Uploading & starting...' : 'Uploading...');
+    setStageUploadStatus(printAfter ? `Uploading ${fileName} and requesting print start...` : `Uploading ${fileName} to printer...`, 'warn');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(id)}/uploads/${encodeURIComponent(stagedUploadInfo.id)}/send`, { method: 'POST', body: JSON.stringify(body) });
+      if (data.print_error) {
+        setStageUploadStatus(`Uploaded ${data.file_name || fileName}, but print did not start: ${data.print_error}`, 'warn');
+        toast('Uploaded, but start-print was blocked or failed.', 'warn', 9000);
+      } else {
+        const msg = data.printed ? `Uploaded and started ${data.file_name || fileName}.` : `Uploaded ${data.file_name || fileName} to printer.`;
+        setStageUploadStatus(msg, 'good');
+        toast(msg, 'success', 7000);
+      }
+    } catch (err) {
+      setStageUploadStatus(err.message, 'bad');
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function clearStagedUploadUi() {
+    stagedUploadInfo = null;
+    const card = $('#stagedUploadCard');
+    if (card) card.classList.add('hidden');
+    const input = $('#stageUploadInput');
+    if (input) input.value = '';
+    setStageUploadFileName();
+    setStageUploadProgress(0, 'Ready', false);
+    setStageUploadStatus('No file staged.');
+  }
+
+
   async function loadHistoryList() {
     const box = $('#historyList');
     const loading = $('#historyLoadStatus');
@@ -3535,11 +3832,17 @@
     refreshTimer: null,
     fans: { model: 0, auxiliary: 0, case: 0 },
     lastNonZeroFan: { model: 60, auxiliary: 60, case: 60 },
+    temperatures: {
+      extruder: { current: null, target: null, max: 350 },
+      bed: { current: null, target: null, max: 110 },
+    },
     allowCommands: false,
     allowDangerous: false,
     activePrint: false,
     controlsLocked: false,
     controlsLockedReason: '',
+    refreshing: false,
+    initialLoaded: false,
   };
 
   function showControlCameraPlaceholder(message, mode = 'warming') {
@@ -3631,7 +3934,7 @@
     const locked = !!(controlState.activePrint || controlState.controlsLocked);
     const canCommand = !!controlState.allowCommands && !locked;
     const canMove = !!controlState.allowDangerous && !locked;
-    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], #controlLightToggle').forEach(el => {
+    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], [data-control-temp-input], [data-control-temp-set], [data-control-temp-preset], #controlLightToggle').forEach(el => {
       el.disabled = !canCommand;
     });
     $$('[data-control-move], [data-control-home]').forEach(el => {
@@ -3653,9 +3956,67 @@
     const input = $(`[data-control-fan-input="${fan}"]`);
     const toggle = $(`[data-control-fan-toggle="${fan}"]`);
     const card = $(`[data-control-fan-card="${fan}"]`);
-    if (input && !quiet) input.value = value;
+    const labelIds = { model: 'controlFanModelLabel', auxiliary: 'controlFanAuxLabel', case: 'controlFanCaseLabel' };
+    if (input && !quiet && input !== document.activeElement) input.value = value;
+    const label = labelIds[fan] ? $(`#${labelIds[fan]}`) : null;
+    if (label) label.textContent = `${value}%`;
     if (toggle) toggle.checked = value > 0;
     if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
+  }
+
+  function controlFormatTemp(value, offText = 'off') {
+    if (value === null || value === undefined || value === '') return '--';
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '--';
+    if (n <= 0 && offText) return offText;
+    const rounded = Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
+    return `${rounded}°C`;
+  }
+
+  function controlTempDigitLimit(max) {
+    const n = Number(max);
+    if (!Number.isFinite(n) || n <= 0) return 3;
+    return controlClamp(String(Math.round(n)).length, 3, 4);
+  }
+
+  function controlSanitizeTempInput(raw, max) {
+    const limit = controlTempDigitLimit(max);
+    return String(raw ?? '').replace(/\D+/g, '').slice(0, limit);
+  }
+
+  function controlTempInputDisplayValue(current, target, max) {
+    const limitMax = Number.isFinite(Number(max)) ? Number(max) : 9999;
+    const targetNumber = Number(target);
+    if (Number.isFinite(targetNumber)) return String(controlClamp(Math.round(targetNumber), 0, limitMax));
+    const currentNumber = Number(current);
+    if (Number.isFinite(currentNumber)) return String(controlClamp(Math.round(currentNumber), 0, limitMax));
+    return '';
+  }
+
+  function setControlTempUi(tool, tempData = {}, quiet = false) {
+    const key = String(tool || '').toLowerCase();
+    if (!controlState.temperatures[key]) controlState.temperatures[key] = {};
+    const current = tempData.current ?? controlState.temperatures[key].current ?? null;
+    const target = tempData.target ?? controlState.temperatures[key].target ?? null;
+    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : 350));
+    controlState.temperatures[key] = { current, target, max };
+
+    const input = $(`[data-control-temp-input="${key}"]`);
+    if (input) {
+      input.max = String(max);
+      const digitLimit = controlTempDigitLimit(max);
+      input.maxLength = digitLimit;
+      input.size = digitLimit;
+      input.title = target && Number(target) > 0 ? 'Target temperature' : 'Current temperature; edit to set a new target';
+      if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target, max);
+    }
+
+    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
+    const readout = readoutIds[key] ? $(`#${readoutIds[key]}`) : null;
+    if (readout) readout.textContent = `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
+
+    const card = $(`[data-control-temp-card="${key}"]`);
+    if (card) card.dataset.heating = Number(target || 0) > 0 ? 'true' : 'false';
   }
 
   function updateControlSpeedUi(percent) {
@@ -3699,6 +4060,8 @@
     setControlFanUi('model', data.fans?.model ?? 0);
     setControlFanUi('auxiliary', data.fans?.auxiliary ?? 0);
     setControlFanUi('case', data.fans?.case ?? 0);
+    setControlTempUi('extruder', data.temperatures?.extruder || {});
+    setControlTempUi('bed', data.temperatures?.bed || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
     updateControlCommandLocks();
@@ -3714,20 +4077,26 @@
     setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${esc(connLabel)} · ${commandStatus} · ${safety}${lockedText}${ageText}`, tone);
   }
 
-  async function refreshControlStatus(button = null) {
-    setButtonBusy(button, true, 'Refreshing...');
+  async function refreshControlStatus(button = null, options = {}) {
+    const silent = !!options.silent;
+    if (controlState.refreshing && !button) return null;
+    controlState.refreshing = true;
+    if (button) setButtonBusy(button, true, 'Refreshing...');
     const load = $('#controlLoadStatus');
-    if (load) load.classList.remove('hidden');
+    const showLoad = !!load && !silent && !controlState.initialLoaded;
+    if (showLoad) load.classList.remove('hidden');
     try {
       const data = await printerApi('/control/status');
       renderControlStatus(data);
+      controlState.initialLoaded = true;
       return data;
     } catch (err) {
-      setControlNote(esc(err.message), 'bad');
+      if (!silent || !controlState.initialLoaded) setControlNote(esc(err.message), 'bad');
       throw err;
     } finally {
-      if (load) load.classList.add('hidden');
-      setButtonBusy(button, false);
+      controlState.refreshing = false;
+      if (showLoad) load.classList.add('hidden');
+      if (button) setButtonBusy(button, false);
     }
   }
 
@@ -3736,11 +4105,11 @@
     try {
       const data = await printerApi(path, { method:'POST', body:JSON.stringify(body || {}) });
       toast(data.message || successMessage, 'success');
-      await refreshControlStatus();
+      window.setTimeout(() => refreshControlStatus(null, { silent: true }).catch(() => {}), 700);
       return data;
     } catch (err) {
       toast(err.message, 'error', 8500);
-      await refreshControlStatus().catch(() => {});
+      await refreshControlStatus(null, { silent: true }).catch(() => {});
       throw err;
     } finally {
       setButtonBusy(button, false);
@@ -3779,6 +4148,22 @@
     await controlCommand('/control/fan', { fan, percent: value }, button, `${fan} fan set to ${value}%`);
   }
 
+  async function controlSetTemperature(tool, target, button = null) {
+    const key = String(tool || '').toLowerCase();
+    const max = Number(controlState.temperatures[key]?.max ?? (key === 'bed' ? 110 : 350));
+    const value = controlClamp(target, 0, max);
+    setControlTempUi(key, { ...(controlState.temperatures[key] || {}), target: value }, true);
+    await controlCommand('/control/temperature', { tool: key, target: value }, button, value <= 0 ? `${key} heater off` : `${key} target set to ${value}°C`);
+  }
+
+  function currentTempInputValue(tool) {
+    const key = String(tool || '').toLowerCase();
+    const input = $(`[data-control-temp-input="${key}"]`);
+    const fallback = controlState.temperatures[key]?.target ?? 0;
+    const max = Number(controlState.temperatures[key]?.max ?? (key === 'bed' ? 110 : 350));
+    return controlClamp(input?.value ?? fallback, 0, max);
+  }
+
   function currentFanInputValue(fan) {
     const input = $(`[data-control-fan-input="${fan}"]`);
     return controlClamp(input?.value ?? controlState.fans[fan] ?? 0, 0, 100);
@@ -3807,16 +4192,57 @@
       setControlFanUi(fan, value);
       controlSetFan(fan, value).catch(() => {});
     }));
+    $$('[data-control-temp-input]').forEach(input => {
+      input.addEventListener('keydown', e => {
+        if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault();
+      });
+      input.addEventListener('input', () => {
+        const tool = input.dataset.controlTempInput;
+        const max = Number(controlState.temperatures[tool]?.max ?? input.max ?? (tool === 'bed' ? 110 : 350));
+        const cleaned = controlSanitizeTempInput(input.value, max);
+        if (input.value !== cleaned) input.value = cleaned;
+        setControlTempUi(tool, { ...(controlState.temperatures[tool] || {}), target: input.value }, true);
+      });
+      input.addEventListener('change', () => controlSetTemperature(input.dataset.controlTempInput, input.value).catch(() => {}));
+    });
+    $$('[data-control-temp-set]').forEach(btn => btn.addEventListener('click', () => {
+      const tool = btn.dataset.controlTempSet;
+      controlSetTemperature(tool, currentTempInputValue(tool), btn).catch(() => {});
+    }));
+    $$('[data-control-temp-preset]').forEach(btn => btn.addEventListener('click', () => {
+      const tool = btn.dataset.controlTempPreset;
+      const target = Number(btn.dataset.target || 0);
+      const input = $(`[data-control-temp-input="${tool}"]`);
+      if (input) input.value = String(target);
+      controlSetTemperature(tool, target, btn).catch(() => {});
+    }));
     $('#controlLightToggle')?.addEventListener('change', e => {
       controlCommand('/control/light', { on: !!e.currentTarget.checked }, null, e.currentTarget.checked ? 'Light on' : 'Light off').catch(() => {});
     });
     refreshControlStatus().catch(err => toast(err.message, 'error'));
-    controlState.refreshTimer = setInterval(() => refreshControlStatus().catch(() => {}), 10000);
+    controlState.refreshTimer = setInterval(() => refreshControlStatus(null, { silent: true }).catch(() => {}), 12000);
+  }
+
+
+  function initUpload() {
+    const form = $('#stageUploadForm');
+    form?.addEventListener('submit', stageUploadGcode);
+    $('#stageUploadButton')?.addEventListener('click', stageUploadGcode);
+    $('#stageUploadInput')?.addEventListener('change', () => {
+      setStageUploadFileName();
+      setStageUploadProgress(0, 'Ready', false);
+      setStageUploadStatus('Ready to stage selected file.', '');
+    });
+    setStageUploadFileName();
+    $('#sendStagedUploadButton')?.addEventListener('click', e => sendStagedUpload(false, e.currentTarget));
+    $('#printStagedUploadButton')?.addEventListener('click', e => sendStagedUpload(true, e.currentTarget));
+    $('#clearStagedUploadButton')?.addEventListener('click', clearStagedUploadUi);
   }
 
 
   function initFiles() {
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
+    $('#printerUploadForm')?.addEventListener('submit', uploadPrinterFile);
     $('#refreshPrinterFilesButton')?.addEventListener('click', loadPrinterFiles);
     $('#refreshUsbFilesButton')?.addEventListener('click', loadUsbFiles);
     $('#usbBackButton')?.addEventListener('click', usbBack);
@@ -3852,6 +4278,7 @@
   if (page === 'settings') initSettings();
   if (page === 'ai-training') initAiTraining();
   if (page === 'logs') initLogs();
+  if (page === 'upload') initUpload();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();
   if (page === 'control') initControl();

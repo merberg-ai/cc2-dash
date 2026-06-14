@@ -4,8 +4,10 @@ import asyncio
 import base64
 import hashlib
 import io
+import os
 import ipaddress
 import json
+import re
 import shutil
 import time
 import uuid
@@ -16,7 +18,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 import requests
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -58,6 +60,7 @@ from .cc2.commands import (
     HOME_AXES,
     MOVE_AXES,
     SET_FAN_SPEED,
+    SET_TEMPERATURE,
     SET_FILAMENT_INFO,
     SET_MONO_FILAMENT_INFO,
     PAUSE_PRINT,
@@ -91,6 +94,7 @@ from .cc2.commands import (
     move_axes_params,
     print_speed_params,
     print_speed_pct_params,
+    temperature_params,
     webcam_params,
 )
 # Import CommandError from the client module explicitly for clarity.
@@ -539,14 +543,16 @@ def _idle_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any]
     ai_cfg = cfg.get("portal_ai", {}) or {}
     now = time.time()
     vision = status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None
+    exception_summary = str(status.get("exception_summary") or "").strip()
+    exception_active = bool(status.get("exceptions") or status.get("exception_details") or exception_summary)
     result = {
         "enabled": bool(ai_cfg.get("enabled", True)),
-        "state": "idle_standby",
-        "level": "low",
-        "risk": 0,
-        "summary": "Idle",
-        "reasons": ["Printer is idle; AI watchdog and vision monitoring are paused until an active print starts."],
-        "positives": ["Printer status is idle."],
+        "state": "printer_exception" if exception_active else "idle_standby",
+        "level": "watch" if exception_active else "low",
+        "risk": 45 if exception_active else 0,
+        "summary": "Printer Exception" if exception_active else "Idle",
+        "reasons": [f"Printer reported exception status: {exception_summary or status.get('exceptions')}.", "Printer is otherwise idle; vision monitoring is paused until an active print starts."] if exception_active else ["Printer is idle; AI watchdog and vision monitoring are paused until an active print starts."],
+        "positives": [] if exception_active else ["Printer status is idle."],
         "active_print": False,
         "monitor_active_prints_only": True,
         "last_check_epoch": now,
@@ -588,17 +594,22 @@ def _prep_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any]
     phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status)
     label = str(phase.get("label") or "Preparing")
     vision = status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None
+    exception_summary = str(status.get("exception_summary") or "").strip()
+    exception_active = bool(status.get("exceptions") or status.get("exception_details") or exception_summary)
     result = {
         "enabled": bool(ai_cfg.get("enabled", True)),
-        "state": "preparing",
-        "level": "low",
-        "risk": 0,
-        "summary": "Preparing",
+        "state": "printer_exception" if exception_active else "preparing",
+        "level": "watch" if exception_active else "low",
+        "risk": 45 if exception_active else 0,
+        "summary": "Printer Exception" if exception_active else "Preparing",
         "reasons": [
+            f"Printer reported exception status: {exception_summary or status.get('exceptions')}.",
+            f"Printer is also in a start-of-job state: {label}.",
+        ] if exception_active else [
             f"Printer is in a normal start-of-job state: {label}.",
             "Failure alerts are paused for preheating/homing/leveling and will resume when printing starts.",
         ],
-        "positives": ["Telemetry state says the printer is preparing the job, not failing it."],
+        "positives": [] if exception_active else ["Telemetry state says the printer is preparing the job, not failing it."],
         "active_print": bool(status.get("active_print")),
         "monitor_active_prints_only": bool(ai_cfg.get("monitor_active_prints_only", True)),
         "print_phase": phase,
@@ -1397,6 +1408,11 @@ class ControlSpeedRequest(BaseModel):
     percent: int = Field(ge=1, le=300)
 
 
+class ControlTemperatureRequest(BaseModel):
+    tool: str
+    target: int = Field(ge=0, le=350)
+
+
 class ControlMoveRequest(BaseModel):
     axis: str
     step: float = Field(gt=-301, lt=301)
@@ -1443,6 +1459,15 @@ class DeleteFileRequest(BaseModel):
 class StartPrintRequest(BaseModel):
     filename: str
     storage_media: str = "local"
+    start_layer: int = 0
+    calibration: bool = False
+    platform_type: int = 0
+    timelapse: bool = False
+
+
+class StagedUploadSendRequest(BaseModel):
+    storage_media: str = "local"
+    print_after: bool = False
     start_layer: int = 0
     calibration: bool = False
     platform_type: int = 0
@@ -1923,6 +1948,14 @@ async def ai_training_page(request: Request):
 @app.get("/logs", response_class=HTMLResponse)
 async def logs_page(request: Request):
     return templates.TemplateResponse("logs.html", view_context(request))
+
+
+@app.get("/upload", response_class=HTMLResponse)
+async def upload_page(request: Request):
+    cfg = load_config()
+    if needs_setup(cfg):
+        return RedirectResponse("/setup")
+    return templates.TemplateResponse("upload.html", view_context(request))
 
 
 @app.get("/files", response_class=HTMLResponse)
@@ -2574,6 +2607,10 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "status_text": str(health.get("label") if not reachable else state).replace("_", " ").title(),
         "status_code": n.get("status_code"),
         "sub_status_code": n.get("sub_status_code"),
+        "exceptions": n.get("exceptions") or [],
+        "exceptions_raw": n.get("exceptions_raw"),
+        "exception_details": n.get("exception_details") or [],
+        "exception_summary": n.get("exception_summary") or "",
         "message": health.get("reason") if not reachable else (snap.get("last_error") or "Registered with printer"),
         "progress": round(progress, 1),
         "print_time": seconds_to_hms((n.get("time") or {}).get("elapsed_sec")) or "-",
@@ -3440,16 +3477,21 @@ async def api_command(printer_id: str, body: CommandRequest):
     return await asyncio.to_thread(_send_command, printer_id, body.method, body.params, body.wait, body.timeout)
 
 
-def _fan_percent_from_raw(raw: Any) -> int | None:
+def _fan_percent_from_raw(raw: Any, *, assume_pwm: bool = True) -> int | None:
     if raw in (None, ""):
         return None
     try:
         value = float(raw)
     except Exception:
         return None
-    if value <= 100:
-        return int(max(0, min(100, round(value))))
-    return int(max(0, min(100, round(value / 255.0 * 100.0))))
+    if assume_pwm:
+        if 0.0 <= value <= 1.0 and not float(value).is_integer():
+            pct = value * 100.0
+        else:
+            pct = value / 255.0 * 100.0
+    else:
+        pct = value if value <= 100.0 else value / 255.0 * 100.0
+    return int(max(0, min(100, round(pct))))
 
 
 def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) -> int:
@@ -3467,18 +3509,35 @@ def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) ->
                 pct = _fan_percent_from_raw(fan.get("speed"))
                 if pct is not None:
                     return pct
-    stock = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", "fans", default={})
-    if isinstance(stock, dict):
+    mqtt_fans = _dig(raw, "fans", default={})
+    if isinstance(mqtt_fans, dict):
         for name in names:
             candidates = {
-                "model": ("ModelFan", "modelFan", "fan"),
+                "model": ("fan", "ModelFan", "modelFan"),
+                "auxiliary": ("aux_fan", "AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "aux": ("aux_fan", "AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "case": ("box_fan", "BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+                "box": ("box_fan", "BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+            }.get(str(name).lower(), (name,))
+            for key in candidates:
+                item = _dig(mqtt_fans, key, default=None)
+                raw_speed = item.get("speed", item.get("Speed")) if isinstance(item, dict) else item
+                pct = _fan_percent_from_raw(raw_speed, assume_pwm=True)
+                if pct is not None:
+                    return pct
+
+    current = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", default={})
+    if isinstance(current, dict):
+        for name in names:
+            candidates = {
+                "model": ("ModelFan", "modelFan", "ModeFan", "modeFan"),
                 "auxiliary": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
                 "aux": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
                 "case": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
                 "box": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
             }.get(str(name).lower(), (name,))
             for key in candidates:
-                pct = _fan_percent_from_raw(_dig(stock, key, default=None))
+                pct = _fan_percent_from_raw(_dig(current, key, default=None), assume_pwm=False)
                 if pct is not None:
                     return pct
     return 0
@@ -3524,6 +3583,74 @@ def _extract_light_on(n: dict[str, Any], raw: dict[str, Any]) -> bool:
     return light_on
 
 
+def _control_temp_value(*values: Any) -> float | None:
+    for value in values:
+        if value in (None, ""):
+            continue
+        try:
+            number = float(value)
+        except Exception:
+            continue
+        if number < -50 or number > 500:
+            continue
+        return round(number, 1)
+    return None
+
+
+def _control_temp_pair(normalized_obj: Any, raw_obj: Any, *, base_current: Any = None, base_target: Any = None, raw_current_keys: tuple[str, ...] = (), raw_target_keys: tuple[str, ...] = ()) -> dict[str, float | None]:
+    norm = normalized_obj if isinstance(normalized_obj, dict) else {}
+    rawd = raw_obj if isinstance(raw_obj, dict) else {}
+    current_values: list[Any] = [base_current, norm.get("actual"), norm.get("current"), norm.get("temperature")]
+    target_values: list[Any] = [base_target, norm.get("target")]
+    for key in raw_current_keys:
+        current_values.append(_dig(rawd, key, default=None))
+    for key in raw_target_keys:
+        target_values.append(_dig(rawd, key, default=None))
+    return {
+        "current": _control_temp_value(*current_values),
+        "target": _control_temp_value(*target_values),
+    }
+
+
+def _control_temperatures(n: dict[str, Any], raw: dict[str, Any], base_status: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    temps = (n.get("temps") or {}) if isinstance(n, dict) else {}
+    nozzle = (temps.get("nozzle") or temps.get("extruder") or {}) if isinstance(temps, dict) else {}
+    bed = (temps.get("bed") or temps.get("heater_bed") or {}) if isinstance(temps, dict) else {}
+    chamber = (temps.get("chamber") or {}) if isinstance(temps, dict) else {}
+
+    raw_extruder = _dig(raw, "extruder", "nozzle", "hotend", default={})
+    raw_bed = _dig(raw, "heater_bed", "bed", default={})
+    raw_chamber = _dig(raw, "ztemperature_sensor", "chamber", default={})
+
+    extruder_pair = _control_temp_pair(
+        nozzle,
+        raw_extruder,
+        base_current=base_status.get("hotend_current"),
+        base_target=base_status.get("hotend_target"),
+        raw_current_keys=("temperature", "actual", "current", "TempCurrentNozzle", "CurrentNozzleTemp"),
+        raw_target_keys=("target", "target_temperature", "TempTargetNozzle", "TargetNozzleTemp"),
+    )
+    bed_pair = _control_temp_pair(
+        bed,
+        raw_bed,
+        base_current=base_status.get("bed_current"),
+        base_target=base_status.get("bed_target"),
+        raw_current_keys=("temperature", "actual", "current", "TempCurrentHotbed", "CurrentHotbedTemp"),
+        raw_target_keys=("target", "target_temperature", "TempTargetHotbed", "TargetHotbedTemp"),
+    )
+    chamber_pair = _control_temp_pair(
+        chamber,
+        raw_chamber,
+        raw_current_keys=("temperature", "actual", "current"),
+        raw_target_keys=("target",),
+    )
+    return {
+        "extruder": {**extruder_pair, "min": 0, "max": 350, "label": "Extruder"},
+        "bed": {**bed_pair, "min": 0, "max": 110, "label": "Bed"},
+        "chamber": {**chamber_pair, "min": 0, "max": 100, "label": "Chamber", "editable": False},
+    }
+
+
 def _control_status_payload(printer_id: str) -> dict[str, Any]:
     _raise_if_feature_locked("control_page_enabled")
     pdata = _require_printer_running(printer_id)
@@ -3535,6 +3662,7 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
     base_status = _status_from_snapshot(printer_id, pdata, snap, attach_ai=False) if isinstance(snap, dict) else {}
     state = str(base_status.get("status_text") or n.get("sub_state") or n.get("state") or base_status.get("state") or ("connected" if connected else "offline"))
     speed_pct = _control_speed_percent(n, raw)
+    temperatures = _control_temperatures(n, raw, base_status)
     active_print = bool(base_status.get("active_print")) if connected else False
     phase = base_status.get("print_phase") if isinstance(base_status.get("print_phase"), dict) else _print_phase_from_status(base_status, snap)
     controls_locked = bool(active_print or not connected)
@@ -3574,6 +3702,7 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
             "auxiliary": _control_fan_percent(n, raw, "auxiliary", "aux", "AuxiliaryFan"),
             "case": _control_fan_percent(n, raw, "case", "box", "BoxFan"),
         },
+        "temperatures": temperatures,
         "light_on": _extract_light_on(n, raw),
         "camera_url": f"/api/printers/{printer_id}/camera/stream",
         "camera_snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
@@ -3598,32 +3727,54 @@ async def api_control_status(printer_id: str):
 
 @app.post("/api/printers/{printer_id}/control/fan")
 async def api_control_fan(printer_id: str, body: ControlFanRequest):
+    _raise_if_control_locked(printer_id)
     fan = str(body.fan or "").strip().lower().replace("-", "_")
     percent = int(max(0, min(100, body.percent)))
-    try:
-        current_status = _raise_if_control_locked(printer_id)
-        current = current_status.get("fans", {}) or {}
-    except HTTPException:
-        raise
-    except Exception:
-        current = {}
-    model = int(current.get("model") or 0)
-    aux = int(current.get("auxiliary") or 0)
-    box = int(current.get("case") or 0)
     params: dict[str, Any]
+    label: str
     if fan in {"model", "part", "tool", "fan"}:
-        model = percent
+        params = fan_params(model=percent)
+        label = "Model"
     elif fan in {"aux", "auxiliary", "assist", "assistance", "side"}:
-        aux = percent
+        params = fan_params(aux=percent)
+        label = "Auxiliary"
     elif fan in {"case", "box", "chassis", "chamber"}:
-        box = percent
+        params = fan_params(box=percent)
+        label = "Case"
     else:
         raise HTTPException(400, "Unknown fan. Use model, auxiliary, or case.")
-    params = fan_params(model=model, aux=aux, box=box)
     result = await asyncio.to_thread(_send_command, printer_id, SET_FAN_SPEED, params, True, 12.0)
-    log("info", f"Control fan {fan} set to {percent}%", "command", printer=printer_id)
-    return {"ok": True, "message": f"{fan.title()} fan set to {percent}%", "result": result.get("result")}
+    log("info", f"Control fan {label.lower()} set to {percent}%", "command", printer=printer_id)
+    return {"ok": True, "message": f"{label} fan set to {percent}%", "result": result.get("result")}
 
+
+
+@app.post("/api/printers/{printer_id}/control/temperature")
+async def api_control_temperature(printer_id: str, body: ControlTemperatureRequest):
+    _raise_if_control_locked(printer_id)
+    tool = str(body.tool or "").strip().lower().replace("-", "_")
+    target = int(body.target)
+    params: dict[str, Any]
+    label: str
+    max_target: int
+    if tool in {"extruder", "nozzle", "hotend", "toolhead"}:
+        max_target = 350
+        if target > max_target:
+            raise HTTPException(400, f"Extruder target must be between 0 and {max_target}°C.")
+        params = temperature_params(nozzle=target)
+        label = "Extruder"
+    elif tool in {"bed", "hotbed", "heater_bed", "build_plate", "plate"}:
+        max_target = 110
+        if target > max_target:
+            raise HTTPException(400, f"Bed target must be between 0 and {max_target}°C.")
+        params = temperature_params(bed=target)
+        label = "Bed"
+    else:
+        raise HTTPException(400, "Unknown temperature target. Use extruder or bed.")
+    result = await asyncio.to_thread(_send_command, printer_id, SET_TEMPERATURE, params, True, 12.0)
+    log("info", f"Control {label.lower()} temperature set to {target}°C", "command", printer=printer_id)
+    message = f"{label} heater turned off" if target <= 0 else f"{label} temperature set to {target}°C"
+    return {"ok": True, "message": message, "result": result.get("result")}
 
 @app.post("/api/printers/{printer_id}/control/speed")
 async def api_control_speed(printer_id: str, body: ControlSpeedRequest):
@@ -3841,6 +3992,604 @@ async def api_filaments_mono(printer_id: str):
     return result
 
 
+
+
+GCODE_UPLOAD_CHUNK_SIZE = 1024 * 1024
+GCODE_UPLOAD_MAX_RETRIES = 3
+GCODE_UPLOAD_STORAGE_ENDPOINTS = {
+    "local": "/upload",
+    "u-disk": "/upload/udisk",
+    "sd-card": "/upload/sdcard",
+}
+
+
+def _safe_gcode_upload_filename(raw_name: str | None) -> str:
+    """Normalize browser-provided filenames before handing them to the printer.
+
+    The stock portal sends only the basename in X-File-Name. Keep that behavior,
+    reject path-like names, and limit uploads to sliced G-code files for now.
+    """
+    candidate = Path(str(raw_name or "upload.gcode").replace("\\", "/")).name.strip()
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._- ()[]{}+")
+    cleaned = "".join(ch if ch in allowed else "_" for ch in candidate if ch not in "\r\n\t")
+    cleaned = cleaned.strip(" ._") or "upload.gcode"
+    if not cleaned.lower().endswith(".gcode"):
+        raise HTTPException(400, "Only .gcode files can be uploaded.")
+    if len(cleaned) > 180:
+        stem = cleaned[:-6][:170].rstrip(" ._") or "upload"
+        cleaned = f"{stem}.gcode"
+    return cleaned
+
+
+async def _write_upload_to_temp(upload: UploadFile, safe_name: str) -> tuple[Path, int, str, str]:
+    upload_dir = DATA_DIR / "tmp_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = upload_dir / f"{uuid.uuid4().hex}_{safe_name}"
+    md5_digest = hashlib.md5()
+    sha256_digest = hashlib.sha256()
+    total = 0
+    try:
+        with temp_path.open("wb") as out:
+            while True:
+                chunk = await upload.read(GCODE_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                md5_digest.update(chunk)
+                sha256_digest.update(chunk)
+                out.write(chunk)
+    except HTTPException:
+        temp_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(500, f"Failed to stage upload: {exc}") from exc
+    if total <= 0:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(400, "Uploaded file is empty.")
+    return temp_path, total, md5_digest.hexdigest(), sha256_digest.hexdigest()
+
+
+def _upload_reply_error(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("error_code", "ErrorCode", "code", "Code"):
+        if key not in payload:
+            continue
+        code = payload.get(key)
+        if code in (None, "", 0, "0", "000000"):
+            return ""
+        msg = payload.get("error_msg") or payload.get("ErrorMsg") or payload.get("message") or payload.get("Message") or payload.get("messages")
+        return f"Printer returned {key} {code}{': ' + str(msg) if msg else ''}"
+    if payload.get("success") is False:
+        return f"Printer reported upload failure: {payload.get('messages') or payload.get('message') or payload}"
+    return ""
+
+
+async def _upload_file_to_printer_http(
+    pcfg: Any,
+    temp_path: Path,
+    file_name: str,
+    storage_media: str,
+    file_md5: str,
+    total_size: int,
+) -> dict[str, Any]:
+    endpoint = GCODE_UPLOAD_STORAGE_ENDPOINTS.get(storage_media)
+    if not endpoint:
+        raise HTTPException(400, "Upload storage must be local, u-disk, or sd-card.")
+    target_url = f"http://{pcfg.host}{endpoint}"
+    sent = 0
+    chunks = 0
+    last_payload: Any = {}
+    timeout = httpx.Timeout(180.0, connect=8.0, read=180.0, write=180.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        with temp_path.open("rb") as fh:
+            while sent < total_size:
+                chunk = fh.read(min(GCODE_UPLOAD_CHUNK_SIZE, total_size - sent))
+                if not chunk:
+                    break
+                start = sent
+                end = sent + len(chunk)
+                headers = {
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": f"bytes {start}-{end - 1}/{total_size}",
+                    "X-Token": pcfg.access_code or "",
+                    "X-File-Name": quote(file_name, safe=""),
+                    "X-File-MD5": file_md5,
+                }
+                last_error = ""
+                for attempt in range(GCODE_UPLOAD_MAX_RETRIES + 1):
+                    try:
+                        response = await client.put(target_url, headers=headers, content=chunk)
+                        text = response.text
+                        if response.status_code >= 400:
+                            raise RuntimeError(f"HTTP {response.status_code}: {text[:240]}")
+                        try:
+                            payload = response.json() if text else {"error_code": 0}
+                        except Exception:
+                            payload = {"error_code": 0, "raw": text[:240]}
+                        err = _upload_reply_error(payload)
+                        if err:
+                            raise RuntimeError(err)
+                        last_payload = payload
+                        break
+                    except Exception as exc:
+                        last_error = str(exc)
+                        if attempt >= GCODE_UPLOAD_MAX_RETRIES:
+                            raise HTTPException(502, f"Printer upload failed at byte {start}: {last_error}") from exc
+                        await asyncio.sleep(0.25 * (attempt + 1))
+                sent = end
+                chunks += 1
+    return {
+        "error_code": 0,
+        "bytes": sent,
+        "chunks": chunks,
+        "endpoint": endpoint,
+        "printer_reply": last_payload,
+    }
+
+
+GCODE_STAGED_UPLOAD_DIR = DATA_DIR / "staged_gcode_uploads"
+GCODE_STAGED_META_DIR = DATA_DIR / "staged_gcode_uploads" / "meta"
+GCODE_STAGED_THUMB_DIR = DATA_DIR / "staged_gcode_uploads" / "thumbnails"
+GCODE_STAGE_RETENTION_SECONDS = 7 * 24 * 60 * 60
+GCODE_STAGE_RAW_METADATA_LIMIT = 120
+GCODE_STAGE_SAMPLE_COMMAND_LIMIT = 10
+
+
+def _stage_upload_id(value: str) -> str:
+    upload_id = re.sub(r"[^a-fA-F0-9]", "", str(value or "")).lower()
+    if len(upload_id) != 32:
+        raise HTTPException(404, "Staged upload not found")
+    return upload_id
+
+
+def _ensure_stage_dirs() -> None:
+    GCODE_STAGED_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    GCODE_STAGED_META_DIR.mkdir(parents=True, exist_ok=True)
+    GCODE_STAGED_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _path_is_under(child: Path, parent: Path) -> bool:
+    try:
+        child_resolved = child.resolve()
+        parent_resolved = parent.resolve()
+        return str(child_resolved).startswith(str(parent_resolved) + os.sep) or child_resolved == parent_resolved
+    except Exception:
+        return False
+
+
+def _meta_path_for_stage(upload_id: str) -> Path:
+    return GCODE_STAGED_META_DIR / f"{_stage_upload_id(upload_id)}.json"
+
+
+def _load_staged_upload(upload_id: str) -> dict[str, Any]:
+    meta_path = _meta_path_for_stage(upload_id)
+    if not meta_path.exists():
+        raise HTTPException(404, "Staged upload not found")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(500, f"Could not read staged upload metadata: {exc}") from exc
+    file_path = Path(str(meta.get("file_path") or ""))
+    if not file_path.exists() or not _path_is_under(file_path, GCODE_STAGED_UPLOAD_DIR):
+        raise HTTPException(404, "Staged G-code file is missing")
+    meta["file_path"] = str(file_path)
+    return meta
+
+
+def _public_staged_upload(meta: dict[str, Any]) -> dict[str, Any]:
+    public = dict(meta)
+    upload_id = str(public.get("id") or "")
+    public.pop("file_path", None)
+    thumb_path = public.pop("thumbnail_path", "") or ""
+    if thumb_path:
+        public["thumbnail_url"] = f"/api/uploads/{upload_id}/thumbnail?v={int(public.get('uploaded_at_epoch') or time.time())}"
+    else:
+        public["thumbnail_url"] = None
+    return public
+
+
+def _clean_comment_key(value: str) -> str:
+    value = re.sub(r"\s+", " ", str(value or "").strip().strip(";# "))
+    value = value.replace("_", " ").strip()
+    return value[:96]
+
+
+def _clean_metadata_value(value: str) -> str:
+    value = re.sub(r"\s+", " ", str(value or "").strip())
+    return value[:500]
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _gcode_bounds_payload(bounds: dict[str, list[float]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for axis in ("x", "y", "z"):
+        vals = bounds.get(axis) or []
+        if not vals:
+            continue
+        lo = min(vals)
+        hi = max(vals)
+        out[f"{axis}_min"] = round(lo, 3)
+        out[f"{axis}_max"] = round(hi, 3)
+        out[{"x": "width", "y": "depth", "z": "height"}[axis]] = round(hi - lo, 3)
+    return out
+
+
+def _maybe_store_comment_metadata(raw: dict[str, str], key: str, value: str) -> None:
+    key = _clean_comment_key(key)
+    value = _clean_metadata_value(value)
+    if not key or not value or len(raw) >= GCODE_STAGE_RAW_METADATA_LIMIT:
+        return
+    low_value = value.lower()
+    # Thumbnail base64 lines and long opaque blobs are not useful in the UI.
+    if len(value) > 180 and re.fullmatch(r"[A-Za-z0-9+/= ]+", value):
+        return
+    if key not in raw:
+        raw[key] = value
+
+
+def _update_known_gcode_fields(fields: dict[str, Any], key: str, value: str) -> None:
+    low = _clean_comment_key(key).lower()
+    val = _clean_metadata_value(value)
+    val_num = _float_or_none(val.split()[0] if val else None)
+    if not val:
+        return
+    if "estimated" in low and "time" in low:
+        fields.setdefault("estimated_print_time", val)
+    elif low in {"time", "print time"} or low.endswith("print time"):
+        fields.setdefault("estimated_print_time", val)
+    elif "filament used" in low or low in {"filament", "filament length"}:
+        bucket = fields.setdefault("filament", {})
+        if "g" in low and val_num is not None:
+            bucket.setdefault("used_g", val)
+        elif "mm" in low and val_num is not None:
+            bucket.setdefault("used_mm", val)
+        elif "m" in low and val_num is not None:
+            bucket.setdefault("used_m", val)
+        elif "cm3" in low or "volume" in low:
+            bucket.setdefault("used_volume", val)
+        else:
+            bucket.setdefault("used", val)
+    elif "filament type" in low or low == "filament_type":
+        fields.setdefault("filament", {}).setdefault("type", val)
+    elif "filament colour" in low or "filament color" in low:
+        fields.setdefault("filament", {}).setdefault("color", val)
+    elif "filament settings id" in low or "filament preset" in low:
+        fields.setdefault("filament", {}).setdefault("preset", val)
+    elif "layer height" in low and "first" not in low:
+        fields.setdefault("layer_height", val)
+    elif "first layer height" in low:
+        fields.setdefault("first_layer_height", val)
+    elif "nozzle" in low and "diameter" in low:
+        fields.setdefault("nozzle_diameter", val)
+    elif "bed" in low and ("temperature" in low or low.endswith("temp")):
+        fields.setdefault("temperatures", {}).setdefault("bed", val)
+    elif ("temperature" in low or low.endswith("temp")) and "bed" not in low:
+        fields.setdefault("temperatures", {}).setdefault("nozzle", val)
+    elif "g-code flavor" in low or "gcode flavor" in low:
+        fields.setdefault("gcode_flavor", val)
+    elif "slicer" in low or "generated by" in low:
+        fields.setdefault("slicer", val)
+    elif "total layer" in low or low in {"layer count", "layer_count"}:
+        if val_num is not None:
+            fields.setdefault("layers", {})["total"] = int(val_num)
+
+
+def _decode_thumbnail_block(block: dict[str, Any]) -> tuple[bytes | None, str | None]:
+    encoded = "".join(block.get("lines") or [])
+    if not encoded:
+        return None, None
+    try:
+        data = base64.b64decode("".join(encoded.split()), validate=False)
+    except Exception:
+        return None, None
+    media = _looks_like_image_bytes(data)
+    if not media:
+        marker = str(block.get("marker") or "").lower()
+        if "jpg" in marker or "jpeg" in marker:
+            media = "image/jpeg"
+        elif "png" in marker:
+            media = "image/png"
+    if not media:
+        return None, None
+    return data, media
+
+
+def _analyze_staged_gcode(file_path: Path, upload_id: str, safe_name: str, size: int, md5: str, sha256: str) -> dict[str, Any]:
+    raw_metadata: dict[str, str] = {}
+    known_fields: dict[str, Any] = {}
+    bounds: dict[str, list[float]] = {"x": [], "y": [], "z": []}
+    first_commands: list[str] = []
+    last_commands: list[str] = []
+    line_count = 0
+    comment_lines = 0
+    command_lines = 0
+    tool_changes = 0
+    max_layer_index: int | None = None
+    thumbnail_blocks: list[dict[str, Any]] = []
+    current_thumb: dict[str, Any] | None = None
+    absolute_xyz = True
+    current_pos: dict[str, float] = {"x": 0.0, "y": 0.0, "z": 0.0}
+    token_re = re.compile(r"([XYZEFS])\s*(-?\d+(?:\.\d+)?)", re.I)
+    thumb_begin_re = re.compile(r"^\s*;\s*(thumbnail(?:_[a-z0-9]+)?)\s+begin\s+(\d+)x(\d+)(?:\s+(\d+))?", re.I)
+    thumb_end_re = re.compile(r"^\s*;\s*thumbnail(?:_[a-z0-9]+)?\s+end", re.I)
+
+    with file_path.open("r", encoding="utf-8", errors="replace") as fh:
+        for raw_line in fh:
+            line_count += 1
+            line = raw_line.rstrip("\r\n")
+            stripped = line.strip()
+
+            if current_thumb is not None:
+                if thumb_end_re.match(stripped):
+                    thumbnail_blocks.append(current_thumb)
+                    current_thumb = None
+                else:
+                    data_line = stripped.lstrip(";").strip()
+                    if data_line:
+                        current_thumb.setdefault("lines", []).append(data_line)
+                continue
+
+            begin = thumb_begin_re.match(stripped)
+            if begin:
+                current_thumb = {
+                    "marker": begin.group(1),
+                    "width": int(begin.group(2)),
+                    "height": int(begin.group(3)),
+                    "declared_size": int(begin.group(4) or 0),
+                    "lines": [],
+                }
+                comment_lines += 1
+                continue
+
+            if stripped.startswith(";"):
+                comment_lines += 1
+                comment = stripped[1:].strip()
+                if comment:
+                    if comment.lower().startswith("generated by"):
+                        known_fields.setdefault("slicer", comment)
+                        _maybe_store_comment_metadata(raw_metadata, "Generated by", comment)
+                    kv = re.match(r"([^:=]{2,120})\s*[:=]\s*(.+)$", comment)
+                    if kv:
+                        key, value = kv.group(1), kv.group(2)
+                        _maybe_store_comment_metadata(raw_metadata, key, value)
+                        _update_known_gcode_fields(known_fields, key, value)
+                    layer_match = re.match(r"LAYER\s*[:=]\s*(-?\d+)", comment, re.I)
+                    if layer_match:
+                        try:
+                            max_layer_index = max(max_layer_index if max_layer_index is not None else -1, int(layer_match.group(1)))
+                        except Exception:
+                            pass
+                    layer_count = re.match(r"(?:LAYER_COUNT|total layers? count|total layers?)\s*[:=]\s*(\d+)", comment, re.I)
+                    if layer_count:
+                        known_fields.setdefault("layers", {})["total"] = int(layer_count.group(1))
+                continue
+
+            code = line.split(";", 1)[0].strip()
+            if not code:
+                continue
+            command_lines += 1
+            compact = code[:160]
+            if len(first_commands) < GCODE_STAGE_SAMPLE_COMMAND_LIMIT:
+                first_commands.append(compact)
+            last_commands.append(compact)
+            if len(last_commands) > GCODE_STAGE_SAMPLE_COMMAND_LIMIT:
+                last_commands.pop(0)
+            upper = code.upper()
+            if upper.startswith("G90"):
+                absolute_xyz = True
+            elif upper.startswith("G91"):
+                absolute_xyz = False
+            elif upper.startswith("T") and re.match(r"^T\d+\b", upper):
+                tool_changes += 1
+            if upper.startswith(("G0", "G1")):
+                seen_axis: dict[str, float] = {}
+                for axis, raw_value in token_re.findall(code):
+                    axis_l = axis.lower()
+                    if axis_l not in {"x", "y", "z"}:
+                        continue
+                    try:
+                        seen_axis[axis_l] = float(raw_value)
+                    except Exception:
+                        pass
+                for axis, value in seen_axis.items():
+                    pos = value if absolute_xyz else current_pos.get(axis, 0.0) + value
+                    current_pos[axis] = pos
+                    bounds.setdefault(axis, []).append(pos)
+
+    if current_thumb is not None:
+        thumbnail_blocks.append(current_thumb)
+
+    thumbnail_path = ""
+    thumbnail_info: dict[str, Any] | None = None
+    if thumbnail_blocks:
+        thumbnail_blocks.sort(key=lambda b: (int(b.get("width") or 0) * int(b.get("height") or 0), int(b.get("declared_size") or 0)), reverse=True)
+        for block in thumbnail_blocks:
+            data, media = _decode_thumbnail_block(block)
+            if not data or not media:
+                continue
+            ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}.get(media, ".img")
+            GCODE_STAGED_THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            path = GCODE_STAGED_THUMB_DIR / f"{upload_id}{ext}"
+            path.write_bytes(data)
+            thumbnail_path = str(path)
+            thumbnail_info = {
+                "width": block.get("width"),
+                "height": block.get("height"),
+                "media_type": media,
+                "bytes": len(data),
+                "count_found": len(thumbnail_blocks),
+            }
+            break
+
+    if max_layer_index is not None:
+        known_fields.setdefault("layers", {})["detected_max_index"] = max_layer_index
+        known_fields.setdefault("layers", {}).setdefault("estimated_total_from_indices", max_layer_index + 1)
+
+    dimensions = _gcode_bounds_payload(bounds)
+    uploaded_at_epoch = time.time()
+    return {
+        "id": upload_id,
+        "file_name": safe_name,
+        "size": size,
+        "md5": md5,
+        "sha256": sha256,
+        "uploaded_at_epoch": uploaded_at_epoch,
+        "uploaded_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(uploaded_at_epoch)),
+        "file_path": str(file_path),
+        "thumbnail_path": thumbnail_path,
+        "thumbnail": thumbnail_info,
+        "summary": {
+            "line_count": line_count,
+            "comment_lines": comment_lines,
+            "command_lines": command_lines,
+            "tool_changes": tool_changes,
+            "has_thumbnail": bool(thumbnail_path),
+        },
+        "known_fields": known_fields,
+        "dimensions": dimensions,
+        "raw_metadata": raw_metadata,
+        "first_commands": first_commands,
+        "last_commands": last_commands,
+    }
+
+
+def _save_staged_upload(meta: dict[str, Any]) -> None:
+    _ensure_stage_dirs()
+    path = _meta_path_for_stage(str(meta.get("id")))
+    path.write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _cleanup_old_staged_uploads() -> None:
+    try:
+        _ensure_stage_dirs()
+        cutoff = time.time() - GCODE_STAGE_RETENTION_SECONDS
+        for meta_path in GCODE_STAGED_META_DIR.glob("*.json"):
+            if meta_path.stat().st_mtime >= cutoff:
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+            for raw in (meta.get("file_path"), meta.get("thumbnail_path")):
+                if not raw:
+                    continue
+                path = Path(str(raw))
+                if _path_is_under(path, GCODE_STAGED_UPLOAD_DIR):
+                    path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+    except Exception as exc:
+        log("debug", f"Staged upload cleanup skipped: {exc}", "files")
+
+
+@app.post("/api/uploads/stage")
+async def api_stage_upload(file: UploadFile = File(...)):
+    _cleanup_old_staged_uploads()
+    safe_name = _safe_gcode_upload_filename(file.filename)
+    temp_path, total_size, file_md5, file_sha256 = await _write_upload_to_temp(file, safe_name)
+    _ensure_stage_dirs()
+    upload_id = uuid.uuid4().hex
+    staged_path = GCODE_STAGED_UPLOAD_DIR / f"{upload_id}_{safe_name}"
+    try:
+        shutil.move(str(temp_path), staged_path)
+        meta = await asyncio.to_thread(_analyze_staged_gcode, staged_path, upload_id, safe_name, total_size, file_md5, file_sha256)
+        _save_staged_upload(meta)
+        log("info", f"Staged {safe_name} ({total_size} bytes) for upload review", "files")
+        return {"ok": True, "upload": _public_staged_upload(meta)}
+    except HTTPException:
+        staged_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        staged_path.unlink(missing_ok=True)
+        raise HTTPException(500, f"Failed to inspect staged G-code: {exc}") from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+@app.get("/api/uploads/{upload_id}")
+async def api_get_staged_upload(upload_id: str):
+    meta = _load_staged_upload(upload_id)
+    return {"ok": True, "upload": _public_staged_upload(meta)}
+
+
+@app.get("/api/uploads/{upload_id}/thumbnail")
+async def api_staged_upload_thumbnail(upload_id: str):
+    meta = _load_staged_upload(upload_id)
+    thumb_path = Path(str(meta.get("thumbnail_path") or ""))
+    if not thumb_path.exists() or not _path_is_under(thumb_path, GCODE_STAGED_UPLOAD_DIR):
+        raise HTTPException(404, "No thumbnail found in this G-code file")
+    media = _looks_like_image_bytes(thumb_path.read_bytes()[:32]) or "image/png"
+    return FileResponse(thumb_path, media_type=media, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/printers/{printer_id}/uploads/{upload_id}/send")
+async def api_send_staged_upload(printer_id: str, upload_id: str, body: StagedUploadSendRequest | None = None):
+    body = body or StagedUploadSendRequest()
+    cfg = load_config()
+    pdata = (cfg.get("printers") or {}).get(printer_id)
+    if not pdata:
+        raise HTTPException(404, "Printer not configured")
+    pcfg = printer_dict_to_config(printer_id, pdata)
+    if not pcfg.allow_commands:
+        raise HTTPException(403, "Uploads are blocked by safety settings. Enable allow_commands for this printer first.")
+    media = normalize_storage_media(body.storage_media)
+    if media not in GCODE_UPLOAD_STORAGE_ENDPOINTS:
+        raise HTTPException(400, "Upload storage must be local, u-disk, or sd-card.")
+    meta = _load_staged_upload(upload_id)
+    file_path = Path(str(meta.get("file_path")))
+    safe_name = _safe_gcode_upload_filename(str(meta.get("file_name") or file_path.name))
+    total_size = int(meta.get("size") or file_path.stat().st_size)
+    file_md5 = str(meta.get("md5") or "")
+    if not file_md5:
+        file_md5 = hashlib.md5(file_path.read_bytes()).hexdigest()
+    upload_result = await _upload_file_to_printer_http(pcfg, file_path, safe_name, media, file_md5, total_size)
+    start_result: dict[str, Any] | None = None
+    print_error = ""
+    if body.print_after:
+        try:
+            start_result = await asyncio.to_thread(
+                _send_command,
+                printer_id,
+                START_PRINT,
+                start_print_params(safe_name, media, body.start_layer, body.calibration, body.platform_type, body.timelapse),
+                True,
+                20.0,
+                True,
+            )
+        except HTTPException as exc:
+            print_error = str(exc.detail)
+        except Exception as exc:
+            print_error = str(exc)
+    log(
+        "info",
+        f"Sent staged upload {safe_name} ({total_size} bytes) to {media}{' and requested print start' if body.print_after and not print_error else ''}",
+        "files",
+        printer=printer_id,
+    )
+    return {
+        "ok": True,
+        "file_name": safe_name,
+        "storage_media": media,
+        "size": total_size,
+        "md5": file_md5,
+        "upload_result": upload_result,
+        "printed": bool(body.print_after and not print_error),
+        "print_error": print_error,
+        "start_result": start_result,
+        "staged_upload": _public_staged_upload(meta),
+    }
+
+
 @app.get("/api/printers/{printer_id}/files")
 async def api_files(printer_id: str, path: str = "/", storage_media: str = "local", page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), offset: Optional[int] = None, limit: Optional[int] = None):
     _raise_if_feature_locked("file_manager_enabled")
@@ -3856,6 +4605,72 @@ async def api_files(printer_id: str, path: str = "/", storage_media: str = "loca
         False,
     )
     return _normalize_file_response(payload, media, directory)
+
+
+
+
+@app.post("/api/printers/{printer_id}/files/upload")
+async def api_file_upload(
+    printer_id: str,
+    file: UploadFile = File(...),
+    storage_media: str = Form("local"),
+    print_after: bool = Form(False),
+    start_layer: int = Form(0),
+    calibration: bool = Form(False),
+    platform_type: int = Form(0),
+    timelapse: bool = Form(False),
+):
+    _raise_if_feature_locked("file_manager_enabled")
+    cfg = load_config()
+    pdata = (cfg.get("printers") or {}).get(printer_id)
+    if not pdata:
+        raise HTTPException(404, "Printer not configured")
+    pcfg = printer_dict_to_config(printer_id, pdata)
+    if not pcfg.allow_commands:
+        raise HTTPException(403, "Uploads are blocked by safety settings. Enable allow_commands for this printer first.")
+    media = normalize_storage_media(storage_media)
+    if media not in GCODE_UPLOAD_STORAGE_ENDPOINTS:
+        raise HTTPException(400, "Upload storage must be local, u-disk, or sd-card.")
+    safe_name = _safe_gcode_upload_filename(file.filename)
+    temp_path, total_size, file_md5, _file_sha256 = await _write_upload_to_temp(file, safe_name)
+    try:
+        upload_result = await _upload_file_to_printer_http(pcfg, temp_path, safe_name, media, file_md5, total_size)
+        start_result: dict[str, Any] | None = None
+        print_error = ""
+        if print_after:
+            try:
+                start_result = await asyncio.to_thread(
+                    _send_command,
+                    printer_id,
+                    START_PRINT,
+                    start_print_params(safe_name, media, start_layer, calibration, platform_type, timelapse),
+                    True,
+                    20.0,
+                    True,
+                )
+            except HTTPException as exc:
+                print_error = str(exc.detail)
+            except Exception as exc:
+                print_error = str(exc)
+        log(
+            "info",
+            f"Uploaded {safe_name} ({total_size} bytes) to {media}{' and requested print start' if print_after and not print_error else ''}",
+            "files",
+            printer=printer_id,
+        )
+        return {
+            "ok": True,
+            "file_name": safe_name,
+            "storage_media": media,
+            "size": total_size,
+            "md5": file_md5,
+            "upload_result": upload_result,
+            "printed": bool(print_after and not print_error),
+            "print_error": print_error,
+            "start_result": start_result,
+        }
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 @app.get("/api/printers/{printer_id}/files/detail")
