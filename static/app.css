@@ -2163,13 +2163,15 @@ body[data-page="control"] .app-shell { width:min(100%, 1040px); }
 .control-temp-head { display:flex; align-items:center; justify-content:space-between; gap:.65rem; min-width:0; }
 .control-temp-head strong { color:var(--cc2-text); font-family:var(--font-heading); font-weight:900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .control-temp-readout { color:var(--cc2-primary); font-family:var(--font-number); font-size:.82rem; font-weight:900; white-space:nowrap; }
-.control-temp-row { display:grid; grid-template-columns:minmax(0, 1fr) auto auto; gap:.45rem; align-items:center; }
+.control-temp-row { display:grid; grid-template-columns:auto auto auto; gap:.45rem; align-items:center; justify-content:start; }
 .control-temp-row input,
 .control-temp-row .control-temp-input {
-  width:100%;
+  width:4.8rem;
+  max-width:4.8rem;
+  min-width:4.2rem;
   height:2.1rem;
   min-height:2.1rem;
-  padding:.35rem .55rem;
+  padding:.35rem .4rem;
   border:1px solid color-mix(in srgb, var(--cc2-border) 82%, transparent);
   border-radius:.55rem;
   outline:none;

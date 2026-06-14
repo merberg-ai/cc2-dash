@@ -3973,12 +3973,23 @@
     return `${rounded}°C`;
   }
 
-  function controlTempInputDisplayValue(current, target) {
+  function controlTempDigitLimit(max) {
+    const n = Number(max);
+    if (!Number.isFinite(n) || n <= 0) return 3;
+    return controlClamp(String(Math.round(n)).length, 3, 4);
+  }
+
+  function controlSanitizeTempInput(raw, max) {
+    const limit = controlTempDigitLimit(max);
+    return String(raw ?? '').replace(/\D+/g, '').slice(0, limit);
+  }
+
+  function controlTempInputDisplayValue(current, target, max) {
+    const limitMax = Number.isFinite(Number(max)) ? Number(max) : 9999;
     const targetNumber = Number(target);
-    if (Number.isFinite(targetNumber) && targetNumber > 0) return String(Math.round(targetNumber));
+    if (Number.isFinite(targetNumber)) return String(controlClamp(Math.round(targetNumber), 0, limitMax));
     const currentNumber = Number(current);
-    if (Number.isFinite(currentNumber) && currentNumber > 0) return String(Math.round(currentNumber));
-    if (Number.isFinite(targetNumber)) return String(Math.max(0, Math.round(targetNumber)));
+    if (Number.isFinite(currentNumber)) return String(controlClamp(Math.round(currentNumber), 0, limitMax));
     return '';
   }
 
@@ -3993,8 +4004,11 @@
     const input = $(`[data-control-temp-input="${key}"]`);
     if (input) {
       input.max = String(max);
+      const digitLimit = controlTempDigitLimit(max);
+      input.maxLength = digitLimit;
+      input.size = digitLimit;
       input.title = target && Number(target) > 0 ? 'Target temperature' : 'Current temperature; edit to set a new target';
-      if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target);
+      if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target, max);
     }
 
     const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
@@ -4179,8 +4193,14 @@
       controlSetFan(fan, value).catch(() => {});
     }));
     $$('[data-control-temp-input]').forEach(input => {
+      input.addEventListener('keydown', e => {
+        if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault();
+      });
       input.addEventListener('input', () => {
         const tool = input.dataset.controlTempInput;
+        const max = Number(controlState.temperatures[tool]?.max ?? input.max ?? (tool === 'bed' ? 110 : 350));
+        const cleaned = controlSanitizeTempInput(input.value, max);
+        if (input.value !== cleaned) input.value = cleaned;
         setControlTempUi(tool, { ...(controlState.temperatures[tool] || {}), target: input.value }, true);
       });
       input.addEventListener('change', () => controlSetTemperature(input.dataset.controlTempInput, input.value).catch(() => {}));
