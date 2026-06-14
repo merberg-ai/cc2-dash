@@ -3832,6 +3832,10 @@
     refreshTimer: null,
     fans: { model: 0, auxiliary: 0, case: 0 },
     lastNonZeroFan: { model: 60, auxiliary: 60, case: 60 },
+    temperatures: {
+      extruder: { current: null, target: null, max: 350 },
+      bed: { current: null, target: null, max: 110 },
+    },
     allowCommands: false,
     allowDangerous: false,
     activePrint: false,
@@ -3930,7 +3934,7 @@
     const locked = !!(controlState.activePrint || controlState.controlsLocked);
     const canCommand = !!controlState.allowCommands && !locked;
     const canMove = !!controlState.allowDangerous && !locked;
-    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], #controlLightToggle').forEach(el => {
+    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], [data-control-temp-input], [data-control-temp-set], [data-control-temp-preset], #controlLightToggle').forEach(el => {
       el.disabled = !canCommand;
     });
     $$('[data-control-move], [data-control-home]').forEach(el => {
@@ -3958,6 +3962,37 @@
     if (label) label.textContent = `${value}%`;
     if (toggle) toggle.checked = value > 0;
     if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
+  }
+
+  function controlFormatTemp(value, offText = 'off') {
+    if (value === null || value === undefined || value === '') return '--';
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '--';
+    if (n <= 0 && offText) return offText;
+    const rounded = Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
+    return `${rounded}°C`;
+  }
+
+  function setControlTempUi(tool, tempData = {}, quiet = false) {
+    const key = String(tool || '').toLowerCase();
+    if (!controlState.temperatures[key]) controlState.temperatures[key] = {};
+    const current = tempData.current ?? controlState.temperatures[key].current ?? null;
+    const target = tempData.target ?? controlState.temperatures[key].target ?? null;
+    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : 350));
+    controlState.temperatures[key] = { current, target, max };
+
+    const input = $(`[data-control-temp-input="${key}"]`);
+    if (input) {
+      input.max = String(max);
+      if (!quiet && input !== document.activeElement) input.value = target && Number(target) > 0 ? Math.round(Number(target)) : '';
+    }
+
+    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
+    const readout = readoutIds[key] ? $(`#${readoutIds[key]}`) : null;
+    if (readout) readout.textContent = `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
+
+    const card = $(`[data-control-temp-card="${key}"]`);
+    if (card) card.dataset.heating = Number(target || 0) > 0 ? 'true' : 'false';
   }
 
   function updateControlSpeedUi(percent) {
@@ -4001,6 +4036,8 @@
     setControlFanUi('model', data.fans?.model ?? 0);
     setControlFanUi('auxiliary', data.fans?.auxiliary ?? 0);
     setControlFanUi('case', data.fans?.case ?? 0);
+    setControlTempUi('extruder', data.temperatures?.extruder || {});
+    setControlTempUi('bed', data.temperatures?.bed || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
     updateControlCommandLocks();
@@ -4087,6 +4124,22 @@
     await controlCommand('/control/fan', { fan, percent: value }, button, `${fan} fan set to ${value}%`);
   }
 
+  async function controlSetTemperature(tool, target, button = null) {
+    const key = String(tool || '').toLowerCase();
+    const max = Number(controlState.temperatures[key]?.max ?? (key === 'bed' ? 110 : 350));
+    const value = controlClamp(target, 0, max);
+    setControlTempUi(key, { ...(controlState.temperatures[key] || {}), target: value }, true);
+    await controlCommand('/control/temperature', { tool: key, target: value }, button, value <= 0 ? `${key} heater off` : `${key} target set to ${value}°C`);
+  }
+
+  function currentTempInputValue(tool) {
+    const key = String(tool || '').toLowerCase();
+    const input = $(`[data-control-temp-input="${key}"]`);
+    const fallback = controlState.temperatures[key]?.target ?? 0;
+    const max = Number(controlState.temperatures[key]?.max ?? (key === 'bed' ? 110 : 350));
+    return controlClamp(input?.value ?? fallback, 0, max);
+  }
+
   function currentFanInputValue(fan) {
     const input = $(`[data-control-fan-input="${fan}"]`);
     return controlClamp(input?.value ?? controlState.fans[fan] ?? 0, 0, 100);
@@ -4114,6 +4167,24 @@
       const value = toggle.checked ? (controlState.lastNonZeroFan[fan] || 60) : 0;
       setControlFanUi(fan, value);
       controlSetFan(fan, value).catch(() => {});
+    }));
+    $$('[data-control-temp-input]').forEach(input => {
+      input.addEventListener('input', () => {
+        const tool = input.dataset.controlTempInput;
+        setControlTempUi(tool, { ...(controlState.temperatures[tool] || {}), target: input.value }, true);
+      });
+      input.addEventListener('change', () => controlSetTemperature(input.dataset.controlTempInput, input.value).catch(() => {}));
+    });
+    $$('[data-control-temp-set]').forEach(btn => btn.addEventListener('click', () => {
+      const tool = btn.dataset.controlTempSet;
+      controlSetTemperature(tool, currentTempInputValue(tool), btn).catch(() => {});
+    }));
+    $$('[data-control-temp-preset]').forEach(btn => btn.addEventListener('click', () => {
+      const tool = btn.dataset.controlTempPreset;
+      const target = Number(btn.dataset.target || 0);
+      const input = $(`[data-control-temp-input="${tool}"]`);
+      if (input) input.value = target > 0 ? String(target) : '';
+      controlSetTemperature(tool, target, btn).catch(() => {});
     }));
     $('#controlLightToggle')?.addEventListener('change', e => {
       controlCommand('/control/light', { on: !!e.currentTarget.checked }, null, e.currentTarget.checked ? 'Light on' : 'Light off').catch(() => {});

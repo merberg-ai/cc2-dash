@@ -280,16 +280,18 @@ def move_axes_params(axis: str, step: int | float) -> Dict[str, Any]:
 
 
 def temperature_params(nozzle: Optional[int] = None, bed: Optional[int] = None) -> Dict[str, Any]:
-    # The stock portal passes a prebuilt object into TemperatureControl. Include
-    # the known SDCP-ish names plus the MQTT status object names; firmware should
-    # ignore unknown keys, and this gives us a better shot across revisions.
+    """Return the stock ELEGOO MQTT/API temperature payload for method 1028.
+
+    The bundled stock portal's control UI calls TemperatureControl with exactly
+    ``{extruder: <celsius>}`` for the nozzle and ``{heater_bed: <celsius>}``
+    for the bed.  Keep this strict: this firmware family has already rejected
+    extra/friendly alias keys on other control commands with error 1003.
+    """
     out: Dict[str, Any] = {}
     if nozzle is not None:
-        n = int(nozzle)
-        out.update({"nozzle": n, "extruder": n, "target_nozzle": n, "TempTargetNozzle": n})
+        out["extruder"] = int(nozzle)
     if bed is not None:
-        b = int(bed)
-        out.update({"bed": b, "heater_bed": b, "target_bed": b, "TempTargetHotbed": b})
+        out["heater_bed"] = int(bed)
     return out
 
 

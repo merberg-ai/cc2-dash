@@ -82,6 +82,42 @@
           <button class="step-button" type="button" data-control-step="30">30mm</button>
         </div>
 
+        <div class="control-temp-grid" aria-label="Temperature controls">
+          <div class="control-temp-card" data-control-temp-card="extruder">
+            <div class="control-temp-head">
+              <strong>🔥 Extruder</strong>
+              <span id="controlTempExtruderReadout" class="control-temp-readout">-- / --</span>
+            </div>
+            <div class="control-temp-row">
+              <input id="controlTempExtruder" type="number" min="0" max="350" step="1" placeholder="Target °C" data-control-temp-input="extruder">
+              <button class="button secondary tiny control-temp-set" type="button" data-control-temp-set="extruder"><span class="button-label">Set</span></button>
+              <button class="button danger tiny control-temp-off" type="button" data-control-temp-preset="extruder" data-target="0"><span class="button-label">Off</span></button>
+            </div>
+            <div class="control-temp-presets">
+              <button class="step-button" type="button" data-control-temp-preset="extruder" data-target="200">PLA</button>
+              <button class="step-button" type="button" data-control-temp-preset="extruder" data-target="230">PETG</button>
+              <button class="step-button" type="button" data-control-temp-preset="extruder" data-target="250">ABS</button>
+            </div>
+          </div>
+
+          <div class="control-temp-card" data-control-temp-card="bed">
+            <div class="control-temp-head">
+              <strong>🌡 Bed</strong>
+              <span id="controlTempBedReadout" class="control-temp-readout">-- / --</span>
+            </div>
+            <div class="control-temp-row">
+              <input id="controlTempBed" type="number" min="0" max="110" step="1" placeholder="Target °C" data-control-temp-input="bed">
+              <button class="button secondary tiny control-temp-set" type="button" data-control-temp-set="bed"><span class="button-label">Set</span></button>
+              <button class="button danger tiny control-temp-off" type="button" data-control-temp-preset="bed" data-target="0"><span class="button-label">Off</span></button>
+            </div>
+            <div class="control-temp-presets">
+              <button class="step-button" type="button" data-control-temp-preset="bed" data-target="60">PLA</button>
+              <button class="step-button" type="button" data-control-temp-preset="bed" data-target="75">PETG</button>
+              <button class="step-button" type="button" data-control-temp-preset="bed" data-target="100">ABS</button>
+            </div>
+          </div>
+        </div>
+
         <div class="control-speed-panel">
           <div class="control-section-title">
             <strong>Print Speed</strong>
