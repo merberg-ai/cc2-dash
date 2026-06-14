@@ -3832,11 +3832,17 @@
     refreshTimer: null,
     fans: { model: 0, auxiliary: 0, case: 0 },
     lastNonZeroFan: { model: 60, auxiliary: 60, case: 60 },
+    temperatures: {
+      extruder: { current: null, target: null, max: 350 },
+      bed: { current: null, target: null, max: 110 },
+    },
     allowCommands: false,
     allowDangerous: false,
     activePrint: false,
     controlsLocked: false,
     controlsLockedReason: '',
+    refreshing: false,
+    initialLoaded: false,
   };
 
   function showControlCameraPlaceholder(message, mode = 'warming') {
@@ -3928,7 +3934,7 @@
     const locked = !!(controlState.activePrint || controlState.controlsLocked);
     const canCommand = !!controlState.allowCommands && !locked;
     const canMove = !!controlState.allowDangerous && !locked;
-    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], #controlLightToggle').forEach(el => {
+    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], [data-control-temp-input], [data-control-temp-set], [data-control-temp-preset], #controlLightToggle').forEach(el => {
       el.disabled = !canCommand;
     });
     $$('[data-control-move], [data-control-home]').forEach(el => {
@@ -3950,9 +3956,67 @@
     const input = $(`[data-control-fan-input="${fan}"]`);
     const toggle = $(`[data-control-fan-toggle="${fan}"]`);
     const card = $(`[data-control-fan-card="${fan}"]`);
-    if (input && !quiet) input.value = value;
+    const labelIds = { model: 'controlFanModelLabel', auxiliary: 'controlFanAuxLabel', case: 'controlFanCaseLabel' };
+    if (input && !quiet && input !== document.activeElement) input.value = value;
+    const label = labelIds[fan] ? $(`#${labelIds[fan]}`) : null;
+    if (label) label.textContent = `${value}%`;
     if (toggle) toggle.checked = value > 0;
     if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
+  }
+
+  function controlFormatTemp(value, offText = 'off') {
+    if (value === null || value === undefined || value === '') return '--';
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '--';
+    if (n <= 0 && offText) return offText;
+    const rounded = Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
+    return `${rounded}°C`;
+  }
+
+  function controlTempDigitLimit(max) {
+    const n = Number(max);
+    if (!Number.isFinite(n) || n <= 0) return 3;
+    return controlClamp(String(Math.round(n)).length, 3, 4);
+  }
+
+  function controlSanitizeTempInput(raw, max) {
+    const limit = controlTempDigitLimit(max);
+    return String(raw ?? '').replace(/\D+/g, '').slice(0, limit);
+  }
+
+  function controlTempInputDisplayValue(current, target, max) {
+    const limitMax = Number.isFinite(Number(max)) ? Number(max) : 9999;
+    const targetNumber = Number(target);
+    if (Number.isFinite(targetNumber)) return String(controlClamp(Math.round(targetNumber), 0, limitMax));
+    const currentNumber = Number(current);
+    if (Number.isFinite(currentNumber)) return String(controlClamp(Math.round(currentNumber), 0, limitMax));
+    return '';
+  }
+
+  function setControlTempUi(tool, tempData = {}, quiet = false) {
+    const key = String(tool || '').toLowerCase();
+    if (!controlState.temperatures[key]) controlState.temperatures[key] = {};
+    const current = tempData.current ?? controlState.temperatures[key].current ?? null;
+    const target = tempData.target ?? controlState.temperatures[key].target ?? null;
+    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : 350));
+    controlState.temperatures[key] = { current, target, max };
+
+    const input = $(`[data-control-temp-input="${key}"]`);
+    if (input) {
+      input.max = String(max);
+      const digitLimit = controlTempDigitLimit(max);
+      input.maxLength = digitLimit;
+      input.size = digitLimit;
+      input.title = target && Number(target) > 0 ? 'Target temperature' : 'Current temperature; edit to set a new target';
+      if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target, max);
+    }
+
+    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
+    const readout = readoutIds[key] ? $(`#${readoutIds[key]}`) : null;
+    if (readout) readout.textContent = `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
+
+    const card = $(`[data-control-temp-card="${key}"]`);
+    if (card) card.dataset.heating = Number(target || 0) > 0 ? 'true' : 'false';
   }
 
   function updateControlSpeedUi(percent) {
@@ -3996,6 +4060,8 @@
     setControlFanUi('model', data.fans?.model ?? 0);
     setControlFanUi('auxiliary', data.fans?.auxiliary ?? 0);
     setControlFanUi('case', data.fans?.case ?? 0);
+    setControlTempUi('extruder', data.temperatures?.extruder || {});
+    setControlTempUi('bed', data.temperatures?.bed || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
     updateControlCommandLocks();
@@ -4011,20 +4077,26 @@
     setControlNote(`<strong>${esc(data.status_text || 'Unknown')}</strong> · ${esc(connLabel)} · ${commandStatus} · ${safety}${lockedText}${ageText}`, tone);
   }
 
-  async function refreshControlStatus(button = null) {
-    setButtonBusy(button, true, 'Refreshing...');
+  async function refreshControlStatus(button = null, options = {}) {
+    const silent = !!options.silent;
+    if (controlState.refreshing && !button) return null;
+    controlState.refreshing = true;
+    if (button) setButtonBusy(button, true, 'Refreshing...');
     const load = $('#controlLoadStatus');
-    if (load) load.classList.remove('hidden');
+    const showLoad = !!load && !silent && !controlState.initialLoaded;
+    if (showLoad) load.classList.remove('hidden');
     try {
       const data = await printerApi('/control/status');
       renderControlStatus(data);
+      controlState.initialLoaded = true;
       return data;
     } catch (err) {
-      setControlNote(esc(err.message), 'bad');
+      if (!silent || !controlState.initialLoaded) setControlNote(esc(err.message), 'bad');
       throw err;
     } finally {
-      if (load) load.classList.add('hidden');
-      setButtonBusy(button, false);
+      controlState.refreshing = false;
+      if (showLoad) load.classList.add('hidden');
+      if (button) setButtonBusy(button, false);
     }
   }
 
@@ -4033,11 +4105,11 @@
     try {
       const data = await printerApi(path, { method:'POST', body:JSON.stringify(body || {}) });
       toast(data.message || successMessage, 'success');
-      await refreshControlStatus();
+      window.setTimeout(() => refreshControlStatus(null, { silent: true }).catch(() => {}), 700);
       return data;
     } catch (err) {
       toast(err.message, 'error', 8500);
-      await refreshControlStatus().catch(() => {});
+      await refreshControlStatus(null, { silent: true }).catch(() => {});
       throw err;
     } finally {
       setButtonBusy(button, false);
@@ -4076,6 +4148,22 @@
     await controlCommand('/control/fan', { fan, percent: value }, button, `${fan} fan set to ${value}%`);
   }
 
+  async function controlSetTemperature(tool, target, button = null) {
+    const key = String(tool || '').toLowerCase();
+    const max = Number(controlState.temperatures[key]?.max ?? (key === 'bed' ? 110 : 350));
+    const value = controlClamp(target, 0, max);
+    setControlTempUi(key, { ...(controlState.temperatures[key] || {}), target: value }, true);
+    await controlCommand('/control/temperature', { tool: key, target: value }, button, value <= 0 ? `${key} heater off` : `${key} target set to ${value}°C`);
+  }
+
+  function currentTempInputValue(tool) {
+    const key = String(tool || '').toLowerCase();
+    const input = $(`[data-control-temp-input="${key}"]`);
+    const fallback = controlState.temperatures[key]?.target ?? 0;
+    const max = Number(controlState.temperatures[key]?.max ?? (key === 'bed' ? 110 : 350));
+    return controlClamp(input?.value ?? fallback, 0, max);
+  }
+
   function currentFanInputValue(fan) {
     const input = $(`[data-control-fan-input="${fan}"]`);
     return controlClamp(input?.value ?? controlState.fans[fan] ?? 0, 0, 100);
@@ -4104,11 +4192,35 @@
       setControlFanUi(fan, value);
       controlSetFan(fan, value).catch(() => {});
     }));
+    $$('[data-control-temp-input]').forEach(input => {
+      input.addEventListener('keydown', e => {
+        if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault();
+      });
+      input.addEventListener('input', () => {
+        const tool = input.dataset.controlTempInput;
+        const max = Number(controlState.temperatures[tool]?.max ?? input.max ?? (tool === 'bed' ? 110 : 350));
+        const cleaned = controlSanitizeTempInput(input.value, max);
+        if (input.value !== cleaned) input.value = cleaned;
+        setControlTempUi(tool, { ...(controlState.temperatures[tool] || {}), target: input.value }, true);
+      });
+      input.addEventListener('change', () => controlSetTemperature(input.dataset.controlTempInput, input.value).catch(() => {}));
+    });
+    $$('[data-control-temp-set]').forEach(btn => btn.addEventListener('click', () => {
+      const tool = btn.dataset.controlTempSet;
+      controlSetTemperature(tool, currentTempInputValue(tool), btn).catch(() => {});
+    }));
+    $$('[data-control-temp-preset]').forEach(btn => btn.addEventListener('click', () => {
+      const tool = btn.dataset.controlTempPreset;
+      const target = Number(btn.dataset.target || 0);
+      const input = $(`[data-control-temp-input="${tool}"]`);
+      if (input) input.value = String(target);
+      controlSetTemperature(tool, target, btn).catch(() => {});
+    }));
     $('#controlLightToggle')?.addEventListener('change', e => {
       controlCommand('/control/light', { on: !!e.currentTarget.checked }, null, e.currentTarget.checked ? 'Light on' : 'Light off').catch(() => {});
     });
     refreshControlStatus().catch(err => toast(err.message, 'error'));
-    controlState.refreshTimer = setInterval(() => refreshControlStatus().catch(() => {}), 10000);
+    controlState.refreshTimer = setInterval(() => refreshControlStatus(null, { silent: true }).catch(() => {}), 12000);
   }
 
 

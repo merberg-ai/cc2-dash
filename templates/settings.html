@@ -139,7 +139,7 @@
           <small>{% if experimental_feature_locks.get('control_page_enabled') %}Locked off for this public test build while motion/home/fan/speed controls receive more safety validation.{% else %}Shows or hides the Control link. Motion/home controls stay locked behind printer command safety settings.{% endif %}</small>
         </div>
         <div class="setting-controls">
-          <label><input id="controlPageEnabled" class="toggle" type="checkbox" {% if cfg.features.control_page_enabled|default(false) and not experimental_feature_locks.get('control_page_enabled') %}checked{% endif %} {% if experimental_feature_locks.get('control_page_enabled') %}disabled aria-disabled="true"{% endif %}> {% if experimental_feature_locks.get('control_page_enabled') %}locked{% else %}show{% endif %}</label>
+          <label><input id="controlPageEnabled" class="toggle" type="checkbox" {% if cfg.features.control_page_enabled|default(true) and not experimental_feature_locks.get('control_page_enabled') %}checked{% endif %} {% if experimental_feature_locks.get('control_page_enabled') %}disabled aria-disabled="true"{% endif %}> {% if experimental_feature_locks.get('control_page_enabled') %}locked{% else %}show{% endif %}</label>
         </div>
       </div>
       <div class="setting-row">

@@ -36,7 +36,7 @@
     <div class="card-title-row file-title-row">
       <div>
         <h2>Printer Controls</h2>
-        <p>Modeled after the Elegoo portal controls. Fan/speed/light need commands enabled; movement and homing also need dangerous commands enabled.</p>
+        <p>Uses stock ELEGOO control payloads. Fan/speed/light need commands enabled; movement and homing also need dangerous commands enabled.</p>
       </div>
       <button class="button secondary tiny" id="refreshControlButton" type="button"><span class="button-label">Refresh</span></button>
     </div>
@@ -82,6 +82,42 @@
           <button class="step-button" type="button" data-control-step="30">30mm</button>
         </div>
 
+        <div class="control-temp-grid" aria-label="Temperature controls">
+          <div class="control-temp-card" data-control-temp-card="extruder">
+            <div class="control-temp-head">
+              <strong>🔥 Extruder</strong>
+              <span id="controlTempExtruderReadout" class="control-temp-readout">-- / --</span>
+            </div>
+            <div class="control-temp-row">
+              <input id="controlTempExtruder" class="input control-temp-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" size="3" min="0" max="350" step="1" placeholder="°C" data-control-temp-input="extruder">
+              <button class="button secondary tiny control-temp-set" type="button" data-control-temp-set="extruder"><span class="button-label">Set</span></button>
+              <button class="button danger tiny control-temp-off" type="button" data-control-temp-preset="extruder" data-target="0"><span class="button-label">Off</span></button>
+            </div>
+            <div class="control-temp-presets">
+              <button class="step-button" type="button" data-control-temp-preset="extruder" data-target="200">PLA</button>
+              <button class="step-button" type="button" data-control-temp-preset="extruder" data-target="230">PETG</button>
+              <button class="step-button" type="button" data-control-temp-preset="extruder" data-target="250">ABS</button>
+            </div>
+          </div>
+
+          <div class="control-temp-card" data-control-temp-card="bed">
+            <div class="control-temp-head">
+              <strong>🌡 Bed</strong>
+              <span id="controlTempBedReadout" class="control-temp-readout">-- / --</span>
+            </div>
+            <div class="control-temp-row">
+              <input id="controlTempBed" class="input control-temp-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" size="3" min="0" max="110" step="1" placeholder="°C" data-control-temp-input="bed">
+              <button class="button secondary tiny control-temp-set" type="button" data-control-temp-set="bed"><span class="button-label">Set</span></button>
+              <button class="button danger tiny control-temp-off" type="button" data-control-temp-preset="bed" data-target="0"><span class="button-label">Off</span></button>
+            </div>
+            <div class="control-temp-presets">
+              <button class="step-button" type="button" data-control-temp-preset="bed" data-target="60">PLA</button>
+              <button class="step-button" type="button" data-control-temp-preset="bed" data-target="75">PETG</button>
+              <button class="step-button" type="button" data-control-temp-preset="bed" data-target="100">ABS</button>
+            </div>
+          </div>
+        </div>
+
         <div class="control-speed-panel">
           <div class="control-section-title">
             <strong>Print Speed</strong>
@@ -99,6 +135,7 @@
           <div class="control-fan-card" data-control-fan-card="model">
             <div class="control-fan-head">
               <strong>⚙ Model</strong>
+              <span id="controlFanModelLabel" class="control-fan-percent">0%</span>
               <label class="switch-toggle settings-switch" title="Toggle model fan">
                 <input id="controlFanModelToggle" type="checkbox" data-control-fan-toggle="model">
                 <span class="switch-slider"></span>
@@ -114,6 +151,7 @@
           <div class="control-fan-card" data-control-fan-card="auxiliary">
             <div class="control-fan-head">
               <strong>⚙ Assistance</strong>
+              <span id="controlFanAuxLabel" class="control-fan-percent">0%</span>
               <label class="switch-toggle settings-switch" title="Toggle auxiliary fan">
                 <input id="controlFanAuxToggle" type="checkbox" data-control-fan-toggle="auxiliary">
                 <span class="switch-slider"></span>
@@ -129,6 +167,7 @@
           <div class="control-fan-card" data-control-fan-card="case">
             <div class="control-fan-head">
               <strong>⚙ Case</strong>
+              <span id="controlFanCaseLabel" class="control-fan-percent">0%</span>
               <label class="switch-toggle settings-switch" title="Toggle case fan">
                 <input id="controlFanCaseToggle" type="checkbox" data-control-fan-toggle="case">
                 <span class="switch-slider"></span>

@@ -60,6 +60,7 @@ from .cc2.commands import (
     HOME_AXES,
     MOVE_AXES,
     SET_FAN_SPEED,
+    SET_TEMPERATURE,
     SET_FILAMENT_INFO,
     SET_MONO_FILAMENT_INFO,
     PAUSE_PRINT,
@@ -93,6 +94,7 @@ from .cc2.commands import (
     move_axes_params,
     print_speed_params,
     print_speed_pct_params,
+    temperature_params,
     webcam_params,
 )
 # Import CommandError from the client module explicitly for clarity.
@@ -1404,6 +1406,11 @@ class ControlFanRequest(BaseModel):
 
 class ControlSpeedRequest(BaseModel):
     percent: int = Field(ge=1, le=300)
+
+
+class ControlTemperatureRequest(BaseModel):
+    tool: str
+    target: int = Field(ge=0, le=350)
 
 
 class ControlMoveRequest(BaseModel):
@@ -3470,16 +3477,21 @@ async def api_command(printer_id: str, body: CommandRequest):
     return await asyncio.to_thread(_send_command, printer_id, body.method, body.params, body.wait, body.timeout)
 
 
-def _fan_percent_from_raw(raw: Any) -> int | None:
+def _fan_percent_from_raw(raw: Any, *, assume_pwm: bool = True) -> int | None:
     if raw in (None, ""):
         return None
     try:
         value = float(raw)
     except Exception:
         return None
-    if value <= 100:
-        return int(max(0, min(100, round(value))))
-    return int(max(0, min(100, round(value / 255.0 * 100.0))))
+    if assume_pwm:
+        if 0.0 <= value <= 1.0 and not float(value).is_integer():
+            pct = value * 100.0
+        else:
+            pct = value / 255.0 * 100.0
+    else:
+        pct = value if value <= 100.0 else value / 255.0 * 100.0
+    return int(max(0, min(100, round(pct))))
 
 
 def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) -> int:
@@ -3497,18 +3509,35 @@ def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) ->
                 pct = _fan_percent_from_raw(fan.get("speed"))
                 if pct is not None:
                     return pct
-    stock = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", "fans", default={})
-    if isinstance(stock, dict):
+    mqtt_fans = _dig(raw, "fans", default={})
+    if isinstance(mqtt_fans, dict):
         for name in names:
             candidates = {
-                "model": ("ModelFan", "modelFan", "fan"),
+                "model": ("fan", "ModelFan", "modelFan"),
+                "auxiliary": ("aux_fan", "AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "aux": ("aux_fan", "AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "case": ("box_fan", "BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+                "box": ("box_fan", "BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+            }.get(str(name).lower(), (name,))
+            for key in candidates:
+                item = _dig(mqtt_fans, key, default=None)
+                raw_speed = item.get("speed", item.get("Speed")) if isinstance(item, dict) else item
+                pct = _fan_percent_from_raw(raw_speed, assume_pwm=True)
+                if pct is not None:
+                    return pct
+
+    current = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", default={})
+    if isinstance(current, dict):
+        for name in names:
+            candidates = {
+                "model": ("ModelFan", "modelFan", "ModeFan", "modeFan"),
                 "auxiliary": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
                 "aux": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
                 "case": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
                 "box": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
             }.get(str(name).lower(), (name,))
             for key in candidates:
-                pct = _fan_percent_from_raw(_dig(stock, key, default=None))
+                pct = _fan_percent_from_raw(_dig(current, key, default=None), assume_pwm=False)
                 if pct is not None:
                     return pct
     return 0
@@ -3554,6 +3583,74 @@ def _extract_light_on(n: dict[str, Any], raw: dict[str, Any]) -> bool:
     return light_on
 
 
+def _control_temp_value(*values: Any) -> float | None:
+    for value in values:
+        if value in (None, ""):
+            continue
+        try:
+            number = float(value)
+        except Exception:
+            continue
+        if number < -50 or number > 500:
+            continue
+        return round(number, 1)
+    return None
+
+
+def _control_temp_pair(normalized_obj: Any, raw_obj: Any, *, base_current: Any = None, base_target: Any = None, raw_current_keys: tuple[str, ...] = (), raw_target_keys: tuple[str, ...] = ()) -> dict[str, float | None]:
+    norm = normalized_obj if isinstance(normalized_obj, dict) else {}
+    rawd = raw_obj if isinstance(raw_obj, dict) else {}
+    current_values: list[Any] = [base_current, norm.get("actual"), norm.get("current"), norm.get("temperature")]
+    target_values: list[Any] = [base_target, norm.get("target")]
+    for key in raw_current_keys:
+        current_values.append(_dig(rawd, key, default=None))
+    for key in raw_target_keys:
+        target_values.append(_dig(rawd, key, default=None))
+    return {
+        "current": _control_temp_value(*current_values),
+        "target": _control_temp_value(*target_values),
+    }
+
+
+def _control_temperatures(n: dict[str, Any], raw: dict[str, Any], base_status: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    temps = (n.get("temps") or {}) if isinstance(n, dict) else {}
+    nozzle = (temps.get("nozzle") or temps.get("extruder") or {}) if isinstance(temps, dict) else {}
+    bed = (temps.get("bed") or temps.get("heater_bed") or {}) if isinstance(temps, dict) else {}
+    chamber = (temps.get("chamber") or {}) if isinstance(temps, dict) else {}
+
+    raw_extruder = _dig(raw, "extruder", "nozzle", "hotend", default={})
+    raw_bed = _dig(raw, "heater_bed", "bed", default={})
+    raw_chamber = _dig(raw, "ztemperature_sensor", "chamber", default={})
+
+    extruder_pair = _control_temp_pair(
+        nozzle,
+        raw_extruder,
+        base_current=base_status.get("hotend_current"),
+        base_target=base_status.get("hotend_target"),
+        raw_current_keys=("temperature", "actual", "current", "TempCurrentNozzle", "CurrentNozzleTemp"),
+        raw_target_keys=("target", "target_temperature", "TempTargetNozzle", "TargetNozzleTemp"),
+    )
+    bed_pair = _control_temp_pair(
+        bed,
+        raw_bed,
+        base_current=base_status.get("bed_current"),
+        base_target=base_status.get("bed_target"),
+        raw_current_keys=("temperature", "actual", "current", "TempCurrentHotbed", "CurrentHotbedTemp"),
+        raw_target_keys=("target", "target_temperature", "TempTargetHotbed", "TargetHotbedTemp"),
+    )
+    chamber_pair = _control_temp_pair(
+        chamber,
+        raw_chamber,
+        raw_current_keys=("temperature", "actual", "current"),
+        raw_target_keys=("target",),
+    )
+    return {
+        "extruder": {**extruder_pair, "min": 0, "max": 350, "label": "Extruder"},
+        "bed": {**bed_pair, "min": 0, "max": 110, "label": "Bed"},
+        "chamber": {**chamber_pair, "min": 0, "max": 100, "label": "Chamber", "editable": False},
+    }
+
+
 def _control_status_payload(printer_id: str) -> dict[str, Any]:
     _raise_if_feature_locked("control_page_enabled")
     pdata = _require_printer_running(printer_id)
@@ -3565,6 +3662,7 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
     base_status = _status_from_snapshot(printer_id, pdata, snap, attach_ai=False) if isinstance(snap, dict) else {}
     state = str(base_status.get("status_text") or n.get("sub_state") or n.get("state") or base_status.get("state") or ("connected" if connected else "offline"))
     speed_pct = _control_speed_percent(n, raw)
+    temperatures = _control_temperatures(n, raw, base_status)
     active_print = bool(base_status.get("active_print")) if connected else False
     phase = base_status.get("print_phase") if isinstance(base_status.get("print_phase"), dict) else _print_phase_from_status(base_status, snap)
     controls_locked = bool(active_print or not connected)
@@ -3604,6 +3702,7 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
             "auxiliary": _control_fan_percent(n, raw, "auxiliary", "aux", "AuxiliaryFan"),
             "case": _control_fan_percent(n, raw, "case", "box", "BoxFan"),
         },
+        "temperatures": temperatures,
         "light_on": _extract_light_on(n, raw),
         "camera_url": f"/api/printers/{printer_id}/camera/stream",
         "camera_snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
@@ -3628,32 +3727,54 @@ async def api_control_status(printer_id: str):
 
 @app.post("/api/printers/{printer_id}/control/fan")
 async def api_control_fan(printer_id: str, body: ControlFanRequest):
+    _raise_if_control_locked(printer_id)
     fan = str(body.fan or "").strip().lower().replace("-", "_")
     percent = int(max(0, min(100, body.percent)))
-    try:
-        current_status = _raise_if_control_locked(printer_id)
-        current = current_status.get("fans", {}) or {}
-    except HTTPException:
-        raise
-    except Exception:
-        current = {}
-    model = int(current.get("model") or 0)
-    aux = int(current.get("auxiliary") or 0)
-    box = int(current.get("case") or 0)
     params: dict[str, Any]
+    label: str
     if fan in {"model", "part", "tool", "fan"}:
-        model = percent
+        params = fan_params(model=percent)
+        label = "Model"
     elif fan in {"aux", "auxiliary", "assist", "assistance", "side"}:
-        aux = percent
+        params = fan_params(aux=percent)
+        label = "Auxiliary"
     elif fan in {"case", "box", "chassis", "chamber"}:
-        box = percent
+        params = fan_params(box=percent)
+        label = "Case"
     else:
         raise HTTPException(400, "Unknown fan. Use model, auxiliary, or case.")
-    params = fan_params(model=model, aux=aux, box=box)
     result = await asyncio.to_thread(_send_command, printer_id, SET_FAN_SPEED, params, True, 12.0)
-    log("info", f"Control fan {fan} set to {percent}%", "command", printer=printer_id)
-    return {"ok": True, "message": f"{fan.title()} fan set to {percent}%", "result": result.get("result")}
+    log("info", f"Control fan {label.lower()} set to {percent}%", "command", printer=printer_id)
+    return {"ok": True, "message": f"{label} fan set to {percent}%", "result": result.get("result")}
 
+
+
+@app.post("/api/printers/{printer_id}/control/temperature")
+async def api_control_temperature(printer_id: str, body: ControlTemperatureRequest):
+    _raise_if_control_locked(printer_id)
+    tool = str(body.tool or "").strip().lower().replace("-", "_")
+    target = int(body.target)
+    params: dict[str, Any]
+    label: str
+    max_target: int
+    if tool in {"extruder", "nozzle", "hotend", "toolhead"}:
+        max_target = 350
+        if target > max_target:
+            raise HTTPException(400, f"Extruder target must be between 0 and {max_target}°C.")
+        params = temperature_params(nozzle=target)
+        label = "Extruder"
+    elif tool in {"bed", "hotbed", "heater_bed", "build_plate", "plate"}:
+        max_target = 110
+        if target > max_target:
+            raise HTTPException(400, f"Bed target must be between 0 and {max_target}°C.")
+        params = temperature_params(bed=target)
+        label = "Bed"
+    else:
+        raise HTTPException(400, "Unknown temperature target. Use extruder or bed.")
+    result = await asyncio.to_thread(_send_command, printer_id, SET_TEMPERATURE, params, True, 12.0)
+    log("info", f"Control {label.lower()} temperature set to {target}°C", "command", printer=printer_id)
+    message = f"{label} heater turned off" if target <= 0 else f"{label} temperature set to {target}°C"
+    return {"ok": True, "message": message, "result": result.get("result")}
 
 @app.post("/api/printers/{printer_id}/control/speed")
 async def api_control_speed(printer_id: str, body: ControlSpeedRequest):
