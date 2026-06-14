@@ -6,6 +6,7 @@ from collections import deque
 from typing import Any, Deque
 
 from .config import DATA_DIR
+from .cc2.state import describe_exception_codes, format_exception_codes
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -238,7 +239,9 @@ class PortalAIDetector:
         bed_target = _as_float(status.get("bed_target"), 0.0)
         elapsed = (normalized.get("time") or {}).get("elapsed_sec")
         elapsed_sec = _as_float(elapsed, 0.0)
-        exceptions = normalized.get("exceptions") or []
+        exceptions = status.get("exceptions") or normalized.get("exceptions") or []
+        exception_details = status.get("exception_details") or normalized.get("exception_details") or describe_exception_codes(exceptions)
+        exception_summary = status.get("exception_summary") or normalized.get("exception_summary") or format_exception_codes(exceptions)
         camera_info = (normalized.get("external") or {}).get("camera")
         camera_attr = (normalized.get("attributes") or {}).get("camera_connected")
         filament = normalized.get("filament") or {}
@@ -334,9 +337,9 @@ class PortalAIDetector:
                 else:
                     risk += 12
                     reasons.append("Print is paused. This may be intentional, but it needs attention.")
-            if exceptions:
+            if exceptions or exception_details:
                 risk += 45
-                reasons.append(f"Printer reported exception status: {exceptions}.")
+                reasons.append(f"Printer reported exception status: {exception_summary or exceptions}.")
         else:
             positives.append("Telemetry failure rules are disabled in settings.")
             prev["progress"] = progress

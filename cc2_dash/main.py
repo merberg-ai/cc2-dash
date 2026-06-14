@@ -541,14 +541,16 @@ def _idle_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any]
     ai_cfg = cfg.get("portal_ai", {}) or {}
     now = time.time()
     vision = status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None
+    exception_summary = str(status.get("exception_summary") or "").strip()
+    exception_active = bool(status.get("exceptions") or status.get("exception_details") or exception_summary)
     result = {
         "enabled": bool(ai_cfg.get("enabled", True)),
-        "state": "idle_standby",
-        "level": "low",
-        "risk": 0,
-        "summary": "Idle",
-        "reasons": ["Printer is idle; AI watchdog and vision monitoring are paused until an active print starts."],
-        "positives": ["Printer status is idle."],
+        "state": "printer_exception" if exception_active else "idle_standby",
+        "level": "watch" if exception_active else "low",
+        "risk": 45 if exception_active else 0,
+        "summary": "Printer Exception" if exception_active else "Idle",
+        "reasons": [f"Printer reported exception status: {exception_summary or status.get('exceptions')}.", "Printer is otherwise idle; vision monitoring is paused until an active print starts."] if exception_active else ["Printer is idle; AI watchdog and vision monitoring are paused until an active print starts."],
+        "positives": [] if exception_active else ["Printer status is idle."],
         "active_print": False,
         "monitor_active_prints_only": True,
         "last_check_epoch": now,
@@ -590,17 +592,22 @@ def _prep_ai_result(printer_id: str, status: dict[str, Any], cfg: dict[str, Any]
     phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else _print_phase_from_status(status)
     label = str(phase.get("label") or "Preparing")
     vision = status.get("vision_ai") if isinstance(status.get("vision_ai"), dict) else None
+    exception_summary = str(status.get("exception_summary") or "").strip()
+    exception_active = bool(status.get("exceptions") or status.get("exception_details") or exception_summary)
     result = {
         "enabled": bool(ai_cfg.get("enabled", True)),
-        "state": "preparing",
-        "level": "low",
-        "risk": 0,
-        "summary": "Preparing",
+        "state": "printer_exception" if exception_active else "preparing",
+        "level": "watch" if exception_active else "low",
+        "risk": 45 if exception_active else 0,
+        "summary": "Printer Exception" if exception_active else "Preparing",
         "reasons": [
+            f"Printer reported exception status: {exception_summary or status.get('exceptions')}.",
+            f"Printer is also in a start-of-job state: {label}.",
+        ] if exception_active else [
             f"Printer is in a normal start-of-job state: {label}.",
             "Failure alerts are paused for preheating/homing/leveling and will resume when printing starts.",
         ],
-        "positives": ["Telemetry state says the printer is preparing the job, not failing it."],
+        "positives": [] if exception_active else ["Telemetry state says the printer is preparing the job, not failing it."],
         "active_print": bool(status.get("active_print")),
         "monitor_active_prints_only": bool(ai_cfg.get("monitor_active_prints_only", True)),
         "print_phase": phase,
@@ -2593,6 +2600,10 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "status_text": str(health.get("label") if not reachable else state).replace("_", " ").title(),
         "status_code": n.get("status_code"),
         "sub_status_code": n.get("sub_status_code"),
+        "exceptions": n.get("exceptions") or [],
+        "exceptions_raw": n.get("exceptions_raw"),
+        "exception_details": n.get("exception_details") or [],
+        "exception_summary": n.get("exception_summary") or "",
         "message": health.get("reason") if not reachable else (snap.get("last_error") or "Registered with printer"),
         "progress": round(progress, 1),
         "print_time": seconds_to_hms((n.get("time") or {}).get("elapsed_sec")) or "-",
