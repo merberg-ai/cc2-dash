@@ -3973,6 +3973,15 @@
     return `${rounded}°C`;
   }
 
+  function controlTempInputDisplayValue(current, target) {
+    const targetNumber = Number(target);
+    if (Number.isFinite(targetNumber) && targetNumber > 0) return String(Math.round(targetNumber));
+    const currentNumber = Number(current);
+    if (Number.isFinite(currentNumber) && currentNumber > 0) return String(Math.round(currentNumber));
+    if (Number.isFinite(targetNumber)) return String(Math.max(0, Math.round(targetNumber)));
+    return '';
+  }
+
   function setControlTempUi(tool, tempData = {}, quiet = false) {
     const key = String(tool || '').toLowerCase();
     if (!controlState.temperatures[key]) controlState.temperatures[key] = {};
@@ -3984,7 +3993,8 @@
     const input = $(`[data-control-temp-input="${key}"]`);
     if (input) {
       input.max = String(max);
-      if (!quiet && input !== document.activeElement) input.value = target && Number(target) > 0 ? Math.round(Number(target)) : '';
+      input.title = target && Number(target) > 0 ? 'Target temperature' : 'Current temperature; edit to set a new target';
+      if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target);
     }
 
     const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
@@ -4183,7 +4193,7 @@
       const tool = btn.dataset.controlTempPreset;
       const target = Number(btn.dataset.target || 0);
       const input = $(`[data-control-temp-input="${tool}"]`);
-      if (input) input.value = target > 0 ? String(target) : '';
+      if (input) input.value = String(target);
       controlSetTemperature(tool, target, btn).catch(() => {});
     }));
     $('#controlLightToggle')?.addEventListener('change', e => {
