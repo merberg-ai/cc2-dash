@@ -251,11 +251,31 @@ def get_path(data: Dict[str, Any], *paths: str, default: Any = None) -> Any:
     return default
 
 
-def fan_to_percent(speed: Any) -> Optional[int]:
+def fan_to_percent(speed: Any, *, assume_pwm: bool = True) -> Optional[int]:
+    """Normalize stock fan telemetry to a user-facing percent.
+
+    The CC2 MQTT ``fans.*.speed`` values used by the bundled stock portal are
+    PWM-ish 0-255 values and the portal displays them as ``speed * 100 / 255``.
+    Older SDCP/websocket ``CurrentFanSpeed`` values are percent-shaped in public
+    docs, so those are treated as 0-100 unless they exceed 100.
+    """
+    if speed in (None, ""):
+        return None
     try:
-        return round(float(speed) / 255.0 * 100.0)
+        value = float(speed)
     except Exception:
         return None
+    if assume_pwm:
+        # Be tolerant of Klipper-style normalized fan speeds if they ever leak
+        # through a printer/firmware variant.  The CC2 stock portal path uses
+        # 0-255, but 0.0-1.0 should still display sensibly.
+        if 0.0 <= value <= 1.0 and not float(value).is_integer():
+            pct = value * 100.0
+        else:
+            pct = value / 255.0 * 100.0
+    else:
+        pct = value if value <= 100.0 else value / 255.0 * 100.0
+    return int(max(0, min(100, round(pct))))
 
 
 def _coord_value(full_status: Dict[str, Any], index: int, fallback: Any = None) -> Any:
@@ -292,7 +312,11 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
     sub_status_code = get_path(full_status, "machine_status.sub_status")
     progress = get_path(full_status, "print_status.progress", "machine_status.progress", default=0)
 
-    fans = get_path(full_status, "fans", "CurrentFanSpeed", default={}) or {}
+    fans = get_path(full_status, "fans", default=None)
+    fans_are_pwm = True
+    if not isinstance(fans, dict):
+        fans = get_path(full_status, "CurrentFanSpeed", "currentFanSpeed", default={}) or {}
+        fans_are_pwm = False
     move = get_path(full_status, "gcode_move_inf", "gcode_move", default={}) or {}
     extruder_e = move.get("e", move.get("extruder")) if isinstance(move, dict) else None
     speed_mode = None
@@ -438,13 +462,13 @@ def normalize_status(full_status: Dict[str, Any], attributes: Dict[str, Any] | N
                 speed = fan.get("speed", fan.get("Speed"))
                 normalized["fans"][key] = {
                     "speed": speed,
-                    "percent": fan_to_percent(speed),
+                    "percent": fan_to_percent(speed, assume_pwm=fans_are_pwm),
                     "rpm": fan.get("rpm", fan.get("RPM")),
                 }
             elif isinstance(fan, (int, float, str)) and str(fan).strip() != "":
                 normalized["fans"][key] = {
                     "speed": fan,
-                    "percent": fan_to_percent(fan),
+                    "percent": fan_to_percent(fan, assume_pwm=fans_are_pwm),
                     "rpm": None,
                 }
 

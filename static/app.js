@@ -3952,7 +3952,10 @@
     const input = $(`[data-control-fan-input="${fan}"]`);
     const toggle = $(`[data-control-fan-toggle="${fan}"]`);
     const card = $(`[data-control-fan-card="${fan}"]`);
+    const labelIds = { model: 'controlFanModelLabel', auxiliary: 'controlFanAuxLabel', case: 'controlFanCaseLabel' };
     if (input && !quiet && input !== document.activeElement) input.value = value;
+    const label = labelIds[fan] ? $(`#${labelIds[fan]}`) : null;
+    if (label) label.textContent = `${value}%`;
     if (toggle) toggle.checked = value > 0;
     if (card) card.dataset.enabled = value > 0 ? 'true' : 'false';
   }

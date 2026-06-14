@@ -3470,16 +3470,21 @@ async def api_command(printer_id: str, body: CommandRequest):
     return await asyncio.to_thread(_send_command, printer_id, body.method, body.params, body.wait, body.timeout)
 
 
-def _fan_percent_from_raw(raw: Any) -> int | None:
+def _fan_percent_from_raw(raw: Any, *, assume_pwm: bool = True) -> int | None:
     if raw in (None, ""):
         return None
     try:
         value = float(raw)
     except Exception:
         return None
-    if value <= 100:
-        return int(max(0, min(100, round(value))))
-    return int(max(0, min(100, round(value / 255.0 * 100.0))))
+    if assume_pwm:
+        if 0.0 <= value <= 1.0 and not float(value).is_integer():
+            pct = value * 100.0
+        else:
+            pct = value / 255.0 * 100.0
+    else:
+        pct = value if value <= 100.0 else value / 255.0 * 100.0
+    return int(max(0, min(100, round(pct))))
 
 
 def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) -> int:
@@ -3497,18 +3502,35 @@ def _control_fan_percent(n: dict[str, Any], raw: dict[str, Any], *names: str) ->
                 pct = _fan_percent_from_raw(fan.get("speed"))
                 if pct is not None:
                     return pct
-    stock = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", "fans", default={})
-    if isinstance(stock, dict):
+    mqtt_fans = _dig(raw, "fans", default={})
+    if isinstance(mqtt_fans, dict):
         for name in names:
             candidates = {
-                "model": ("ModelFan", "modelFan", "fan"),
+                "model": ("fan", "ModelFan", "modelFan"),
+                "auxiliary": ("aux_fan", "AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "aux": ("aux_fan", "AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
+                "case": ("box_fan", "BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+                "box": ("box_fan", "BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
+            }.get(str(name).lower(), (name,))
+            for key in candidates:
+                item = _dig(mqtt_fans, key, default=None)
+                raw_speed = item.get("speed", item.get("Speed")) if isinstance(item, dict) else item
+                pct = _fan_percent_from_raw(raw_speed, assume_pwm=True)
+                if pct is not None:
+                    return pct
+
+    current = _dig(raw, "CurrentFanSpeed", "currentFanSpeed", default={})
+    if isinstance(current, dict):
+        for name in names:
+            candidates = {
+                "model": ("ModelFan", "modelFan", "ModeFan", "modeFan"),
                 "auxiliary": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
                 "aux": ("AuxiliaryFan", "auxiliaryFan", "auxFan", "sideFan"),
                 "case": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
                 "box": ("BoxFan", "boxFan", "CaseFan", "caseFan", "chassisFan"),
             }.get(str(name).lower(), (name,))
             for key in candidates:
-                pct = _fan_percent_from_raw(_dig(stock, key, default=None))
+                pct = _fan_percent_from_raw(_dig(current, key, default=None), assume_pwm=False)
                 if pct is not None:
                     return pct
     return 0

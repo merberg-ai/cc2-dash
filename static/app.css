@@ -2134,6 +2134,7 @@ body[data-page="control"] .app-shell { width:min(100%, 1040px); }
 .control-fan-card[data-enabled="true"] { border-color:color-mix(in srgb, var(--cc2-primary) 42%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-primary) 7%, var(--cc2-card-soft)); }
 .control-fan-head { display:flex; align-items:center; justify-content:space-between; gap:.55rem; min-width:0; }
 .control-fan-head strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:800; color:var(--cc2-text); }
+.control-fan-percent { margin-left:auto; font-size:.78rem; font-weight:800; color:var(--cc2-primary); font-variant-numeric:tabular-nums; }
 .control-fan-row { display:grid; grid-template-columns:2rem 1fr 2rem; gap:.45rem; align-items:center; }
 .fan-bump { min-height:1.9rem; border-radius:.25rem; font-size:1.15rem; font-weight:900; }
 .control-fan-row input {

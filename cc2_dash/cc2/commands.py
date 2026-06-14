@@ -211,27 +211,36 @@ def pct_to_pwm(value: Any) -> int:
 def fan_params(model: Optional[int] = None, box: Optional[int] = None, aux: Optional[int] = None, values_are_pwm: bool = False) -> Dict[str, Any]:
     """Return the stock ELEGOO MQTT/API fan payload for method 1030.
 
-    The bundled stock portal's API-control path uses percentage values and the
-    exact keys ``fan`` (model/part fan), ``aux_fan`` (auxiliary/side fan), and
-    ``box_fan`` (case/chamber fan).  Sending the SDCP/websocket
-    ``TargetFanSpeed`` object through method 1030 can return success while not
-    actually changing the fan on CC2 firmware.
+    The bundled stock portal's MQTT control path uses the exact keys
+    ``fan`` (model/part fan), ``aux_fan`` (auxiliary/side fan), and
+    ``box_fan`` (case/chamber fan), but the values are PWM-ish 0-255 numbers.
+    The visible UI is percent-based, so cc2-dash accepts 0-100 by default and
+    converts it to the stock portal's ``percent / 100 * 255`` payload.
+
+    The older SDCP/websocket control path uses ``TargetFanSpeed`` with
+    ``ModelFan``/``AuxiliaryFan``/``BoxFan``.  Do not mix that wrapper into
+    MQTT method 1030; the CC2 firmware can accept the command but ignore the
+    fan change or scale it wrong.
     """
     def conv(v: Optional[int]) -> Optional[int]:
         if v is None:
             return None
+        try:
+            value = float(v)
+        except Exception:
+            value = 0.0
         if values_are_pwm:
-            return int(max(0, min(100, round(float(v) / 255.0 * 100.0))))
-        return int(max(0, min(100, round(float(v)))))
+            return int(max(0, min(255, round(value))))
+        return pct_to_pwm(value)
 
     out: Dict[str, Any] = {}
-    model_pct, box_pct, aux_pct = conv(model), conv(box), conv(aux)
-    if model_pct is not None:
-        out["fan"] = model_pct
-    if aux_pct is not None:
-        out["aux_fan"] = aux_pct
-    if box_pct is not None:
-        out["box_fan"] = box_pct
+    model_pwm, box_pwm, aux_pwm = conv(model), conv(box), conv(aux)
+    if model_pwm is not None:
+        out["fan"] = model_pwm
+    if aux_pwm is not None:
+        out["aux_fan"] = aux_pwm
+    if box_pwm is not None:
+        out["box_fan"] = box_pwm
     return out
 
 
