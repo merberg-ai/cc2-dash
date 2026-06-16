@@ -19,6 +19,7 @@ from .camera_proxy import camera_proxy_config, camera_relays
 from .config import DATA_DIR, PrinterConfig
 from .feedback_learning import apply_feedback_suppression
 from .logger import log
+from .print_state import print_phase_from_status as _shared_print_phase_from_status, status_looks_active_print as _shared_status_looks_active_print
 
 DEFAULT_VISION_PROMPT = """You are monitoring a 3D printer camera image.
 
@@ -755,7 +756,7 @@ class VisionMonitor:
             state["last_result"] = result
             return result
 
-        phase = (status or {}).get("print_phase") if isinstance((status or {}).get("print_phase"), dict) else {}
+        phase = (status or {}).get("print_phase") if isinstance((status or {}).get("print_phase"), dict) else _shared_print_phase_from_status(status)
         if status is not None and phase.get("is_preparing"):
             cached = state.get("last_result")
             label = str(phase.get("label") or "Preparing")
@@ -778,13 +779,8 @@ class VisionMonitor:
 
         active_print = bool((status or {}).get("portal_ai", {}).get("active_print") or (status or {}).get("active_print"))
         if ai_cfg.get("vision_require_active_print", True) and status is not None:
-            # The rule engine may not be attached yet, so fall back to simple status hints.
-            state_text = str(status.get("state") or status.get("status_text") or "").lower()
-            file_name = str(status.get("file") or "-")
-            progress = _as_float(status.get("progress"), 0.0)
-            hot_target = _as_float(status.get("hotend_target"), 0.0)
-            bed_target = _as_float(status.get("bed_target"), 0.0)
-            active_print = active_print or any(x in state_text for x in ["print", "paus", "resum", "filament", "extruder"]) or bool(file_name != "-" and progress < 99.9 and (hot_target > 0 or bed_target > 0))
+            # Use the same active-print classifier as the dashboard and pause gate.
+            active_print = active_print or _shared_status_looks_active_print(status)
             if not active_print and not force:
                 cached = state.get("last_result")
                 result = {

@@ -7,6 +7,7 @@ from typing import Any, Deque
 
 from .config import DATA_DIR
 from .cc2.state import describe_exception_codes, format_exception_codes
+from .print_state import print_phase_from_status as _shared_print_phase_from_status
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -23,93 +24,9 @@ def _text_contains(text: str, *needles: str) -> bool:
     return any(n.lower() in hay for n in needles)
 
 
-PREP_MACHINE_STATUS_CODES = {0, 5, 8, 10}
-PREP_SUB_STATUS_CODES = {1041, 1045, 1096, 1405, 1906, 2801, 2802, 2901, 2902}
-PREP_TEXT_TERMS = (
-    "preheating",
-    "extruder heating",
-    "extruder preheating",
-    "bed heating",
-    "bed preheating",
-    "heating bed",
-    "homing",
-    "auto leveling",
-    "leveling",
-    "self checking",
-    "initializing",
-    "warming",
-    "warmup",
-    "warm up",
-)
-
-
-def _coerce_int(value: Any) -> int | None:
-    try:
-        if value is None or value == "":
-            return None
-        return int(float(value))
-    except Exception:
-        return None
-
-
 def _prep_context_from_status(status: dict[str, Any], normalized: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Detect normal print-prep states that should not be scored as failures.
-
-    The Centauri firmware reports start-of-job phases as active job states while the
-    bed/nozzle are cold, the head is homing, or the camera view is dark/empty. Those
-    are noisy for failure detection, so the watchdog pauses print-failure scoring
-    until the machine reaches actual printing/resume/pause states.
-    """
-    normalized = normalized or {}
-    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else {}
-    if phase.get("is_preparing"):
-        return dict(phase)
-
-    machine_code = _coerce_int(status.get("status_code", normalized.get("status_code")))
-    sub_code = _coerce_int(status.get("sub_status_code", normalized.get("sub_status_code")))
-    state_text = " ".join(
-        str(x or "")
-        for x in (
-            status.get("status_text"),
-            status.get("state"),
-            normalized.get("state"),
-            normalized.get("sub_state"),
-        )
-    ).strip().lower()
-
-    is_preparing = bool(
-        machine_code in PREP_MACHINE_STATUS_CODES
-        or sub_code in PREP_SUB_STATUS_CODES
-        or any(term in state_text for term in PREP_TEXT_TERMS)
-    )
-    label = str(status.get("status_text") or normalized.get("sub_state") or status.get("state") or normalized.get("state") or "Preparing")
-    if "bed preheating" in state_text or sub_code in {1405, 1906}:
-        kind = "bed_preheating"
-        label = "Bed Preheating"
-    elif ("extruder" in state_text and ("preheat" in state_text or "heating" in state_text)) or sub_code in {1045, 1096}:
-        kind = "extruder_preheating"
-        label = "Extruder Preheating"
-    elif "homing" in state_text or machine_code == 10 or sub_code in {2801, 2802}:
-        kind = "homing"
-        label = "Homing"
-    elif "level" in state_text or machine_code == 5 or sub_code in {2901, 2902}:
-        kind = "auto_leveling"
-        label = "Auto Leveling"
-    elif "self" in state_text or machine_code == 8:
-        kind = "self_checking"
-        label = "Self Checking"
-    elif "initial" in state_text or machine_code == 0:
-        kind = "initializing"
-        label = "Initializing"
-    else:
-        kind = "preparing"
-    return {
-        "is_preparing": is_preparing,
-        "kind": kind,
-        "label": label,
-        "status_code": machine_code,
-        "sub_status_code": sub_code,
-    }
+    snap = {"normalized": normalized or {}}
+    return _shared_print_phase_from_status(status, snap)
 
 
 class PortalAIDetector:

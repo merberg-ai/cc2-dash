@@ -114,6 +114,13 @@ from .feedback_learning import (
     record_feedback_suppression,
 )
 from .vision import vision_monitor
+from .print_state import (
+    IDLE_MACHINE_STATUS_CODES,
+    IDLE_SUB_STATUS_CODES,
+    print_phase_from_status as _shared_print_phase_from_status,
+    status_looks_active_print as _shared_status_looks_active_print,
+    status_is_safe_to_pause as _shared_status_is_safe_to_pause,
+)
 
 app = FastAPI(title="cc2-dash", version=__version__)
 app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="static")
@@ -146,35 +153,6 @@ SPEED_PRESETS = {
 }
 
 
-ACTIVE_MACHINE_STATUS_CODES = {2}
-ACTIVE_SUB_STATUS_CODES = {
-    1041,  # idle in print / active job context
-    1045, 1096,  # extruder preheating during a queued/active print
-    1405, 1906,  # bed preheating during a queued/active print
-    2075,  # printing
-    2401, 2402,  # resuming / resume complete
-    2501, 2502, 2503, 2504, 2505,  # pause/stop states while a job exists
-}
-IDLE_MACHINE_STATUS_CODES = {1, 16}
-IDLE_SUB_STATUS_CODES = {0, 2077}
-PRINT_PREP_MACHINE_STATUS_CODES = {0, 5, 8, 10}
-PRINT_PREP_SUB_STATUS_CODES = {1041, 1045, 1096, 1405, 1906, 2801, 2802, 2901, 2902}
-PRINT_PREP_TEXT_TERMS = (
-    "preheating",
-    "extruder heating",
-    "extruder preheating",
-    "bed heating",
-    "bed preheating",
-    "heating bed",
-    "homing",
-    "auto leveling",
-    "leveling",
-    "self checking",
-    "initializing",
-    "warming",
-    "warmup",
-    "warm up",
-)
 CONNECTION_STALE_AFTER_SEC = 35.0
 CONNECTION_OFFLINE_AFTER_SEC = 75.0
 CONNECTION_MESSAGE_STALE_AFTER_SEC = 90.0
@@ -213,114 +191,11 @@ def _has_real_file(value: Any) -> bool:
 
 
 def _print_phase_from_status(status: dict[str, Any] | None, snap: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Classify start-of-job preparation states separately from real failures.
-
-    The firmware legitimately reports active-job file/progress/temperature targets
-    while it is preheating, homing, or leveling. During those phases the bed can be
-    empty/dark and filament sensors can briefly report odd values, so Portal AI
-    should show Preparing instead of Failure Likely.
-    """
-    status = status or {}
-    n = ((snap or {}).get("normalized") or {}) if isinstance(snap, dict) else {}
-    machine_code = _coerce_int(status.get("status_code", n.get("status_code")))
-    sub_code = _coerce_int(status.get("sub_status_code", n.get("sub_status_code")))
-    state_text = " ".join(
-        str(x or "")
-        for x in (
-            status.get("state"),
-            status.get("status_text"),
-            n.get("state"),
-            n.get("sub_state"),
-        )
-    ).strip().lower()
-
-    is_preparing = bool(
-        machine_code in PRINT_PREP_MACHINE_STATUS_CODES
-        or sub_code in PRINT_PREP_SUB_STATUS_CODES
-        or any(term in state_text for term in PRINT_PREP_TEXT_TERMS)
-    )
-    if "bed preheating" in state_text or sub_code in {1405, 1906}:
-        kind = "bed_preheating"
-        label = "Bed Preheating"
-    elif ("extruder" in state_text and ("preheat" in state_text or "heating" in state_text)) or sub_code in {1045, 1096}:
-        kind = "extruder_preheating"
-        label = "Extruder Preheating"
-    elif "homing" in state_text or machine_code == 10 or sub_code in {2801, 2802}:
-        kind = "homing"
-        label = "Homing"
-    elif "level" in state_text or machine_code == 5 or sub_code in {2901, 2902}:
-        kind = "auto_leveling"
-        label = "Auto Leveling"
-    elif "self" in state_text or machine_code == 8:
-        kind = "self_checking"
-        label = "Self Checking"
-    elif "initial" in state_text or machine_code == 0:
-        kind = "initializing"
-        label = "Initializing"
-    else:
-        kind = "preparing"
-        label = str(status.get("status_text") or n.get("sub_state") or status.get("state") or n.get("state") or "Preparing")
-
-    return {
-        "is_preparing": is_preparing,
-        "kind": kind,
-        "label": label,
-        "status_code": machine_code,
-        "sub_status_code": sub_code,
-    }
+    return _shared_print_phase_from_status(status, snap)
 
 
 def _status_looks_active_print(status: dict[str, Any] | None, snap: dict[str, Any] | None = None) -> bool:
-    """Best-effort active job detector used to gate AI/vision work.
-
-    The CC2 can leave old file/progress values around after a job completes, so
-    raw file name alone is not enough. Prefer explicit machine/sub status codes,
-    then fall back to state text plus print markers.
-    """
-    status = status or {}
-    n = ((snap or {}).get("normalized") or {}) if isinstance(snap, dict) else {}
-    machine_code = n.get("status_code")
-    sub_code = n.get("sub_status_code")
-    try:
-        machine_code = int(machine_code) if machine_code is not None else None
-    except Exception:
-        machine_code = None
-    try:
-        sub_code = int(sub_code) if sub_code is not None else None
-    except Exception:
-        sub_code = None
-
-    file_name = status.get("file") if status.get("file") is not None else n.get("file")
-    has_file = _has_real_file(file_name)
-    progress = _coerce_float(status.get("progress", n.get("progress", 0.0)), 0.0)
-    elapsed = _coerce_float(((n.get("time") or {}).get("elapsed_sec")), 0.0)
-    hot_target = _coerce_float(status.get("hotend_target", ((n.get("temps") or {}).get("nozzle") or {}).get("target")), 0.0)
-    bed_target = _coerce_float(status.get("bed_target", ((n.get("temps") or {}).get("bed") or {}).get("target")), 0.0)
-    state_text = " ".join(
-        str(x or "")
-        for x in (
-            status.get("state"),
-            status.get("status_text"),
-            n.get("state"),
-            n.get("sub_state"),
-        )
-    ).lower()
-
-    if machine_code in ACTIVE_MACHINE_STATUS_CODES:
-        return True
-    if sub_code in ACTIVE_SUB_STATUS_CODES and (has_file or machine_code not in IDLE_MACHINE_STATUS_CODES):
-        return True
-    if machine_code in IDLE_MACHINE_STATUS_CODES and sub_code in IDLE_SUB_STATUS_CODES:
-        return False
-    if "completed" in state_text or state_text.strip() == "idle":
-        return False
-    if any(word in state_text for word in ("printing", "paused", "pausing", "resuming", "stopping", "idle in print")):
-        return True
-    if has_file and 0.0 < progress < 99.9:
-        return True
-    if has_file and elapsed > 0 and progress < 99.9 and (hot_target > 0 or bed_target > 0):
-        return True
-    return False
+    return _shared_status_looks_active_print(status, snap)
 
 
 def _connection_health_from_snapshot(snap: dict[str, Any] | None) -> dict[str, Any]:
@@ -1509,6 +1384,10 @@ class AutoPauseCancelRequest(BaseModel):
     reason: str = ""
 
 
+class AutoPauseNowRequest(BaseModel):
+    token: Optional[str] = None
+
+
 class LearningResetRequest(BaseModel):
     delete_samples: bool = False
 
@@ -1612,20 +1491,181 @@ def _auto_pause_failure_type(result: dict[str, Any]) -> str:
     return "High-risk failure warning"
 
 
+def _auto_pause_vision_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    for key in ("vision", "vision_ai"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _auto_pause_failure_family(result: dict[str, Any]) -> str:
+    """Stable-ish bucket used to verify that a fresh recheck sees the same failure type."""
+    vision = _auto_pause_vision_result(result)
+    text = " ".join(str(x or "") for x in (result.get("reasons") or [])).lower()
+    if isinstance(vision, dict):
+        visual_state = str(vision.get("visual_state") or "").lower()
+        failure_types = [str(x or "").strip().lower() for x in (vision.get("failure_types") or []) if str(x or "").strip()]
+        if visual_state == "camera_bad":
+            return "camera_quality"
+        if visual_state in {"possible_failure", "failure_likely"} or any(w in text for w in ("spaghetti", "stringing", "detached", "blob", "ollama vision")):
+            first = failure_types[0] if failure_types else "unknown"
+            return f"vision:{first}"
+    if any(w in text for w in ("filament", "runout", "no filament")):
+        return "filament"
+    if any(w in text for w in ("hotend", "bed", "temperature", "target", "below")):
+        return "temperature"
+    if any(w in text for w in ("progress", "unchanged", "stuck")):
+        return "progress"
+    if any(w in text for w in ("stale", "mqtt", "telemetry", "reachable", "registered")):
+        return "telemetry"
+    if "camera" in text:
+        return "camera_quality"
+    return "general"
+
+
+def _auto_pause_progress_bucket(status: dict[str, Any]) -> int | None:
+    try:
+        return int((_coerce_float(status.get("progress"), 0.0) // 5) * 5)
+    except Exception:
+        return None
+
+
+def _auto_pause_permission_gate(
+    printer_id: str,
+    status: dict[str, Any],
+    result: dict[str, Any],
+    cfg: dict[str, Any],
+    pending: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Single source of truth for whether Failure Detection may send PAUSE_PRINT.
+
+    This gate is intentionally stricter than the dashboard warning level. Warnings can
+    be noisy; pause permission should be boring, explainable, and reversible. Cancel
+    permission stays locked out here on purpose.
+    """
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    threshold = max(50, min(100, int(_coerce_float(ai_cfg.get("auto_pause_threshold"), 90))))
+    require_high = bool(ai_cfg.get("auto_pause_require_high_level", True))
+    enabled = bool(ai_cfg.get("enabled", True)) and bool(ai_cfg.get("auto_pause_enabled", False))
+    out = result or {}
+    risk = int(_coerce_float(out.get("risk"), 0.0))
+    level = str(out.get("level") or "low").lower()
+    state = str(out.get("state") or "").lower()
+    family = _auto_pause_failure_family(out)
+    vision = _auto_pause_vision_result(out)
+    safe_to_pause, safety_reason = _status_is_safe_to_pause(status)
+
+    vetoes: list[str] = []
+    evidence: list[str] = []
+    if not enabled:
+        vetoes.append("auto-pause is disabled")
+    if out.get("enabled", True) is False:
+        vetoes.append("Failure Detection is disabled for this result")
+    if not safe_to_pause:
+        vetoes.append(safety_reason)
+    else:
+        evidence.append("printer state is pause-eligible")
+    if risk < threshold:
+        vetoes.append(f"risk {risk}% is below the auto-pause threshold {threshold}%")
+    else:
+        evidence.append(f"risk {risk}% meets threshold {threshold}%")
+    if require_high and not (level == "high" or state == "failure_likely"):
+        vetoes.append("result is not high/failure-likely")
+    elif require_high:
+        evidence.append("result is high/failure-likely")
+
+    connection_state = str(status.get("connection_state") or "online").lower()
+    if status.get("offline") or status.get("stale") or connection_state not in {"", "online"}:
+        vetoes.append(f"printer telemetry is {connection_state or 'not online'}")
+
+    if family == "telemetry":
+        vetoes.append("telemetry warning alone is not pause-grade")
+    if family == "camera_quality":
+        vetoes.append("camera/view quality alone only allows inspect, not auto-pause")
+
+    if isinstance(vision, dict) and family.startswith("vision:"):
+        visual_state = str(vision.get("visual_state") or "").lower()
+        recommended_action = str(vision.get("recommended_action") or "").lower()
+        if vision.get("feedback_suppressed"):
+            vetoes.append("similar vision result was suppressed by feedback learning")
+        if vision.get("benign_uncertainty") or vision.get("normalized_from") == "uncertain":
+            vetoes.append("vision result was normalized to benign uncertainty")
+        if visual_state not in {"possible_failure", "failure_likely"}:
+            vetoes.append(f"vision state {visual_state or 'unknown'} is not a pause-grade failure")
+        if not vision.get("bad_confirmed"):
+            bad = int(_coerce_float(vision.get("consecutive_bad"), 0.0))
+            required = int(_coerce_float(vision.get("required_bad_checks"), 2.0))
+            vetoes.append(f"vision has not confirmed repeated bad frames ({bad}/{required})")
+        if recommended_action in {"keep_watching", "inspect"} and visual_state != "failure_likely":
+            vetoes.append(f"vision recommended {recommended_action}, not pause_print")
+        if not vetoes:
+            bad = int(_coerce_float(vision.get("consecutive_bad"), 0.0))
+            required = int(_coerce_float(vision.get("required_bad_checks"), 2.0))
+            evidence.append(f"vision confirmed {visual_state.replace('_', ' ')} over {bad}/{required} bad checks")
+
+    if pending:
+        pending_family = str(pending.get("failure_family") or "")
+        if pending_family and pending_family != family:
+            vetoes.append(f"fresh recheck reported a different failure family ({family}, was {pending_family})")
+        pending_file = str(pending.get("file") or "").strip()
+        current_file = str(status.get("file") or "").strip()
+        if pending_file and current_file and pending_file != current_file:
+            vetoes.append("fresh recheck is for a different print file")
+        pending_bucket = pending.get("progress_bucket")
+        current_bucket = _auto_pause_progress_bucket(status)
+        if isinstance(pending_bucket, int) and isinstance(current_bucket, int) and abs(current_bucket - pending_bucket) > 10:
+            vetoes.append("fresh recheck is too far from the original progress window")
+
+    pause_allowed = not vetoes
+    reason = "pause permitted" if pause_allowed else vetoes[0]
+    return {
+        "pause_allowed": pause_allowed,
+        "cancel_allowed": False,
+        "warn_allowed": True,
+        "allowed_actions": {"warn": True, "pause": pause_allowed, "cancel": False},
+        "reason": reason,
+        "vetoes": vetoes[:8],
+        "evidence": evidence[:8],
+        "failure_family": family,
+        "requires_fresh_recheck": True,
+        "threshold": threshold,
+        "require_high_level": require_high,
+    }
+
+
+def _auto_pause_fresh_recheck(printer_id: str, cfg: dict[str, Any], pending: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a fresh status + AI result immediately before a pause command is sent."""
+    printer = (cfg.get("printers") or {}).get(printer_id)
+    if not printer:
+        return {"ok": False, "error": "Printer not configured"}
+    try:
+        if not runtime.get_client(printer_id):
+            runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
+        snap = runtime.snapshot(printer_id)
+        status = _status_from_snapshot(
+            printer_id,
+            printer,
+            snap,
+            ai_source="auto_pause_recheck",
+            force_ai_evaluate=False,
+            attach_ai=False,
+        )
+        # Force a fresh vision frame before acting. If vision is disabled or the
+        # printer is no longer active, _maybe_attach_vision will safely stand down.
+        status = _maybe_attach_vision(printer_id, printer, status, cfg, ai_source="background", force=True)
+        result = portal_ai.evaluate(printer_id, status, snap, cfg, source="auto_pause_recheck")
+        status["portal_ai"] = result
+        gate = _auto_pause_permission_gate(printer_id, status, result, cfg, pending=pending)
+        return {"ok": True, "status": status, "result": result, "gate": gate}
+    except Exception as exc:
+        return {"ok": False, "error": str(getattr(exc, "detail", None) or exc)}
+
+
 def _status_is_safe_to_pause(status: dict[str, Any]) -> tuple[bool, str]:
-    if not status.get("active_print"):
-        return False, "printer is not reporting an active print"
-    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else {}
-    if phase.get("is_preparing"):
-        return False, "printer is still preparing the job"
-    state_text = f"{status.get('state') or ''} {status.get('status_text') or ''}".lower()
-    if any(word in state_text for word in ("idle", "standby", "complete", "finished", "stopped", "stopping")) and "print" not in state_text:
-        return False, "printer is not in a running print state"
-    if any(word in state_text for word in ("paused", "pausing")):
-        return False, "printer is already paused"
-    if not status.get("reachable") or not status.get("connected"):
-        return False, "printer is not connected enough to send a pause command"
-    return True, "eligible"
+    return _shared_status_is_safe_to_pause(status)
 
 
 def _auto_pause_public_pending(pending: dict[str, Any] | None, now: float | None = None) -> dict[str, Any] | None:
@@ -1642,8 +1682,10 @@ def _auto_pause_public_pending(pending: dict[str, Any] | None, now: float | None
         "risk": pending.get("risk"),
         "level": pending.get("level"),
         "failure_type": pending.get("failure_type"),
+        "failure_family": pending.get("failure_family"),
         "message": pending.get("message"),
         "reason": pending.get("reason"),
+        "permission": pending.get("permission"),
     }
 
 
@@ -1651,9 +1693,9 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
     """Attach auto-pause metadata and, from the background watchdog only, execute due pauses.
 
     The dashboard owns the human-facing countdown modal, but the backend owns the
-    pending timer so the action is not just a browser-side toy. Cancelled tokens
-    are suppressed for a configurable cooldown so the same failure does not
-    immediately re-arm like a cursed jack-in-the-box.
+    pending timer so the action is not just a browser-side toy. Every pause command
+    now passes through one permission gate and a fresh recheck immediately before
+    PAUSE_PRINT is sent. Cancel remains manual-only by design.
     """
     ai_cfg = cfg.get("portal_ai", {}) or {}
     now = time.time()
@@ -1665,19 +1707,13 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
     enabled = bool(ai_cfg.get("enabled", True)) and bool(ai_cfg.get("auto_pause_enabled", False))
     risk = int(_coerce_float(out.get("risk"), 0.0))
     level = str(out.get("level") or "low").lower()
-    state = str(out.get("state") or "").lower()
-    safe_to_pause, safety_reason = _status_is_safe_to_pause(status)
     token = _auto_pause_signature(printer_id, status, out)
     failure_type = _auto_pause_failure_type(out)
     reason = str((out.get("reasons") or ["Failure Detection reported a high-risk condition."])[0] or "Failure Detection reported a high-risk condition.")
-    require_high = bool(ai_cfg.get("auto_pause_require_high_level", True))
-    eligible = bool(
-        enabled
-        and safe_to_pause
-        and risk >= threshold
-        and (not require_high or level == "high" or state == "failure_likely")
-        and out.get("enabled", True) is not False
-    )
+    gate = _auto_pause_permission_gate(printer_id, status, out, cfg)
+    safety_reason = str(gate.get("reason") or "standing by")
+    failure_family = str(gate.get("failure_family") or _auto_pause_failure_family(out))
+    eligible = bool(gate.get("pause_allowed"))
 
     pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
     if pending and (not eligible or pending.get("token") != token):
@@ -1697,22 +1733,40 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
 
     sent = None
     error = None
+    recheck_public = None
     if pending and eligible and schedule and now >= float(pending.get("deadline_epoch") or 0):
-        try:
-            _send_command(printer_id, PAUSE_PRINT, {}, True, 60.0, True)
-            sent = {"ok": True, "sent_epoch": now, "message": "Pause command sent by Failure Detection."}
-            _AI_AUTO_PAUSE_LAST_SENT[printer_id] = now
+        recheck = _auto_pause_fresh_recheck(printer_id, cfg, pending=pending)
+        recheck_gate = recheck.get("gate") if isinstance(recheck.get("gate"), dict) else None
+        recheck_public = {
+            "ok": bool(recheck.get("ok")),
+            "reason": (recheck_gate or {}).get("reason") or recheck.get("error"),
+            "allowed": bool((recheck_gate or {}).get("pause_allowed")),
+            "failure_family": (recheck_gate or {}).get("failure_family"),
+            "vetoes": (recheck_gate or {}).get("vetoes", []),
+        }
+        if not recheck.get("ok") or not (recheck_gate or {}).get("pause_allowed"):
+            error = str(recheck_public.get("reason") or "fresh recheck did not permit auto-pause")
+            pending["last_error"] = error
             _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
             pending = None
-            log("warning", f"Failure Detection auto-pause sent: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
-        except Exception as exc:
-            error = str(getattr(exc, "detail", None) or exc)
-            pending["last_error"] = error
-            # Avoid hammering the printer every watchdog tick after one failed attempt.
-            _AI_AUTO_PAUSE_CANCELLED[token] = now + min(300.0, cooldown_minutes * 60.0)
-            log("error", f"Failure Detection auto-pause failed: {error}", "portal_ai", printer=printer_id)
+            _AI_AUTO_PAUSE_CANCELLED[token] = now + min(180.0, cooldown_minutes * 60.0)
+            log("warning", f"Failure Detection auto-pause blocked by fresh recheck: {error}", "portal_ai", printer=printer_id)
+        else:
+            try:
+                _send_command(printer_id, PAUSE_PRINT, {}, True, 60.0, True)
+                sent = {"ok": True, "sent_epoch": now, "message": "Pause command sent by Failure Detection after a fresh safety recheck."}
+                _AI_AUTO_PAUSE_LAST_SENT[printer_id] = now
+                _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
+                pending = None
+                log("warning", f"Failure Detection auto-pause sent: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
+            except Exception as exc:
+                error = str(getattr(exc, "detail", None) or exc)
+                pending["last_error"] = error
+                # Avoid hammering the printer every watchdog tick after one failed attempt.
+                _AI_AUTO_PAUSE_CANCELLED[token] = now + min(300.0, cooldown_minutes * 60.0)
+                log("error", f"Failure Detection auto-pause failed: {error}", "portal_ai", printer=printer_id)
 
-    if not pending and eligible and schedule:
+    if not pending and eligible and schedule and sent is None and error is None:
         pending = {
             "token": token,
             "created_epoch": now,
@@ -1721,8 +1775,12 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
             "risk": risk,
             "level": level,
             "failure_type": failure_type,
+            "failure_family": failure_family,
+            "file": str(status.get("file") or "").strip(),
+            "progress_bucket": _auto_pause_progress_bucket(status),
             "message": f"Failure Detection may pause this print in {countdown} seconds unless you cancel.",
             "reason": reason,
+            "permission": gate,
         }
         _AI_AUTO_PAUSE_PENDING[printer_id] = pending
         log("warning", f"Failure Detection auto-pause countdown armed: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
@@ -1736,14 +1794,19 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
         "threshold": threshold,
         "countdown_seconds": countdown,
         "cooldown_minutes": cooldown_minutes,
-        "require_high_level": require_high,
+        "require_high_level": bool(ai_cfg.get("auto_pause_require_high_level", True)),
         "eligible": eligible,
         "safety_reason": safety_reason,
         "failure_type": failure_type,
+        "failure_family": failure_family,
         "reason": reason,
+        "permission": gate,
+        "allowed_actions": gate.get("allowed_actions"),
+        "requires_fresh_recheck": True,
         "state": action_state,
         "pending": _auto_pause_public_pending(pending, now),
         "sent": sent,
+        "fresh_recheck": recheck_public,
         "error": error or (pending or {}).get("last_error"),
     }
     out["auto_pause"] = auto_pause
@@ -2816,14 +2879,28 @@ async def api_ai_auto_pause_cancel(printer_id: str, req: AutoPauseCancelRequest 
 
 
 @app.post("/api/printers/{printer_id}/ai/auto-pause/pause-now")
-async def api_ai_auto_pause_now(printer_id: str):
-    if printer_id not in (load_config().get("printers") or {}):
+async def api_ai_auto_pause_now(printer_id: str, req: AutoPauseNowRequest | None = None):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}):
         raise HTTPException(404, "Printer not configured")
+    pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
+    if not pending:
+        raise HTTPException(409, "No active Failure Detection auto-pause warning is pending.")
+    requested_token = str((req.token if req else None) or "").strip()
+    if requested_token and requested_token != str(pending.get("token") or ""):
+        raise HTTPException(409, "The auto-pause warning token no longer matches the active warning.")
+
+    recheck = await asyncio.to_thread(_auto_pause_fresh_recheck, printer_id, cfg, pending)
+    gate = recheck.get("gate") if isinstance(recheck.get("gate"), dict) else {}
+    if not recheck.get("ok") or not gate.get("pause_allowed"):
+        reason = str(gate.get("reason") or recheck.get("error") or "Fresh recheck did not permit pausing.")
+        raise HTTPException(409, f"Pause blocked: {reason}")
+
     result = await asyncio.to_thread(_send_command, printer_id, PAUSE_PRINT, {}, True, 60.0, True)
     _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
     _AI_AUTO_PAUSE_LAST_SENT[printer_id] = time.time()
-    log("warning", "Failure Detection pause-now command sent", "portal_ai", printer=printer_id)
-    return {"ok": True, "message": "Pause command sent", "result": result.get("result")}
+    log("warning", f"Failure Detection pause-now command sent after recheck: {gate.get('failure_family') or 'unknown'}", "portal_ai", printer=printer_id)
+    return {"ok": True, "message": "Pause command sent after a fresh safety recheck.", "result": result.get("result"), "permission": gate}
 
 
 @app.get("/api/printers/{printer_id}/ai/status")

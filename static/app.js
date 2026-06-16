@@ -536,7 +536,10 @@
     if (!printerId) return toast('No printer configured for pause command.', 'warn');
     setButtonBusy(button, true, 'Pausing...');
     try {
-      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/auto-pause/pause-now`, { method: 'POST' });
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/auto-pause/pause-now`, {
+        method: 'POST',
+        body: JSON.stringify({ token: autoPauseModalState.token || '' })
+      });
       toast(data.message || 'Pause command sent.', 'success');
       closeAutoPauseModal();
       await refreshDashboard();

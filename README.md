@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.58-blue)
+![Version](https://img.shields.io/badge/version-1.2.59-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -16,7 +16,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 > This is an unofficial project. It is not affiliated with, endorsed by, or supported by Elegoo, OctoEverywhere, or any printer vendor. Firmware behavior can change. Some stock command paths behave differently across firmware versions.
 
 > [!NOTE]
-> In this version, **Failure Detection can optionally pause a print after a high-risk warning countdown**. Auto-pause is off by default, has a configurable countdown/cancel window, and only sends a pause command when explicitly enabled. Cancel print remains locked behind manual controls; AI never cancels, resumes, loads/unloads filament, or overrides the stock printer controls.
+> In this version, **Failure Detection can optionally pause a print after a high-risk warning countdown**. Auto-pause is off by default, has a configurable countdown/cancel window, uses a shared pause-permission gate, and performs a fresh telemetry/vision recheck immediately before sending `PAUSE_PRINT`. Cancel print remains locked behind manual controls; AI never cancels, resumes, loads/unloads filament, or overrides the stock printer controls.
 
 ---
 
@@ -63,7 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.58 control-and-release-lock-polish
+1.2.59 failure-detection-pause-gate
 ```
 
 Major current capabilities:
@@ -1274,6 +1274,7 @@ cc2-dash/
 │   ├── config.py
 │   ├── feedback_learning.py
 │   ├── logger.py
+│   ├── print_state.py
 │   ├── printer_client.py
 │   ├── scanner.py
 │   ├── themes.py
@@ -1315,6 +1316,14 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.59 failure-detection pause gate
+
+- Added a shared print-state helper module so dashboard status, Portal AI, vision checks, and auto-pause permission use the same preparation/active-print/pause-safety classification instead of drifting apart across files.
+- Added a single Failure Detection pause-permission gate that returns explicit allowed actions, veto reasons, evidence, failure family, and a hard `cancel_allowed: false` decision.
+- Hardened auto-pause so a countdown only arms when the gate allows pause, and the backend performs a fresh status + forced vision recheck before sending `PAUSE_PRINT`.
+- Hardened the dashboard **Pause now** action so it requires the active auto-pause token and also passes the same fresh recheck/gate before sending a pause command.
+- Made camera/view-quality and telemetry-only warnings inspect/warn states rather than auto-pause triggers, keeping auto-pause reserved for pause-grade print failure evidence.
 
 ### v1.2.58 control, upload, error-code, and release-lock polish
 
