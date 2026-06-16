@@ -598,7 +598,7 @@ input.toggle[type="checkbox"]:disabled {
 .ai-reasons li + li { margin-top:.2rem; }
 .ai-feedback {
   display:grid;
-  grid-template-columns:repeat(3, minmax(0, 1fr));
+  grid-template-columns:repeat(auto-fit, minmax(7.6rem, 1fr));
   gap:.45rem;
 }
 .ai-feedback .button { width:100%; }
@@ -956,6 +956,11 @@ input.toggle[type="checkbox"]:disabled {
 }
 .ai-feedback-button[data-ai-feedback="false_alarm"] {
   background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-warning) 50%, var(--cc2-primary)), var(--cc2-primary-hover));
+}
+.ai-feedback-button.missed-failure-button {
+  grid-column:1 / -1;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-danger) 78%, #10070b), color-mix(in srgb, var(--cc2-warning) 35%, var(--cc2-primary)));
+  border-color:color-mix(in srgb, var(--cc2-danger) 70%, white 12%);
 }
 .speed-action-row .speed-preset-select {
   border-color:color-mix(in srgb, var(--cc2-primary) 38%, var(--cc2-border));
@@ -1569,6 +1574,110 @@ body.kiosk-page .camera-placeholder span:last-child {
   gap:.55rem;
   margin-top:1rem;
 }
+
+/* v1.2.60: mobile-safe ROI missed-failure annotation */
+.roi-feedback-card {
+  width:min(54rem, 100%);
+  max-height:94dvh;
+}
+.roi-feedback-status {
+  border:1px solid var(--cc2-border);
+  border-radius:.85rem;
+  background:var(--cc2-card-soft);
+  color:var(--cc2-muted);
+  padding:.65rem .75rem;
+  font-size:.84rem;
+  line-height:1.35;
+  margin-bottom:.75rem;
+}
+.roi-feedback-status.good {
+  color:var(--cc2-success);
+  border-color:color-mix(in srgb, var(--cc2-success) 36%, var(--cc2-border));
+  background:color-mix(in srgb, var(--cc2-success) 8%, var(--cc2-card-soft));
+}
+.roi-feedback-status.bad {
+  color:var(--cc2-danger);
+  border-color:color-mix(in srgb, var(--cc2-danger) 44%, var(--cc2-border));
+  background:color-mix(in srgb, var(--cc2-danger) 10%, var(--cc2-card-soft));
+}
+.roi-editor {
+  position:relative;
+  width:100%;
+  max-height:62dvh;
+  overflow:hidden;
+  border:1px solid color-mix(in srgb, var(--cc2-primary) 30%, var(--cc2-border));
+  border-radius:1rem;
+  background:#000;
+  box-shadow:0 16px 40px rgba(0,0,0,.28);
+  touch-action:none;
+}
+.roi-editor img {
+  width:100%;
+  height:auto;
+  max-height:62dvh;
+  object-fit:contain;
+  display:block;
+  user-select:none;
+  -webkit-user-drag:none;
+  -webkit-touch-callout:none;
+}
+.roi-overlay {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  touch-action:none;
+  cursor:crosshair;
+}
+.roi-box {
+  fill:color-mix(in srgb, var(--cc2-danger) 16%, transparent);
+  stroke:var(--cc2-danger);
+  stroke-width:3;
+  vector-effect:non-scaling-stroke;
+  filter:drop-shadow(0 0 8px color-mix(in srgb, var(--cc2-danger) 58%, transparent));
+}
+.roi-feedback-controls {
+  display:grid;
+  grid-template-columns:minmax(12rem, .8fr) minmax(14rem, 1.2fr);
+  gap:.7rem;
+  margin-top:.8rem;
+}
+.roi-feedback-controls label {
+  display:flex;
+  flex-direction:column;
+  gap:.28rem;
+  color:var(--cc2-muted);
+  font-size:.82rem;
+}
+.roi-feedback-controls select,
+.roi-feedback-controls input {
+  width:100%;
+}
+.roi-feedback-help {
+  margin-top:.7rem;
+  color:var(--cc2-muted);
+  font-size:.78rem;
+  line-height:1.35;
+  border:1px dashed color-mix(in srgb, var(--cc2-warning) 38%, var(--cc2-border));
+  border-radius:.85rem;
+  padding:.62rem .72rem;
+  background:color-mix(in srgb, var(--cc2-warning) 7%, var(--cc2-card-soft));
+}
+.roi-feedback-help strong { color:var(--cc2-warning); }
+.roi-feedback-actions .button.danger {
+  background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-danger) 78%, #000), var(--cc2-primary));
+  border-color:color-mix(in srgb, var(--cc2-danger) 68%, white 10%);
+}
+@media (max-width: 620px) {
+  .roi-feedback-modal { align-items:stretch; padding:.45rem; }
+  .roi-feedback-card { max-height:96dvh; padding:.75rem; }
+  .roi-editor,
+  .roi-editor img { max-height:52dvh; }
+  .roi-feedback-controls { grid-template-columns:1fr; }
+  .roi-feedback-actions { grid-template-columns:1fr 1fr; }
+  .roi-feedback-status { font-size:.78rem; padding:.55rem .62rem; }
+}
+
 .auto-pause-card {
   border-color:color-mix(in srgb, var(--cc2-danger) 48%, var(--cc2-border));
   box-shadow:0 26px 84px rgba(0,0,0,.62), 0 0 0 1px color-mix(in srgb, var(--cc2-danger) 18%, transparent);

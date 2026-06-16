@@ -11,6 +11,7 @@
   let stageUploadInProgress = false;
   const baseDocumentTitle = document.title || 'cc2-dash';
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
+  let roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
 
   function featureLocked(key) {
     return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
@@ -895,6 +896,9 @@
     looks_bad: [
       ['spaghetti_stringing', 'Spaghetti / stringing'],
       ['detached_print', 'Detached print'],
+      ['prime_tower_fell_over', 'Prime tower fell over'],
+      ['air_printing', 'Air printing'],
+      ['small_object_detached', 'Small object detached'],
       ['blob_nozzle_buildup', 'Blob / nozzle buildup'],
       ['first_layer_issue', 'First-layer issue'],
       ['layer_shift', 'Layer shift'],
@@ -1011,11 +1015,245 @@
     });
   }
 
+
+
+  function setRoiStatus(message, tone = '') {
+    const el = $('#roiFeedbackStatus');
+    if (!el) return;
+    el.textContent = message || '';
+    el.classList.toggle('bad', tone === 'bad');
+    el.classList.toggle('good', tone === 'good');
+  }
+
+  function roiOverlaySize() {
+    const overlay = $('#roiFeedbackOverlay');
+    if (!overlay) return { width: 0, height: 0 };
+    const rect = overlay.getBoundingClientRect();
+    const width = Math.max(1, rect.width || 0);
+    const height = Math.max(1, rect.height || 0);
+    overlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    return { width, height };
+  }
+
+  function roiPointFromEvent(ev) {
+    const overlay = $('#roiFeedbackOverlay');
+    if (!overlay) return { x: 0, y: 0, width: 1, height: 1 };
+    const rect = overlay.getBoundingClientRect();
+    const width = Math.max(1, rect.width || 0);
+    const height = Math.max(1, rect.height || 0);
+    return {
+      x: Math.max(0, Math.min(width, ev.clientX - rect.left)),
+      y: Math.max(0, Math.min(height, ev.clientY - rect.top)),
+      width,
+      height,
+    };
+  }
+
+  function drawRoiBox(box) {
+    const rect = $('#roiFeedbackRect');
+    if (!rect) return;
+    if (!box || box.w <= 0 || box.h <= 0) {
+      rect.classList.add('hidden');
+      rect.setAttribute('x', '0');
+      rect.setAttribute('y', '0');
+      rect.setAttribute('width', '0');
+      rect.setAttribute('height', '0');
+      return;
+    }
+    rect.classList.remove('hidden');
+    rect.setAttribute('x', String(box.x));
+    rect.setAttribute('y', String(box.y));
+    rect.setAttribute('width', String(box.w));
+    rect.setAttribute('height', String(box.h));
+  }
+
+  function resetRoiBox() {
+    roiFeedbackState.box = null;
+    roiFeedbackState.drawing = false;
+    roiFeedbackState.start = null;
+    drawRoiBox(null);
+  }
+
+  function closeRoiFeedbackModal() {
+    const modal = $('#roiFeedbackModal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    $('#roiEditor')?.classList.add('hidden');
+    const img = $('#roiFeedbackImage');
+    if (img) img.removeAttribute('src');
+    roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
+    drawRoiBox(null);
+  }
+
+  async function openRoiFeedbackModal() {
+    const printerId = document.body.dataset.printerId;
+    if (!printerId) return toast('No printer configured for missed-failure feedback.', 'warn');
+    const modal = $('#roiFeedbackModal');
+    const img = $('#roiFeedbackImage');
+    const editor = $('#roiEditor');
+    if (!modal || !img || !editor) return toast('ROI feedback UI is not available on this page.', 'warn');
+    roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
+    drawRoiBox(null);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    editor.classList.add('hidden');
+    setRoiStatus('Capturing a still frame from the camera...', '');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback/frame`, {
+        method: 'POST',
+        body: JSON.stringify({ label: 'missed_failure', context: { page, saved_from: 'roi_feedback_modal_capture', user_agent: navigator.userAgent || '' } })
+      });
+      const frame = data?.frame || {};
+      if (!frame.url || !frame.relative_path) throw new Error('Feedback frame was captured but no image URL was returned.');
+      roiFeedbackState.frame = frame;
+      img.onload = () => {
+        editor.classList.remove('hidden');
+        roiOverlaySize();
+        setRoiStatus('Draw a box around the specific failed part, prime tower, blob, or air-printing area.', 'good');
+      };
+      img.onerror = () => setRoiStatus('Frame captured, but the browser could not display it. Try closing and reopening this dialog.', 'bad');
+      img.src = `${frame.url}${frame.url.includes('?') ? '&' : '?'}v=${Date.now()}`;
+    } catch (err) {
+      setRoiStatus(err.message || 'Could not capture a camera frame.', 'bad');
+      toast(err.message, 'error', 7600);
+    }
+  }
+
+  function normalizedRoiBox() {
+    const box = roiFeedbackState.box;
+    if (!box) return null;
+    const width = Math.max(1, Number(box.displayWidth || 0));
+    const height = Math.max(1, Number(box.displayHeight || 0));
+    if (box.w < 8 || box.h < 8) return null;
+    return {
+      x: Math.max(0, Math.min(1, box.x / width)),
+      y: Math.max(0, Math.min(1, box.y / height)),
+      w: Math.max(0, Math.min(1, box.w / width)),
+      h: Math.max(0, Math.min(1, box.h / height)),
+      display: { width, height, device_pixel_ratio: window.devicePixelRatio || 1 }
+    };
+  }
+
+  async function submitRoiFeedback(button) {
+    const printerId = document.body.dataset.printerId;
+    if (!printerId) return toast('No printer configured for missed-failure feedback.', 'warn');
+    const frame = roiFeedbackState.frame || {};
+    if (!frame.relative_path) return toast('No feedback frame captured yet.', 'warn');
+    const norm = normalizedRoiBox();
+    if (!norm) return toast('Draw a box around the failed area first.', 'warn');
+    const failureType = $('#roiFailureType')?.value || 'other';
+    const failureText = $('#roiFailureType')?.selectedOptions?.[0]?.textContent || 'Missed failure';
+    const note = ($('#roiFailureNote')?.value || '').trim();
+    const reason = note || failureText;
+    setButtonBusy(button, true, 'Saving...');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback`, {
+        method: 'POST',
+        body: JSON.stringify({
+          label: 'looks_bad',
+          note: reason,
+          context: {
+            page,
+            saved_from: 'roi_missed_failure_modal',
+            feedback_frame_path: frame.relative_path,
+            failure_type: failureType,
+            reason,
+            user_agent: navigator.userAgent || ''
+          },
+          annotation: {
+            type: 'box',
+            x: norm.x,
+            y: norm.y,
+            w: norm.w,
+            h: norm.h,
+            display: norm.display,
+            source_frame_path: frame.relative_path,
+            failure_type: failureType,
+            reason,
+            source: 'dashboard_roi_modal'
+          }
+        })
+      });
+      const cropMsg = data?.annotation?.crops ? ' + ROI crop saved' : ' + ROI metadata saved';
+      toast(`Missed failure saved${cropMsg}.`, 'success', 5200);
+      closeRoiFeedbackModal();
+      showFeedbackReasons('looks_bad', data);
+    } catch (err) {
+      toast(err.message, 'error', 8000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function initRoiFeedbackModal() {
+    $('#aiReportMissedFailureButton')?.addEventListener('click', openRoiFeedbackModal);
+    $('#roiFeedbackClose')?.addEventListener('click', closeRoiFeedbackModal);
+    $('#roiFeedbackReset')?.addEventListener('click', resetRoiBox);
+    $('#roiFeedbackSubmit')?.addEventListener('click', ev => submitRoiFeedback(ev.currentTarget));
+    const overlay = $('#roiFeedbackOverlay');
+    if (!overlay) return;
+    const begin = (ev) => {
+      if (!roiFeedbackState.frame) return;
+      ev.preventDefault();
+      roiOverlaySize();
+      const pt = roiPointFromEvent(ev);
+      roiFeedbackState.drawing = true;
+      roiFeedbackState.start = pt;
+      roiFeedbackState.box = { x: pt.x, y: pt.y, w: 0, h: 0, displayWidth: pt.width, displayHeight: pt.height };
+      drawRoiBox(roiFeedbackState.box);
+      try { overlay.setPointerCapture(ev.pointerId); } catch {}
+    };
+    const move = (ev) => {
+      if (!roiFeedbackState.drawing || !roiFeedbackState.start) return;
+      ev.preventDefault();
+      const pt = roiPointFromEvent(ev);
+      const start = roiFeedbackState.start;
+      const box = {
+        x: Math.min(start.x, pt.x),
+        y: Math.min(start.y, pt.y),
+        w: Math.abs(pt.x - start.x),
+        h: Math.abs(pt.y - start.y),
+        displayWidth: pt.width,
+        displayHeight: pt.height,
+      };
+      roiFeedbackState.box = box;
+      drawRoiBox(box);
+    };
+    const end = (ev) => {
+      if (!roiFeedbackState.drawing) return;
+      ev.preventDefault();
+      roiFeedbackState.drawing = false;
+      roiFeedbackState.start = null;
+      try { overlay.releasePointerCapture(ev.pointerId); } catch {}
+      if (!normalizedRoiBox()) {
+        resetRoiBox();
+        setRoiStatus('Box was too small. Drag a larger square/rectangle around the failed area.', 'bad');
+      } else {
+        setRoiStatus('Box selected. Choose the failure type and save it.', 'good');
+      }
+    };
+    overlay.addEventListener('pointerdown', begin, { passive: false });
+    overlay.addEventListener('pointermove', move, { passive: false });
+    overlay.addEventListener('pointerup', end, { passive: false });
+    overlay.addEventListener('pointercancel', end, { passive: false });
+    window.addEventListener('resize', () => {
+      const old = roiFeedbackState.box;
+      const size = roiOverlaySize();
+      if (!old || !size.width || !size.height) return;
+      const norm = normalizedRoiBox();
+      if (!norm) return;
+      roiFeedbackState.box = { x: norm.x * size.width, y: norm.y * size.height, w: norm.w * size.width, h: norm.h * size.height, displayWidth: size.width, displayHeight: size.height };
+      drawRoiBox(roiFeedbackState.box);
+    });
+  }
+
   function initDashboard() {
     initDashboardAccordions();
     initGcodeThumbnailModal();
     initFailureDetectionToggle();
     initAutoPauseModal();
+    initRoiFeedbackModal();
     refreshDashboard();
     const interval = Number(cfg?.dashboard?.refresh_interval_seconds || 3) * 1000;
     setInterval(refreshDashboard, Math.max(1500, interval));
@@ -1830,13 +2068,16 @@
       metricBit('edge', sample.edge_density, 3),
       metricBit('delta', sample.edge_delta, 3),
     ].filter(Boolean).join('');
-    const thumb = sample.frame_url
-      ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>`
+    const thumbUrl = sample.roi_frame_url || sample.frame_url || '';
+    const thumbLabel = sample.roi_frame_url ? 'ROI crop' : 'Feedback frame';
+    const thumb = thumbUrl
+      ? `<a class="ai-feedback-sample-thumb" href="${esc(thumbUrl)}" target="_blank" rel="noopener"><img src="${esc(thumbUrl)}" alt="${esc(thumbLabel)} ${esc(sample.id)}" loading="lazy"></a>`
       : '<div class="ai-feedback-sample-thumb empty">no frame</div>';
     const stageBits = [
       sample.print_stage ? String(sample.print_stage).replaceAll('_', ' ') : '',
       sample.progress_percent !== null && sample.progress_percent !== undefined ? `${fmtLearningNumber(sample.progress_percent, 1)}%` : '',
       sample.vision_state ? String(sample.vision_state).replaceAll('_', ' ') : '',
+      sample.has_annotation ? `ROI ${String(sample.annotation?.failure_type || 'annotated').replaceAll('_', ' ')}` : '',
       sample.suppression_match ? 'suppression match' : '',
     ].filter(Boolean).join(' · ');
     const reason = sample.reason || sample.feedback_note || '';
@@ -3739,8 +3980,8 @@
     box.className = 'ai-training-selected';
     box.innerHTML = `
       <div class="ai-feedback-sample-head"><div><strong>${esc(labelText(sample.feedback_label))}</strong><small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown printer')}</small></div><span class="ai-feedback-sample-outcome ${esc(outcomeTone(sample.outcome))}">${esc(outcomeText(sample.outcome))}</span></div>
-      ${sample.frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>` : ''}
-      <div class="ai-feedback-sample-meta"><span><b>ID</b> ${esc(sample.id)}</span>${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span><b>stage</b> ${esc(sampleStageText(sample))}</span>` : ''}</div>
+      ${sample.roi_frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.roi_frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.roi_frame_url)}" alt="ROI crop ${esc(sample.id)}" loading="lazy"></a>` : (sample.frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>` : '')}
+      <div class="ai-feedback-sample-meta"><span><b>ID</b> ${esc(sample.id)}</span>${sample.has_annotation ? '<span><b>ROI</b> annotated</span>' : ''}${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span><b>stage</b> ${esc(sampleStageText(sample))}</span>` : ''}</div>
     `;
     $('#aiTrainingReviewLabel').value = sample.feedback_label || 'looks_good';
     $('#aiTrainingReviewOutcome').value = sample.outcome || '';

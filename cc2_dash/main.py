@@ -24,6 +24,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+try:
+    from PIL import Image
+except Exception:  # Pillow is installed for normal use, but keep startup resilient.
+    Image = None  # type: ignore[assignment]
+
 from . import __version__
 from .config import (
     APP_ROOT,
@@ -1364,6 +1369,12 @@ class SaveConfigRequest(BaseModel):
 class AIFeedbackRequest(BaseModel):
     label: str
     note: str = ""
+    context: dict[str, Any] = Field(default_factory=dict)
+    annotation: dict[str, Any] = Field(default_factory=dict)
+
+
+class AIFeedbackFrameRequest(BaseModel):
+    label: str = "missed_failure"
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -2967,6 +2978,158 @@ def _capture_feedback_frame(printer_id: str, printer: dict[str, Any], cfg: dict[
         return {"captured": False, "fresh": False, "error": str(exc)}
 
 
+
+
+def _feedback_frame_url(relative_path: str | None) -> str | None:
+    if not relative_path:
+        return None
+    return f"/api/ai/feedback/frame?path={quote(str(relative_path), safe='')}"
+
+
+def _feedback_frame_info_from_path(frame_path: str | None, source: str = "annotation_frame") -> dict[str, Any] | None:
+    path = _feedback_frame_path(frame_path)
+    if not path:
+        return None
+    try:
+        rel = str(path.relative_to(DATA_DIR)) if DATA_DIR in path.parents else str(path)
+    except Exception:
+        rel = str(path)
+    try:
+        size = path.stat().st_size
+    except Exception:
+        size = 0
+    return {
+        "captured": True,
+        "fresh": False,
+        "source": source,
+        "path": str(path),
+        "relative_path": rel,
+        "url": _feedback_frame_url(rel),
+        "bytes": size,
+    }
+
+
+def _clamp_unit_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+        if out != out:  # NaN
+            return default
+    except Exception:
+        return default
+    return max(0.0, min(1.0, out))
+
+
+def _normalize_roi_annotation(annotation: dict[str, Any] | None, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if not isinstance(annotation, dict):
+        return None
+    box = annotation.get("box") if isinstance(annotation.get("box"), dict) else annotation
+    if not isinstance(box, dict):
+        return None
+    x = _clamp_unit_float(box.get("x"), 0.0)
+    y = _clamp_unit_float(box.get("y"), 0.0)
+    w = _clamp_unit_float(box.get("w"), 0.0)
+    h = _clamp_unit_float(box.get("h"), 0.0)
+    if x + w > 1.0:
+        w = max(0.0, 1.0 - x)
+    if y + h > 1.0:
+        h = max(0.0, 1.0 - y)
+    if w < 0.015 or h < 0.015:
+        return None
+    failure_type = str(annotation.get("failure_type") or annotation.get("reason_key") or (context or {}).get("failure_type") or "unknown").strip().lower()
+    failure_type = re.sub(r"[^a-z0-9_\-]+", "_", failure_type)[:64] or "unknown"
+    reason = str(annotation.get("reason") or annotation.get("reason_text") or (context or {}).get("reason") or "").strip()[:240]
+    source = str(annotation.get("source") or "dashboard_roi_modal").strip()[:80] or "dashboard_roi_modal"
+    return {
+        "schema": "cc2-ai-roi-annotation-v1",
+        "type": "box",
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "w": round(w, 6),
+        "h": round(h, 6),
+        "failure_type": failure_type,
+        "reason": reason,
+        "source": source,
+        "created_at_epoch": time.time(),
+        "display": annotation.get("display") if isinstance(annotation.get("display"), dict) else {},
+    }
+
+
+def _safe_crop_name(value: Any, fallback: str = "roi") -> str:
+    text = str(value or fallback).strip().lower().replace(" ", "_")
+    text = re.sub(r"[^a-z0-9_\-.]+", "_", text).strip("._-")
+    return text[:72] or fallback
+
+
+def _attach_roi_crops(frame_info: dict[str, Any] | None, annotation: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Save ROI crops next to the feedback frame and return annotation metadata.
+
+    Uses normalized coordinates so the same box survives phone browsers, rotated
+    displays, and camera resolution changes.
+    """
+    ann = _normalize_roi_annotation(annotation)
+    if not ann:
+        return None
+    frame_path = _feedback_frame_path((frame_info or {}).get("relative_path") or (frame_info or {}).get("path"))
+    if not frame_path:
+        ann["crop_error"] = "feedback_frame_not_found"
+        return ann
+    if Image is None:
+        ann["crop_error"] = "pillow_unavailable"
+        return ann
+    try:
+        with Image.open(frame_path) as img:
+            img = img.convert("RGB")
+            width, height = img.size
+            x1 = int(round(ann["x"] * width))
+            y1 = int(round(ann["y"] * height))
+            x2 = int(round((ann["x"] + ann["w"]) * width))
+            y2 = int(round((ann["y"] + ann["h"]) * height))
+            x1 = max(0, min(width - 1, x1))
+            y1 = max(0, min(height - 1, y1))
+            x2 = max(x1 + 1, min(width, x2))
+            y2 = max(y1 + 1, min(height, y2))
+            pad_x = max(8, int(round((x2 - x1) * 0.25)))
+            pad_y = max(8, int(round((y2 - y1) * 0.25)))
+            px1 = max(0, x1 - pad_x)
+            py1 = max(0, y1 - pad_y)
+            px2 = min(width, x2 + pad_x)
+            py2 = min(height, y2 + pad_y)
+            root = frame_path.parent
+            crop_stem = f"{frame_path.stem}_{_safe_crop_name(ann.get('failure_type'))}_{uuid.uuid4().hex[:6]}"
+            crop_path = root / f"{crop_stem}_roi.jpg"
+            padded_path = root / f"{crop_stem}_roi_context.jpg"
+            img.crop((x1, y1, x2, y2)).save(crop_path, format="JPEG", quality=90)
+            img.crop((px1, py1, px2, py2)).save(padded_path, format="JPEG", quality=90)
+            ann["image_size"] = {"width": width, "height": height}
+            ann["pixel_box"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+            ann["pixel_box_padded"] = {"x1": px1, "y1": py1, "x2": px2, "y2": py2}
+            crop_rel = str(crop_path.relative_to(DATA_DIR)) if DATA_DIR in crop_path.parents else str(crop_path)
+            padded_rel = str(padded_path.relative_to(DATA_DIR)) if DATA_DIR in padded_path.parents else str(padded_path)
+            ann["crops"] = {
+                "roi_path": str(crop_path),
+                "roi_relative_path": crop_rel,
+                "roi_url": _feedback_frame_url(crop_rel),
+                "roi_bytes": crop_path.stat().st_size,
+                "context_path": str(padded_path),
+                "context_relative_path": padded_rel,
+                "context_url": _feedback_frame_url(padded_rel),
+                "context_bytes": padded_path.stat().st_size,
+            }
+    except Exception as exc:
+        ann["crop_error"] = str(exc)
+    return ann
+
+
+def _feedback_annotation_source_path(annotation: dict[str, Any] | None, context: dict[str, Any] | None = None) -> str | None:
+    ann = annotation if isinstance(annotation, dict) else {}
+    ctx = context if isinstance(context, dict) else {}
+    return (
+        ann.get("source_frame_path")
+        or ann.get("frame_path")
+        or ctx.get("feedback_frame_path")
+        or ctx.get("source_frame_path")
+    )
+
 def _feedback_kind(label: str) -> str:
     label = str(label or "").strip().lower()
     if label in {"looks_good", "good", "ok"}:
@@ -3054,6 +3217,32 @@ async def api_ai_feedback_suppressions(printer_id: str | None = None):
     return {"ok": True, "count": len(items), "suppressions": items}
 
 
+@app.get("/api/ai/feedback/frame")
+async def api_ai_feedback_frame(path: str):
+    frame_path = _feedback_frame_path(path)
+    if not frame_path:
+        raise HTTPException(status_code=404, detail="Feedback frame not found")
+    media = "image/png" if frame_path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(frame_path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
+
+
+@app.post("/api/printers/{printer_id}/ai/feedback/frame")
+async def api_printer_ai_feedback_frame(printer_id: str, body: AIFeedbackFrameRequest | None = None):
+    cfg = load_config()
+    printer = cfg.get("printers", {}).get(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    if not runtime.get_client(printer_id):
+        runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
+    label = str((body.label if body else "missed_failure") or "missed_failure").strip() or "missed_failure"
+    frame_info = _capture_feedback_frame(printer_id, printer, cfg, label)
+    if not frame_info or not frame_info.get("captured"):
+        detail = (frame_info or {}).get("error") or "Could not capture camera frame"
+        raise HTTPException(status_code=503, detail=detail)
+    frame_info.pop("heuristics", None)
+    frame_info["url"] = _feedback_frame_url(frame_info.get("relative_path"))
+    return {"ok": True, "printer_id": printer_id, "frame": frame_info}
+
 def _json_maybe(value: Any, fallback: Any = None) -> Any:
     if value is None:
         return fallback
@@ -3131,6 +3320,9 @@ def _public_learning_sample(sample: dict[str, Any]) -> dict[str, Any]:
         "frame_path": frame_path,
         "has_frame": has_frame,
         "frame_url": f"/api/ai/learning/samples/{sample_id}/frame" if sample_id and has_frame else None,
+        "has_annotation": isinstance(snapshot.get("annotation"), dict) and bool(snapshot.get("annotation")),
+        "annotation": snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else None,
+        "roi_frame_url": f"/api/ai/learning/samples/{sample_id}/roi-frame?variant=context" if sample_id and isinstance(snapshot.get("annotation"), dict) and isinstance((snapshot.get("annotation") or {}).get("crops"), dict) else None,
         "has_raw_json": bool(sample.get("raw_json")),
     }
 
@@ -3176,6 +3368,20 @@ def _training_export_zip(rows: list[dict[str, Any]], include_frames: bool = True
                 seen.add(resolved)
                 suffix = path.suffix.lower() or ".jpg"
                 zf.write(path, f"frames/{sample_id}_{_export_safe_name(path.stem)}{suffix}")
+                raw_obj = _json_maybe(row.get("raw_json"), {})
+                snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+                ann = snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else {}
+                crops = ann.get("crops") if isinstance(ann.get("crops"), dict) else {}
+                for crop_key in ("roi_relative_path", "context_relative_path"):
+                    crop_path = _feedback_frame_path(crops.get(crop_key))
+                    if not crop_path:
+                        continue
+                    resolved_crop = str(crop_path.resolve())
+                    if resolved_crop in seen:
+                        continue
+                    seen.add(resolved_crop)
+                    crop_suffix = crop_path.suffix.lower() or ".jpg"
+                    zf.write(crop_path, f"roi_frames/{sample_id}_{crop_key}_{_export_safe_name(crop_path.stem)}{crop_suffix}")
     return buf.getvalue()
 
 
@@ -3284,6 +3490,21 @@ async def api_ai_learning_sample_frame(sample_id: int):
     return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
 
 
+@app.get("/api/ai/learning/samples/{sample_id}/roi-frame")
+async def api_ai_learning_sample_roi_frame(sample_id: int, variant: str = Query("context")):
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Feedback sample not found")
+    raw_obj = _json_maybe(sample.get("raw_json"), {})
+    snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+    ann = snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else {}
+    crops = ann.get("crops") if isinstance(ann.get("crops"), dict) else {}
+    key = "roi_relative_path" if str(variant or "").lower() == "roi" else "context_relative_path"
+    path = _feedback_frame_path(crops.get(key) or crops.get("context_relative_path") or crops.get("roi_relative_path"))
+    if not path:
+        raise HTTPException(status_code=404, detail="ROI crop not found")
+    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
 
 
 @app.post("/api/ai/learning/samples/{sample_id}/review")
@@ -3397,8 +3618,16 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
     status = _status_from_snapshot(printer_id, printer, snap, ai_source="request", force_ai_evaluate=False)
     portal_cached = portal_ai.cached_result(printer_id) or status.get("portal_ai")
     vision_cached = vision_monitor.cached_result(printer_id) or status.get("vision_ai") or (portal_cached or {}).get("vision")
-    frame_info = _capture_feedback_frame(printer_id, printer, cfg, body.label)
+    source_frame_path = _feedback_annotation_source_path(body.annotation, body.context)
+    frame_info = _feedback_frame_info_from_path(source_frame_path, source="roi_annotation_existing_frame") if source_frame_path else None
+    if body.annotation and source_frame_path and not frame_info:
+        raise HTTPException(status_code=400, detail="ROI annotation source frame was not found")
+    if not frame_info:
+        frame_info = _capture_feedback_frame(printer_id, printer, cfg, body.label)
     fresh_heuristics = (frame_info or {}).pop("heuristics", None) if isinstance(frame_info, dict) else None
+    if isinstance(frame_info, dict) and frame_info.get("relative_path") and not frame_info.get("url"):
+        frame_info["url"] = _feedback_frame_url(frame_info.get("relative_path"))
+    annotation_info = _attach_roi_crops(frame_info, body.annotation) if body.annotation else None
     interpretation = interpret_feedback(body.label, portal_cached, vision_cached)
     suppression = record_feedback_suppression(
         printer_id,
@@ -3424,6 +3653,7 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
         "interpretation": interpretation,
         "suppression": suppression,
         "frame": frame_info,
+        "annotation": annotation_info,
         "client_context": body.context or {},
         "raw_snapshot_summary": {
             "connected": bool((snap or {}).get("connected")),
@@ -3435,7 +3665,7 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
             "used_for_live_decisions": bool(suppression),
             "threshold_auto_tuning": False,
             "suppression_active": bool(suppression),
-            "note": "Saved as labeled review data. False-positive feedback may suppress similar low/severity warnings for this active print only. Heuristic thresholds are not overwritten.",
+            "note": "Saved as labeled review data. False-positive feedback may suppress similar low/severity warnings for this active print only. ROI annotations are stored as review/crop evidence and do not change pause behavior yet. Heuristic thresholds are not overwritten.",
         },
     }
     row = portal_ai.feedback(printer_id, body.label, body.note, training_snapshot)
@@ -3452,8 +3682,9 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
     outcome = interpretation.get("outcome")
     sup_msg = "; suppression=active" if suppression else ""
     learn_msg = "; learning=sqlite" if learning_result.get("inserted") else ""
-    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
-    return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
+    roi_msg = "; roi=yes" if annotation_info and annotation_info.get("crops") else ("; roi=metadata" if annotation_info else "")
+    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{roi_msg}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
+    return {"ok": True, "feedback": row, "frame": frame_info, "annotation": annotation_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
 
 
 @app.post("/api/printers/{printer_id}/ai/feedback/reason")

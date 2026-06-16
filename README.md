@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.59-blue)
+![Version](https://img.shields.io/badge/version-1.2.60-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,7 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.59 failure-detection-pause-gate
+1.2.60 roi-missed-failure-feedback
 ```
 
 Major current capabilities:
@@ -77,7 +77,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Failure Detection telemetry checks | Working, with optional guarded auto-pause off by default |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
+| AI feedback dataset | Working, includes fresh-frame capture, missed-failure ROI annotation/crops, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
@@ -580,6 +580,7 @@ Feedback buttons:
 - **Looks Good**
 - **Looks Bad**
 - **False Alarm**
+- **Report Missed Failure** — captures a frozen camera frame and lets you draw a mobile-friendly box around the failed area.
 
 Feedback records are saved to:
 
@@ -591,6 +592,8 @@ data/ai_learning.sqlite3
 ```
 
 When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame. After the fast click is saved, an optional reason-chip panel can tag why the feedback was given, such as normal supports, purge tower, spaghetti/stringing, detached print, low light but visible, or a custom note.
+
+For missed localized failures, **Report Missed Failure** opens a frozen snapshot with a touch-safe SVG overlay. Draw one box around the specific failed area, choose the failure type, and save. The backend stores normalized ROI coordinates plus a full-frame image, tight ROI crop, and padded context crop under `data/ai_feedback_frames/<printer_id>/`. This is review/training evidence only in v1.2.60; it does not change auto-pause or cancel permissions yet.
 
 Feedback is interpreted against what Portal AI believed at the time:
 
@@ -611,8 +614,10 @@ GET /api/ai/feedback/stats
 GET /api/ai/feedback/suppressions
 GET /api/ai/learning/samples
 GET /api/ai/learning/samples/<sample_id>/frame
+GET /api/ai/learning/samples/<sample_id>/roi-frame
 POST /api/ai/learning/import-jsonl
 GET /api/printers/<printer_id>/ai/learning/samples
+POST /api/printers/<printer_id>/ai/feedback/frame
 POST /api/printers/<printer_id>/ai/feedback/reason
 ```
 
@@ -1072,7 +1077,9 @@ GET  /api/ai/monitor
 GET  /api/printers/<printer_id>/ai/status
 POST /api/printers/<printer_id>/ai/check-now
 POST /api/printers/<printer_id>/ai/feedback
+POST /api/printers/<printer_id>/ai/feedback/frame
 POST /api/printers/<printer_id>/ai/feedback/reason
+GET  /api/ai/feedback/frame
 GET  /api/ai/feedback/recent
 GET  /api/ai/feedback/stats
 GET  /api/ai/feedback/suppressions
@@ -1084,6 +1091,7 @@ GET  /api/printers/<printer_id>/ai/learning
 POST /api/printers/<printer_id>/ai/learning/rebuild
 POST /api/printers/<printer_id>/ai/learning/reset
 GET  /api/printers/<printer_id>/ai/learning/samples
+GET  /api/ai/learning/samples/<sample_id>/roi-frame
 GET  /api/printers/<printer_id>/vision/status
 POST /api/printers/<printer_id>/vision/check-now
 GET  /api/printers/<printer_id>/vision/latest.jpg
@@ -1316,6 +1324,15 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.60 ROI missed-failure feedback
+
+- Added a **Report Missed Failure** dashboard workflow for localized failures the detector missed, especially detached small parts, fallen prime towers, and air-printing zones.
+- Added a mobile-safe ROI annotation modal using a frozen still frame plus SVG/pointer-event drawing, so mouse, touch, and stylus all use the same code path.
+- Added `POST /api/printers/<printer_id>/ai/feedback/frame` to capture a still feedback frame before the user draws an ROI box.
+- Extended `POST /api/printers/<printer_id>/ai/feedback` with optional ROI annotation metadata while keeping existing Looks Good / Looks Bad / False Alarm feedback compatible.
+- Saved normalized ROI coordinates, tight ROI crops, padded context crops, and annotation metadata into JSONL/SQLite raw training data and AI Training review/export flows.
+- Added safe image-serving endpoints for feedback frames and ROI crops. ROI evidence is stored for learning/review only in this release and does not alter auto-pause behavior.
 
 ### v1.2.59 failure-detection pause gate
 
