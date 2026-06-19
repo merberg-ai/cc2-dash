@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import time
+import threading
 import uuid
 import zipfile
 from pathlib import Path
@@ -146,6 +147,10 @@ _AI_MONITOR_LAST_LOGGED: dict[str, dict[str, Any]] = {}
 _AI_AUTO_PAUSE_PENDING: dict[str, dict[str, Any]] = {}
 _AI_AUTO_PAUSE_CANCELLED: dict[str, float] = {}
 _AI_AUTO_PAUSE_LAST_SENT: dict[str, float] = {}
+_TIMELAPSE_EXPORT_JOBS: dict[str, dict[str, Any]] = {}
+_TIMELAPSE_EXPORT_LOCK = threading.Lock()
+_TIMELAPSE_EXPORT_JOB_TTL_SEC = 6 * 60 * 60
+_TIMELAPSE_EXPORT_TIMEOUT_SEC = 12 * 60
 _LAYER_TOTAL_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 _LAYER_TOTAL_CACHE_TTL_SEC = 300.0
 _LAYER_TOTAL_MISS_TTL_SEC = 90.0
@@ -1356,6 +1361,8 @@ class StagedUploadSendRequest(BaseModel):
 
 class TimelapseExportRequest(BaseModel):
     url: str
+    task_id: str | int | None = None
+    task_name: str | None = None
 
 
 class HistoryDeleteRequest(BaseModel):
@@ -5329,6 +5336,111 @@ def _timelapse_proxy_download_url(printer_id: str, file_name: str, media: str = 
     return f"/api/printers/{quote(str(printer_id), safe='')}/timelapse/download?file_name={quote(str(file_name or ''), safe='')}&media={quote(str(media or 'local'), safe='')}"
 
 
+def _cleanup_timelapse_export_jobs(now: float | None = None) -> None:
+    now = float(now or time.time())
+    with _TIMELAPSE_EXPORT_LOCK:
+        for job_id, job in list(_TIMELAPSE_EXPORT_JOBS.items()):
+            updated = float(job.get("updated_at") or job.get("started_at") or now)
+            status = str(job.get("status") or "")
+            if now - updated > _TIMELAPSE_EXPORT_JOB_TTL_SEC and status != "generating":
+                _TIMELAPSE_EXPORT_JOBS.pop(job_id, None)
+            elif status == "generating" and now - float(job.get("started_at") or now) > _TIMELAPSE_EXPORT_TIMEOUT_SEC + 300:
+                job.update({
+                    "status": "error",
+                    "message": "Time-lapse export timed out. Refresh Video List; the printer may still finish it firmware-side.",
+                    "error": "export job exceeded backend timeout",
+                    "updated_at": now,
+                    "finished_at": now,
+                })
+
+
+def _public_timelapse_export_job(job: dict[str, Any] | None) -> dict[str, Any]:
+    if not job:
+        return {}
+    allowed = {
+        "id", "printer_id", "task_id", "task_name", "status", "message", "error",
+        "started_at", "updated_at", "finished_at", "download_file_name", "download_url",
+        "direct_download_url", "token",
+    }
+    return {key: job.get(key) for key in allowed if key in job}
+
+
+def _update_timelapse_export_job(job_id: str, **updates: Any) -> dict[str, Any] | None:
+    with _TIMELAPSE_EXPORT_LOCK:
+        job = _TIMELAPSE_EXPORT_JOBS.get(job_id)
+        if not job:
+            return None
+        job.update(updates)
+        job["updated_at"] = time.time()
+        return dict(job)
+
+
+def _decorate_timelapse_export_result(data: dict[str, Any], pcfg: Any, token: str) -> dict[str, Any]:
+    root = _unwrap_command_payload(data)
+    returned = ""
+    if isinstance(root, dict):
+        returned = str(_field(root, "url", "Url", "download_url", "DownloadUrl", "time_lapse_video_url", "TimeLapseVideoUrl", default="") or "")
+    download_file_name = _download_file_name_from_token(returned or token)
+    if pcfg and download_file_name:
+        data["download_file_name"] = download_file_name
+        data["download_url"] = _timelapse_proxy_download_url(pcfg.id, download_file_name)
+        data["direct_download_url"] = _stock_download_url(pcfg, download_file_name)
+        if isinstance(data.get("result"), dict):
+            data["result"]["download_file_name"] = download_file_name
+            data["result"]["download_url"] = data["download_url"]
+            data["result"]["direct_download_url"] = data["direct_download_url"]
+    return data
+
+
+def _run_timelapse_export_job(job_id: str) -> None:
+    with _TIMELAPSE_EXPORT_LOCK:
+        job = dict(_TIMELAPSE_EXPORT_JOBS.get(job_id) or {})
+    if not job:
+        return
+    printer_id = str(job.get("printer_id") or "")
+    token = str(job.get("token") or "").strip()
+    if not printer_id or not token:
+        _update_timelapse_export_job(job_id, status="error", message="Time-lapse export could not start: missing printer or video token.", error="missing printer_id/token", finished_at=time.time())
+        return
+    try:
+        _update_timelapse_export_job(job_id, status="generating", message="Time-lapse video generating…")
+        log("info", "Time-lapse export started", "files", printer=printer_id)
+        data = _send_command(
+            printer_id,
+            GET_TIME_LAPSE_VIDEO_LIST,
+            timelapse_export_params(token),
+            True,
+            float(_TIMELAPSE_EXPORT_TIMEOUT_SEC),
+            True,
+        )
+        pcfg = _portal_target(printer_id)
+        data = _decorate_timelapse_export_result(data, pcfg, token)
+        download_url = str(data.get("download_url") or "")
+        download_file_name = str(data.get("download_file_name") or _download_file_name_from_token(token) or "")
+        status = "ready" if download_url else "complete"
+        message = "Time-lapse video ready to download." if download_url else "Time-lapse export finished. Refresh Video List if the Download button is not visible yet."
+        _update_timelapse_export_job(
+            job_id,
+            status=status,
+            message=message,
+            result=data,
+            download_file_name=download_file_name,
+            download_url=download_url,
+            direct_download_url=str(data.get("direct_download_url") or ""),
+            finished_at=time.time(),
+        )
+        log("info", message, "files", printer=printer_id)
+    except Exception as exc:
+        _update_timelapse_export_job(
+            job_id,
+            status="error",
+            message="Time-lapse export failed or timed out. Refresh Video List; the printer may still finish it firmware-side.",
+            error=str(exc),
+            finished_at=time.time(),
+        )
+        log("warning", f"Time-lapse export failed: {exc}", "files", printer=printer_id)
+
+
 def _normalize_timelapse_record(item: Any, pcfg: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
@@ -5346,6 +5458,15 @@ def _normalize_timelapse_record(item: Any, pcfg: Any) -> dict[str, Any] | None:
     has_video_marker = status in (1, 2) or bool(url) or _as_float(size, 0) > 0 or _as_float(duration, 0) > 0
     if not has_video_marker:
         return None
+    # Status 1 behaves like the stock portal's "captured but not exported" state: the
+    # row may include a TimeLapseVideoUrl token, but the actual MP4 download is not
+    # available until method 1051 finishes generating/exporting it. Do not expose a
+    # cc2-dash download button for that state, or the browser waits on a file that
+    # does not exist yet.
+    download_ready = bool(download_file_name) and (
+        status == 2
+        or (status not in (1, 3) and (bool(url) or _as_float(size, 0) > 0 or _as_float(duration, 0) > 0))
+    )
     return {
         "task_id": task_id,
         "task_name": name or f"Task {task_id}",
@@ -5355,8 +5476,10 @@ def _normalize_timelapse_record(item: Any, pcfg: Any) -> dict[str, Any] | None:
         "time_lapse_video_status": status,
         "time_lapse_video_url": url,
         "download_file_name": download_file_name,
-        "download_url": _timelapse_proxy_download_url(pcfg.id, download_file_name) if download_file_name else "",
-        "direct_download_url": _stock_download_url(pcfg, download_file_name) if download_file_name else "",
+        "download_url": _timelapse_proxy_download_url(pcfg.id, download_file_name) if download_ready else "",
+        "direct_download_url": _stock_download_url(pcfg, download_file_name) if download_ready else "",
+        "export_ready": download_ready,
+        "needs_export": bool(status == 1 and download_file_name),
         "time_lapse_video_size": size,
         "time_lapse_video_duration": duration,
         "raw": item,
@@ -5539,23 +5662,42 @@ async def api_timelapse_download(printer_id: str, file_name: str = Query(..., mi
 @app.post("/api/printers/{printer_id}/timelapse/export")
 async def api_timelapse_export(printer_id: str, body: TimelapseExportRequest):
     _raise_if_feature_locked("file_manager_enabled")
-    token = _download_file_name_from_token(body.url)
-    data = await asyncio.to_thread(_send_command, printer_id, GET_TIME_LAPSE_VIDEO_LIST, timelapse_export_params(token), True, 180.0)
     pcfg = _portal_target(printer_id)
-    root = _unwrap_command_payload(data)
-    returned = ""
-    if isinstance(root, dict):
-        returned = str(_field(root, "url", "Url", "download_url", "DownloadUrl", "time_lapse_video_url", "TimeLapseVideoUrl", default="") or "")
-    download_file_name = _download_file_name_from_token(returned or token)
-    if pcfg and download_file_name:
-        data["download_file_name"] = download_file_name
-        data["download_url"] = _timelapse_proxy_download_url(pcfg.id, download_file_name)
-        data["direct_download_url"] = _stock_download_url(pcfg, download_file_name)
-        if isinstance(data.get("result"), dict):
-            data["result"]["download_file_name"] = download_file_name
-            data["result"]["download_url"] = data["download_url"]
-            data["result"]["direct_download_url"] = data["direct_download_url"]
-    return data
+    if not pcfg:
+        raise HTTPException(404, "Printer not configured")
+    token = str(body.url or "").strip()
+    if not token:
+        raise HTTPException(400, "Missing timelapse export token")
+    now = time.time()
+    _cleanup_timelapse_export_jobs(now)
+    job_id = uuid.uuid4().hex
+    job = {
+        "id": job_id,
+        "printer_id": printer_id,
+        "task_id": body.task_id,
+        "task_name": body.task_name,
+        "token": token,
+        "status": "generating",
+        "message": "Time-lapse video generating…",
+        "started_at": now,
+        "updated_at": now,
+    }
+    with _TIMELAPSE_EXPORT_LOCK:
+        _TIMELAPSE_EXPORT_JOBS[job_id] = job
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run_timelapse_export_job, job_id)
+    return {"ok": True, "job_id": job_id, "status": "generating", "message": job["message"], "job": _public_timelapse_export_job(job)}
+
+
+@app.get("/api/printers/{printer_id}/timelapse/export/{job_id}")
+async def api_timelapse_export_status(printer_id: str, job_id: str):
+    _raise_if_feature_locked("file_manager_enabled")
+    _cleanup_timelapse_export_jobs()
+    with _TIMELAPSE_EXPORT_LOCK:
+        job = dict(_TIMELAPSE_EXPORT_JOBS.get(job_id) or {})
+    if not job or str(job.get("printer_id") or "") != str(printer_id):
+        raise HTTPException(404, "Time-lapse export job not found")
+    return {"ok": True, "job": _public_timelapse_export_job(job)}
 
 
 @app.post("/api/printers/{printer_id}/history/delete")

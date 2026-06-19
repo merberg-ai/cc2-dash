@@ -12,6 +12,7 @@
   const baseDocumentTitle = document.title || 'cc2-dash';
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
   let roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
+  let roiFeedbackModalInitialized = false;
 
   function featureLocked(key) {
     return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
@@ -76,9 +77,11 @@
       button.dataset.originalLabel = labelEl ? labelEl.textContent : button.textContent;
       button.disabled = true;
       if (labelEl) labelEl.innerHTML = `<span class="spinner"></span> ${label || 'Working...'}`;
+      else button.innerHTML = `<span class="spinner"></span> ${label || 'Working...'}`;
     } else {
       button.disabled = false;
       if (labelEl) labelEl.textContent = button.dataset.originalLabel || labelEl.textContent;
+      else if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
     }
   }
 
@@ -1187,8 +1190,17 @@
   }
 
   function initRoiFeedbackModal() {
-    $('#aiReportMissedFailureButton')?.addEventListener('click', openRoiFeedbackModal);
+    if (roiFeedbackModalInitialized) return;
+    roiFeedbackModalInitialized = true;
+    document.addEventListener('click', ev => {
+      const trigger = ev.target?.closest?.('[data-roi-feedback-open], #aiReportMissedFailureButton');
+      if (!trigger) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      openRoiFeedbackModal();
+    });
     $('#roiFeedbackClose')?.addEventListener('click', closeRoiFeedbackModal);
+    $('#roiFeedbackModal')?.addEventListener('click', ev => { if (ev.target?.id === 'roiFeedbackModal') closeRoiFeedbackModal(); });
     $('#roiFeedbackReset')?.addEventListener('click', resetRoiBox);
     $('#roiFeedbackSubmit')?.addEventListener('click', ev => submitRoiFeedback(ev.currentTarget));
     const overlay = $('#roiFeedbackOverlay');
@@ -1259,7 +1271,7 @@
     setInterval(refreshDashboard, Math.max(1500, interval));
     const feedbackBox = $('#aiFeedbackButtons');
     if (feedbackBox && cfg?.portal_ai?.feedback_enabled === false) feedbackBox.classList.add('hidden');
-    $$('.ai-feedback-button').forEach(btn => {
+    $$('.ai-feedback-button[data-ai-feedback]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const label = btn.dataset.aiFeedback || 'unknown';
         const printerId = document.body.dataset.printerId;
@@ -3161,6 +3173,8 @@
   const fileManagerState = {
     usbPath: '/',
     loadedTabs: new Set(),
+    timelapseItems: [],
+    timelapseJobs: new Map(),
   };
 
   function fileIsFolder(file) {
@@ -3738,11 +3752,11 @@
   }
 
   function timelapseUrlOf(item) {
-    return item?.download_url || item?.DownloadUrl || item?.time_lapse_video_url || item?.TimeLapseVideoUrl || item?.video_url || item?.VideoUrl || item?.url || item?.Url || '';
+    return item?.download_url || item?.DownloadUrl || '';
   }
 
   function timelapseRawUrlOf(item) {
-    return item?.time_lapse_video_url || item?.TimeLapseVideoUrl || item?.video_url || item?.VideoUrl || item?.url || item?.Url || '';
+    return item?.time_lapse_video_url || item?.TimeLapseVideoUrl || item?.video_url || item?.VideoUrl || item?.url || item?.Url || item?.download_file_name || item?.DownloadFileName || '';
   }
 
   function timelapseStatusOf(item) {
@@ -3762,6 +3776,72 @@
     if (status === 1) return 'needs export';
     if (status === 3) return 'failed';
     return status ? `status ${status}` : '';
+  }
+
+  function timelapseExportKey(item) {
+    const id = timelapseIdOf(item);
+    if (id !== undefined && id !== null && id !== '') return `id:${id}`;
+    const token = timelapseRawUrlOf(item) || timelapseUrlOf(item) || timelapseNameOf(item, 0);
+    return `token:${String(token || '').trim()}`;
+  }
+
+  function timelapseDownloadReady(item) {
+    if (item?.export_ready === true || item?.ExportReady === true) return !!timelapseUrlOf(item);
+    const status = timelapseStatusOf(item);
+    const url = timelapseUrlOf(item);
+    if (!url) return false;
+    if (status === 1 || status === 3) return false;
+    if (status === 2) return true;
+    return true;
+  }
+
+  function setTimelapseStatus(message = '', tone = '', busy = false) {
+    const el = $('#timelapseLoadStatus');
+    if (!el) return;
+    if (!message) {
+      el.classList.add('hidden');
+      el.classList.remove('good', 'bad', 'warn');
+      return;
+    }
+    el.classList.remove('hidden', 'good', 'bad', 'warn');
+    if (tone) el.classList.add(tone);
+    el.innerHTML = `${busy ? '<span class="spinner"></span>' : ''}<span>${esc(message)}</span>`;
+  }
+
+  function renderTimelapseRows(items) {
+    const box = $('#timelapseList');
+    if (!box) return;
+    fileManagerState.timelapseItems = Array.isArray(items) ? items : [];
+    box.className = 'file-list';
+    box.innerHTML = fileManagerState.timelapseItems.map((item, i) => {
+      const name = timelapseNameOf(item, i);
+      const id = timelapseIdOf(item);
+      const key = timelapseExportKey(item);
+      const job = fileManagerState.timelapseJobs.get(key);
+      const rawUrl = timelapseRawUrlOf(item);
+      const ready = timelapseDownloadReady(item) || !!job?.download_url;
+      const generating = job?.status === 'generating';
+      const failed = job?.status === 'error';
+      const status = timelapseStatusOf(item);
+      const statusLabel = generating ? 'generating' : (failed ? 'export failed' : timelapseStatusText(status));
+      const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime || item?.start_time || item?.StartTime;
+      const size = bytesHuman(timelapseSizeOf(item));
+      const duration = timelapseDurationOf(item);
+      const readyText = ready ? 'download ready' : (generating ? 'exporting' : 'export needed');
+      const jobText = job?.message && (generating || failed) ? job.message : '';
+      const meta = [size, fmtDate(start), duration !== '' && duration !== undefined && duration !== null ? `${duration}s` : '', statusLabel, readyText, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
+      return `<div class="file-item timelapse-item ${generating ? 'is-generating' : ''} ${ready ? 'is-ready' : ''}" data-timelapse-index="${i}" data-timelapse-key="${esc(key)}">
+        <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span>${jobText ? `<em class="timelapse-job-line">${generating ? '<span class="spinner"></span> ' : ''}${esc(jobText)}</em>` : ''}</div>
+        <div class="file-actions">
+          <button class="button primary tiny" type="button" data-tl-download="${i}" ${ready ? '' : 'disabled'}>${ready ? 'Download' : 'Export first'}</button>
+          <button class="button secondary tiny" type="button" data-tl-export="${i}" ${generating ? 'disabled' : ''}>${generating ? 'Generating...' : 'Export'}</button>
+          <button class="button danger tiny" type="button" data-tl-delete="${i}" ${generating ? 'disabled' : ''}>Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+    $$('[data-tl-download]', box).forEach(el => el.addEventListener('click', () => downloadTimelapse(fileManagerState.timelapseItems[Number(el.dataset.tlDownload)])));
+    $$('[data-tl-export]', box).forEach(el => el.addEventListener('click', e => exportTimelapse(fileManagerState.timelapseItems[Number(el.dataset.tlExport)], e.currentTarget)));
+    $$('[data-tl-delete]', box).forEach(el => el.addEventListener('click', () => deleteTimelapse(fileManagerState.timelapseItems[Number(el.dataset.tlDelete)])));
   }
 
   async function loadTimelapseList() {
@@ -3786,30 +3866,7 @@
         renderEmpty(box, 'No timelapse videos returned.', rawCount ? `History loaded (${rawCount} task(s)), but none were marked as timelapse video rows by the printer.` : 'The printer did not return any video records. The stock portal only shows history rows with timelapse status 1 or 2.');
         return;
       }
-      box.className = 'file-list';
-      box.innerHTML = items.map((item, i) => {
-        const name = timelapseNameOf(item, i);
-        const id = timelapseIdOf(item);
-        const url = timelapseUrlOf(item);
-        const rawUrl = timelapseRawUrlOf(item);
-        const status = timelapseStatusOf(item);
-        const statusLabel = timelapseStatusText(status);
-        const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime || item?.start_time || item?.StartTime;
-        const size = bytesHuman(timelapseSizeOf(item));
-        const duration = timelapseDurationOf(item);
-        const meta = [size, fmtDate(start), duration !== '' && duration !== undefined && duration !== null ? `${duration}s` : '', statusLabel, url || rawUrl ? 'download ready' : 'export needed', `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
-        return `<div class="file-item" data-timelapse-index="${i}">
-          <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
-          <div class="file-actions">
-            <button class="button primary tiny" type="button" data-tl-download="${i}">${url ? 'Download' : 'Open'}</button>
-            <button class="button secondary tiny" type="button" data-tl-export="${i}">Export</button>
-            <button class="button danger tiny" type="button" data-tl-delete="${i}">Delete</button>
-          </div>
-        </div>`;
-      }).join('');
-      $$('[data-tl-download]', box).forEach(el => el.addEventListener('click', () => downloadTimelapse(items[Number(el.dataset.tlDownload)])));
-      $$('[data-tl-export]', box).forEach(el => el.addEventListener('click', () => exportTimelapse(items[Number(el.dataset.tlExport)])));
-      $$('[data-tl-delete]', box).forEach(el => el.addEventListener('click', () => deleteTimelapse(items[Number(el.dataset.tlDelete)])));
+      renderTimelapseRows(items);
       toast(`Loaded ${items.length} timelapse/history item(s)`, 'success');
     } catch (err) {
       renderEmpty(box, 'Timelapse load failed.', err.message);
@@ -3821,30 +3878,83 @@
   }
 
   function downloadTimelapse(item) {
-    const url = timelapseUrlOf(item);
-    if (!url) {
-      toast('No video URL returned yet. Try Export first.', 'warn');
+    const key = timelapseExportKey(item);
+    const job = fileManagerState.timelapseJobs.get(key);
+    const url = job?.download_url || timelapseUrlOf(item);
+    if (!url || !timelapseDownloadReady(item) && !job?.download_url) {
+      toast('Export the timelapse first, then download once generation finishes.', 'warn');
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
-  async function exportTimelapse(item) {
-    const token = timelapseRawUrlOf(item) || timelapseUrlOf(item) || item?.task_name || item?.TaskName || String(timelapseIdOf(item) ?? '');
+  async function pollTimelapseExport(jobId, key, button) {
+    const started = Date.now();
+    const maxMs = 14 * 60 * 1000;
+    while (Date.now() - started < maxMs) {
+      await new Promise(resolve => setTimeout(resolve, 2200));
+      let data;
+      try {
+        data = await printerApi(`/timelapse/export/${encodeURIComponent(jobId)}`);
+      } catch (err) {
+        const prev = fileManagerState.timelapseJobs.get(key) || {};
+        fileManagerState.timelapseJobs.set(key, { ...prev, status: 'error', message: err.message });
+        renderTimelapseRows(fileManagerState.timelapseItems);
+        setTimelapseStatus(err.message, 'bad', false);
+        setButtonBusy(button, false);
+        toast(err.message, 'error', 9000);
+        return;
+      }
+      const job = data?.job || data;
+      fileManagerState.timelapseJobs.set(key, job);
+      renderTimelapseRows(fileManagerState.timelapseItems);
+      if (job.status === 'ready' || job.status === 'complete') {
+        setButtonBusy(button, false);
+        setTimelapseStatus(job.download_url ? 'Time-lapse video ready. Tap Download.' : 'Export finished. Refreshing Video List...', 'good', false);
+        toast(job.download_url ? 'Time-lapse video ready to download.' : 'Time-lapse export finished.', 'success', 7000);
+        await loadTimelapseList();
+        return;
+      }
+      if (job.status === 'error') {
+        setButtonBusy(button, false);
+        setTimelapseStatus(job.message || 'Time-lapse export failed.', 'bad', false);
+        toast(job.error || job.message || 'Time-lapse export failed.', 'error', 10000);
+        return;
+      }
+      setTimelapseStatus(job.message || 'Time-lapse video generating…', 'warn', true);
+    }
+    const prev = fileManagerState.timelapseJobs.get(key) || {};
+    fileManagerState.timelapseJobs.set(key, { ...prev, status: 'error', message: 'Export polling timed out. Refresh Video List; the printer may still finish the video.' });
+    renderTimelapseRows(fileManagerState.timelapseItems);
+    setButtonBusy(button, false);
+    setTimelapseStatus('Export polling timed out. Refresh Video List; the printer may still finish the video.', 'warn', false);
+  }
+
+  async function exportTimelapse(item, button = null) {
+    const token = timelapseRawUrlOf(item) || item?.task_name || item?.TaskName || String(timelapseIdOf(item) ?? '');
     if (!token) return toast('No task/video identifier found for export.', 'warn');
-    const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
-    setButtonBusy(button, true, 'Exporting...');
+    const key = timelapseExportKey(item);
+    setButtonBusy(button, true, 'Generating...');
+    setTimelapseStatus('Time-lapse video generating…', 'warn', true);
+    fileManagerState.timelapseJobs.set(key, { status: 'generating', message: 'Time-lapse video generating…' });
+    renderTimelapseRows(fileManagerState.timelapseItems);
     try {
-      const data = await printerApi('/timelapse/export', { method: 'POST', body: JSON.stringify({ url: token }) });
-      const result = unwrapCommand(data);
-      const url = result?.download_url || result?.DownloadUrl || result?.url || result?.Url || result?.time_lapse_video_url || result?.TimeLapseVideoUrl;
-      toast('Timelapse export command sent', 'success');
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-      else await loadTimelapseList();
+      const data = await printerApi('/timelapse/export', {
+        method: 'POST',
+        body: JSON.stringify({ url: token, task_id: timelapseIdOf(item), task_name: timelapseNameOf(item, 0) }),
+      });
+      const job = data?.job || data;
+      const jobId = data?.job_id || job?.id;
+      fileManagerState.timelapseJobs.set(key, job);
+      renderTimelapseRows(fileManagerState.timelapseItems);
+      if (!jobId) throw new Error('Export started but no job id was returned.');
+      pollTimelapseExport(jobId, key, button);
     } catch (err) {
-      toast(err.message, 'error', 9000);
-    } finally {
+      fileManagerState.timelapseJobs.set(key, { status: 'error', message: err.message });
+      renderTimelapseRows(fileManagerState.timelapseItems);
       setButtonBusy(button, false);
+      setTimelapseStatus(err.message, 'bad', false);
+      toast(err.message, 'error', 9000);
     }
   }
 

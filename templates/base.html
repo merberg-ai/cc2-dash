@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="{{ theme.colors.bg }}" />
   <title>{{ cfg.app.name|default('cc2-dash') }}</title>
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/app.css?v={{ build.version }}{% if build.git_commit_short %}-{{ build.git_commit_short }}{% endif %}" />
   <style>
     :root {
       {{ theme_vars|safe }}
@@ -72,6 +72,6 @@
     {% endif %}
   </div>
   <script id="bootConfig" type="application/json">{{ cfg|tojson }}</script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ build.version }}{% if build.git_commit_short %}-{{ build.git_commit_short }}{% endif %}"></script>
 </body>
 </html>

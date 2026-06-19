@@ -482,6 +482,14 @@ input.toggle[type="checkbox"]:disabled {
   .file-actions .button { width:100%; }
 }
 
+.file-item.timelapse-item.is-generating { border-color:color-mix(in srgb, var(--cc2-warning) 44%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-warning) 8%, var(--cc2-card-soft)); }
+.file-item.timelapse-item.is-ready { border-color:color-mix(in srgb, var(--cc2-good) 42%, var(--cc2-border)); }
+.timelapse-job-line { display:flex; align-items:center; gap:.4rem; margin-top:.35rem; color:var(--cc2-warning); font-style:normal; font-size:.78rem; }
+.scan-status.good { color:var(--cc2-good); border-color:color-mix(in srgb, var(--cc2-good) 42%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-good) 9%, var(--cc2-card-soft)); }
+.scan-status.bad { color:var(--cc2-danger); border-color:color-mix(in srgb, var(--cc2-danger) 42%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-danger) 9%, var(--cc2-card-soft)); }
+.scan-status.warn { color:var(--cc2-warning); border-color:color-mix(in srgb, var(--cc2-warning) 42%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-warning) 9%, var(--cc2-card-soft)); }
+
+
 
 /* Logs viewer */
 .log-toolbar {
@@ -957,10 +965,23 @@ input.toggle[type="checkbox"]:disabled {
 .ai-feedback-button[data-ai-feedback="false_alarm"] {
   background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-warning) 50%, var(--cc2-primary)), var(--cc2-primary-hover));
 }
-.ai-feedback-button.missed-failure-button {
+.button.missed-failure-button {
   grid-column:1 / -1;
-  background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-danger) 78%, #10070b), color-mix(in srgb, var(--cc2-warning) 35%, var(--cc2-primary)));
-  border-color:color-mix(in srgb, var(--cc2-danger) 70%, white 12%);
+  color:#fff;
+  background:var(--cc2-danger);
+  border:1px solid var(--cc2-danger);
+  box-shadow:0 10px 22px rgba(0,0,0,.22);
+}
+@supports (background: color-mix(in srgb, red 50%, blue)) {
+  .button.missed-failure-button {
+    background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-danger) 78%, #10070b), color-mix(in srgb, var(--cc2-warning) 35%, var(--cc2-primary)));
+    border-color:color-mix(in srgb, var(--cc2-danger) 70%, white 12%);
+    box-shadow:0 10px 22px color-mix(in srgb, var(--cc2-danger) 24%, transparent);
+  }
+}
+.button.missed-failure-button:hover {
+  filter:brightness(1.08);
+  box-shadow:0 14px 28px rgba(0,0,0,.28);
 }
 .speed-action-row .speed-preset-select {
   border-color:color-mix(in srgb, var(--cc2-primary) 38%, var(--cc2-border));
