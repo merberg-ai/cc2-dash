@@ -150,7 +150,7 @@ _AI_AUTO_PAUSE_LAST_SENT: dict[str, float] = {}
 _TIMELAPSE_EXPORT_JOBS: dict[str, dict[str, Any]] = {}
 _TIMELAPSE_EXPORT_LOCK = threading.Lock()
 _TIMELAPSE_EXPORT_JOB_TTL_SEC = 6 * 60 * 60
-_TIMELAPSE_EXPORT_TIMEOUT_SEC = 12 * 60
+_TIMELAPSE_EXPORT_TIMEOUT_SEC = 30 * 60
 _LAYER_TOTAL_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 _LAYER_TOTAL_CACHE_TTL_SEC = 300.0
 _LAYER_TOTAL_MISS_TTL_SEC = 90.0
@@ -5360,7 +5360,8 @@ def _public_timelapse_export_job(job: dict[str, Any] | None) -> dict[str, Any]:
     allowed = {
         "id", "printer_id", "task_id", "task_name", "status", "message", "error",
         "started_at", "updated_at", "finished_at", "download_file_name", "download_url",
-        "direct_download_url", "token",
+        "direct_download_url", "token", "elapsed_sec", "confirmed_by",
+        "last_video_status", "source_record",
     }
     return {key: job.get(key) for key in allowed if key in job}
 
@@ -5392,6 +5393,133 @@ def _decorate_timelapse_export_result(data: dict[str, Any], pcfg: Any, token: st
     return data
 
 
+def _load_timelapse_videos_sync(printer_id: str, pcfg: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Load and normalize the stock-style Video List from print history.
+
+    The printer marks timelapse rows as status 1 while the captured video still
+    needs to be generated/exported, then status 2 once the MP4 is actually ready.
+    Export jobs use this as the source of truth instead of trusting the immediate
+    1051 command response, because firmware may acknowledge the export request
+    before generation is finished.
+    """
+    history_payload = _send_command(printer_id, GET_HISTORY_TASK, {}, True, 20.0, False)
+    root = _unwrap_command_payload(history_payload)
+    if isinstance(root, dict) and _as_int(root.get("error_code") or root.get("ErrorCode"), 0) != 0:
+        return [], {"raw_history_total": 0, "raw_detail_total": 0}
+
+    history_items = _extract_history_items(root)
+    videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in history_items) if v]
+    detail_items: list[Any] = []
+
+    if not videos and history_items:
+        ids: list[Any] = []
+        for item in history_items[:80]:
+            if isinstance(item, dict):
+                ids.append(_field(item, "task_id", "TaskId", "taskId", "id", "Id"))
+            else:
+                ids.append(item)
+        detail_items = _try_history_details(printer_id, ids)
+        videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in detail_items) if v]
+
+    return videos, {"raw_history_total": len(history_items), "raw_detail_total": len(detail_items)}
+
+
+def _normalized_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _timelapse_record_matches(record: dict[str, Any], *, task_id: Any = None, task_name: Any = None, token: str = "") -> bool:
+    wanted_task = str(task_id).strip() if task_id not in (None, "") else ""
+    record_task = str(record.get("task_id") or "").strip()
+    if wanted_task and record_task and wanted_task == record_task:
+        return True
+
+    token_file = _download_file_name_from_token(token)
+    record_token = str(record.get("time_lapse_video_url") or "")
+    record_file = str(record.get("download_file_name") or "")
+    record_file_from_token = _download_file_name_from_token(record_token or record_file)
+    if token_file and token_file in {record_token, record_file, record_file_from_token}:
+        return True
+
+    wanted_name = _normalized_text(task_name)
+    record_name = _normalized_text(record.get("task_name") or record.get("filename"))
+    return bool(wanted_name and record_name and wanted_name == record_name)
+
+
+def _find_timelapse_record(videos: list[dict[str, Any]], *, task_id: Any = None, task_name: Any = None, token: str = "") -> dict[str, Any] | None:
+    for record in videos:
+        if _timelapse_record_matches(record, task_id=task_id, task_name=task_name, token=token):
+            return record
+    return None
+
+
+def _timelapse_status_message(record: dict[str, Any] | None, elapsed: int) -> str:
+    if not record:
+        return f"Time-lapse export requested; waiting for the printer Video List to refresh… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+    status = _as_int(record.get("time_lapse_video_status"), 0)
+    if bool(record.get("export_ready")):
+        return "Time-lapse video ready to download."
+    if status == 1:
+        return f"Time-lapse video generating… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+    if status == 3:
+        return f"Printer reports timelapse export is still processing… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+    return f"Waiting for printer to mark the time-lapse as generated… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+
+
+def _wait_for_timelapse_export_ready(job_id: str, pcfg: Any, *, task_id: Any = None, task_name: Any = None, token: str = "") -> dict[str, Any]:
+    """Poll printer history until the selected timelapse is truly downloadable."""
+    started = time.time()
+    deadline = started + float(_TIMELAPSE_EXPORT_TIMEOUT_SEC)
+    last_error = ""
+    last_record: dict[str, Any] | None = None
+    poll_interval = 5.0
+
+    while time.time() < deadline:
+        elapsed = int(time.time() - started)
+        try:
+            videos, _counts = _load_timelapse_videos_sync(pcfg.id, pcfg)
+            record = _find_timelapse_record(videos, task_id=task_id, task_name=task_name, token=token)
+            if record:
+                last_record = record
+                status = _as_int(record.get("time_lapse_video_status"), 0)
+                _update_timelapse_export_job(
+                    job_id,
+                    status="generating",
+                    message=_timelapse_status_message(record, elapsed),
+                    elapsed_sec=elapsed,
+                    last_video_status=status,
+                    download_file_name=str(record.get("download_file_name") or _download_file_name_from_token(token) or ""),
+                )
+                if bool(record.get("export_ready")) and record.get("download_url"):
+                    return record
+            else:
+                _update_timelapse_export_job(
+                    job_id,
+                    status="generating",
+                    message=_timelapse_status_message(None, elapsed),
+                    elapsed_sec=elapsed,
+                )
+        except Exception as exc:
+            last_error = str(exc)
+            _update_timelapse_export_job(
+                job_id,
+                status="generating",
+                message=f"Time-lapse export requested; waiting for printer status… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})",
+                elapsed_sec=elapsed,
+                error=last_error,
+            )
+        time.sleep(poll_interval)
+
+    if last_record:
+        raise TimeoutError(
+            f"Timed out waiting for the printer to mark the timelapse as generated "
+            f"(last video status {last_record.get('time_lapse_video_status')})."
+        )
+    if last_error:
+        raise TimeoutError(f"Timed out waiting for timelapse generation; last status error: {last_error}")
+    raise TimeoutError("Timed out waiting for the printer Video List to confirm the generated timelapse.")
+
+
 def _run_timelapse_export_job(job_id: str) -> None:
     with _TIMELAPSE_EXPORT_LOCK:
         job = dict(_TIMELAPSE_EXPORT_JOBS.get(job_id) or {})
@@ -5399,43 +5527,98 @@ def _run_timelapse_export_job(job_id: str) -> None:
         return
     printer_id = str(job.get("printer_id") or "")
     token = str(job.get("token") or "").strip()
+    task_id = job.get("task_id")
+    task_name = job.get("task_name")
     if not printer_id or not token:
         _update_timelapse_export_job(job_id, status="error", message="Time-lapse export could not start: missing printer or video token.", error="missing printer_id/token", finished_at=time.time())
         return
+    pcfg = _portal_target(printer_id)
+    if not pcfg:
+        _update_timelapse_export_job(job_id, status="error", message="Time-lapse export could not start: printer is not configured.", error="printer not configured", finished_at=time.time())
+        return
+
+    started = time.time()
     try:
-        _update_timelapse_export_job(job_id, status="generating", message="Time-lapse video generating…")
+        _update_timelapse_export_job(job_id, status="generating", message="Time-lapse video generating…", elapsed_sec=0)
         log("info", "Time-lapse export started", "files", printer=printer_id)
-        data = _send_command(
-            printer_id,
-            GET_TIME_LAPSE_VIDEO_LIST,
-            timelapse_export_params(token),
-            True,
-            float(_TIMELAPSE_EXPORT_TIMEOUT_SEC),
-            True,
+
+        command_data: dict[str, Any] = {}
+        try:
+            # Method 1051 may only acknowledge/start the firmware export. Do not
+            # treat this reply as completion; the history Video List is polled
+            # below until it reports the row as generated/downloadable.
+            command_data = _send_command(
+                printer_id,
+                GET_TIME_LAPSE_VIDEO_LIST,
+                timelapse_export_params(token),
+                True,
+                45.0,
+                True,
+            )
+        except Exception as exc:
+            # Some firmware builds hold the request open while generation starts.
+            # If that initial request times out, keep watching the Video List
+            # instead of instantly failing; non-timeout errors still stop the job.
+            msg = str(exc)
+            if "timeout" not in msg.lower() and "timed out" not in msg.lower():
+                raise
+            _update_timelapse_export_job(
+                job_id,
+                status="generating",
+                message="Export request is taking a while; watching printer Video List for completion…",
+                error=msg,
+                elapsed_sec=int(time.time() - started),
+            )
+            log("warning", f"Time-lapse export command timed out; polling for completion anyway: {exc}", "files", printer=printer_id)
+
+        if command_data:
+            decorated = _decorate_timelapse_export_result(dict(command_data), pcfg, token)
+            _update_timelapse_export_job(
+                job_id,
+                status="generating",
+                message="Export accepted; waiting for printer to finish generating the time-lapse…",
+                result=decorated,
+                download_file_name=str(decorated.get("download_file_name") or _download_file_name_from_token(token) or ""),
+                # Keep the derived URL out of the public job until the Video List
+                # confirms status 2/export_ready. The token alone is not proof.
+                download_url="",
+                direct_download_url="",
+                elapsed_sec=int(time.time() - started),
+            )
+
+        ready_record = _wait_for_timelapse_export_ready(
+            job_id,
+            pcfg,
+            task_id=task_id,
+            task_name=task_name,
+            token=token,
         )
-        pcfg = _portal_target(printer_id)
-        data = _decorate_timelapse_export_result(data, pcfg, token)
-        download_url = str(data.get("download_url") or "")
-        download_file_name = str(data.get("download_file_name") or _download_file_name_from_token(token) or "")
-        status = "ready" if download_url else "complete"
-        message = "Time-lapse video ready to download." if download_url else "Time-lapse export finished. Refresh Video List if the Download button is not visible yet."
+        download_file_name = str(ready_record.get("download_file_name") or _download_file_name_from_token(token) or "")
+        download_url = str(ready_record.get("download_url") or (_timelapse_proxy_download_url(pcfg.id, download_file_name) if download_file_name else ""))
+        direct_download_url = str(ready_record.get("direct_download_url") or (_stock_download_url(pcfg, download_file_name) if download_file_name else ""))
+        message = "Time-lapse video ready to download."
         _update_timelapse_export_job(
             job_id,
-            status=status,
+            status="ready",
             message=message,
-            result=data,
+            source_record=ready_record,
             download_file_name=download_file_name,
             download_url=download_url,
-            direct_download_url=str(data.get("direct_download_url") or ""),
+            direct_download_url=direct_download_url,
+            elapsed_sec=int(time.time() - started),
+            confirmed_by="video_list_status_2",
+            last_video_status=_as_int(ready_record.get("time_lapse_video_status"), 0),
             finished_at=time.time(),
+            error="",
         )
         log("info", message, "files", printer=printer_id)
     except Exception as exc:
         _update_timelapse_export_job(
             job_id,
             status="error",
-            message="Time-lapse export failed or timed out. Refresh Video List; the printer may still finish it firmware-side.",
+            message="Time-lapse export did not finish before the backend timeout. Refresh Video List; the printer may still finish it firmware-side.",
             error=str(exc),
+            elapsed_sec=int(time.time() - started),
             finished_at=time.time(),
         )
         log("warning", f"Time-lapse export failed: {exc}", "files", printer=printer_id)
@@ -5566,32 +5749,12 @@ async def api_timelapse(printer_id: str):
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
 
-    history_payload = await asyncio.to_thread(_send_command, printer_id, GET_HISTORY_TASK, {}, True, 20.0, False)
-    root = _unwrap_command_payload(history_payload)
-    if isinstance(root, dict) and _as_int(root.get("error_code") or root.get("ErrorCode"), 0) != 0:
-        return {"ok": False, "result": root, "videos": [], "total": 0}
-
-    history_items = _extract_history_items(root)
-    videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in history_items) if v]
-
-    # Some stock-web portal paths first fetch task ids, then task details. Try the
-    # same pattern if the basic history payload contains no video-marked records.
-    detail_items: list[Any] = []
-    if not videos and history_items:
-        ids: list[Any] = []
-        for item in history_items[:80]:
-            if isinstance(item, dict):
-                ids.append(_field(item, "task_id", "TaskId", "taskId", "id", "Id"))
-            else:
-                ids.append(item)
-        detail_items = await asyncio.to_thread(_try_history_details, printer_id, ids)
-        videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in detail_items) if v]
-
+    videos, counts = await asyncio.to_thread(_load_timelapse_videos_sync, printer_id, pcfg)
     result = {
         "error_code": 0,
         "total": len(videos),
-        "raw_history_total": len(history_items),
-        "raw_detail_total": len(detail_items),
+        "raw_history_total": int(counts.get("raw_history_total") or 0),
+        "raw_detail_total": int(counts.get("raw_detail_total") or 0),
         "videos": videos,
     }
     return {"ok": True, "result": result, "videos": videos, "total": len(videos)}

@@ -3890,7 +3890,7 @@
 
   async function pollTimelapseExport(jobId, key, button) {
     const started = Date.now();
-    const maxMs = 14 * 60 * 1000;
+    const maxMs = 35 * 60 * 1000;
     while (Date.now() - started < maxMs) {
       await new Promise(resolve => setTimeout(resolve, 2200));
       let data;
@@ -3908,12 +3908,16 @@
       const job = data?.job || data;
       fileManagerState.timelapseJobs.set(key, job);
       renderTimelapseRows(fileManagerState.timelapseItems);
-      if (job.status === 'ready' || job.status === 'complete') {
+      if (job.status === 'ready' || (job.status === 'complete' && job.download_url)) {
         setButtonBusy(button, false);
-        setTimelapseStatus(job.download_url ? 'Time-lapse video ready. Tap Download.' : 'Export finished. Refreshing Video List...', 'good', false);
-        toast(job.download_url ? 'Time-lapse video ready to download.' : 'Time-lapse export finished.', 'success', 7000);
+        setTimelapseStatus('Time-lapse video ready. Tap Download.', 'good', false);
+        toast('Time-lapse video ready to download.', 'success', 7000);
         await loadTimelapseList();
         return;
+      }
+      if (job.status === 'complete' && !job.download_url) {
+        setTimelapseStatus(job.message || 'Export finished, waiting for Download to appear in Video List…', 'warn', true);
+        await loadTimelapseList();
       }
       if (job.status === 'error') {
         setButtonBusy(button, false);
@@ -3924,10 +3928,10 @@
       setTimelapseStatus(job.message || 'Time-lapse video generating…', 'warn', true);
     }
     const prev = fileManagerState.timelapseJobs.get(key) || {};
-    fileManagerState.timelapseJobs.set(key, { ...prev, status: 'error', message: 'Export polling timed out. Refresh Video List; the printer may still finish the video.' });
+    fileManagerState.timelapseJobs.set(key, { ...prev, status: 'error', message: 'Export polling timed out after 35 minutes. Refresh Video List; the printer may still finish the video.' });
     renderTimelapseRows(fileManagerState.timelapseItems);
     setButtonBusy(button, false);
-    setTimelapseStatus('Export polling timed out. Refresh Video List; the printer may still finish the video.', 'warn', false);
+    setTimelapseStatus('Export polling timed out after 35 minutes. Refresh Video List; the printer may still finish the video.', 'warn', false);
   }
 
   async function exportTimelapse(item, button = null) {

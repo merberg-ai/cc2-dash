@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.62-blue)
+![Version](https://img.shields.io/badge/version-1.2.63-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.63 timelapse-export-confirmation
 1.2.62 async-timelapse-export
 1.2.61 roi-feedback-mobile-cache-fix
 1.2.60 roi-missed-failure-feedback
@@ -83,7 +84,7 @@ Major current capabilities:
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
-| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export/generation status before download |
+| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, and friendly timelapse composing status labels |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
 | Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
 | Themes | Built-in theme library with preview cards |
@@ -768,8 +769,9 @@ Timelapse export/download flow:
 1. Open Files → Video List.
 2. Rows marked needs export/status 1 show Download disabled.
 3. Tap Export. cc2-dash starts a backend export job and the UI shows Time-lapse video generating… instead of holding the browser request open.
-4. The frontend polls the job status until the firmware export finishes or times out.
-5. Once ready, refresh/download uses cc2-dash's proxied `/download` route so the printer PIN/internal URL is not exposed to the browser.
+4. The backend keeps polling the printer Video List until that row is actually reported as generated/download-ready, instead of trusting the initial export-command acknowledgement.
+5. The frontend polls the lightweight cc2-dash job status until the backend confirms readiness or times out.
+6. Once ready, refresh/download uses cc2-dash's proxied `/download` route so the printer PIN/internal URL is not exposed to the browser.
 ```
 
 API helpers:
@@ -781,7 +783,7 @@ GET  /api/printers/<printer_id>/timelapse/download?file_name=<printer-file-token
 ```
 
 > [!CAUTION]
-> The stock firmware may not reliably generate/export timelapse videos even when the stock portal shows the UI. cc2-dash now starts timelapse export as a backend job, shows **Time-lapse video generating…**, polls for completion, and only enables Download once a generated file is available. It still cannot fix firmware-side export failures.
+> The stock firmware may not reliably generate/export timelapse videos even when the stock portal shows the UI. cc2-dash now starts timelapse export as a backend job, shows **Time-lapse video generating…**, polls the printer Video List for confirmed generated/download-ready status, and only enables Download once a generated file is available. It still cannot fix firmware-side export failures.
 
 ---
 
@@ -1248,9 +1250,9 @@ The Control page prefers the firmware-reported target/set temperature. If target
 
 ### File Manager video download/export fails
 
-For timelapse rows, use **Export** first. cc2-dash starts the export in the backend and shows **Time-lapse video generating…** while the printer creates the MP4. Download stays disabled until export completes or the Video List refresh reports the video as generated.
+For timelapse rows, use **Export** first. cc2-dash starts the export in the backend and shows **Time-lapse video generating…** while the printer creates the MP4. Download stays disabled until the printer Video List reports the video as generated/download-ready. The initial export command can return before the MP4 is done, so cc2-dash keeps showing generation status until the list confirms readiness.
 
-If export eventually errors or times out, refresh Video List and compare with the stock Elegoo portal. The printer firmware may still finish generation after cc2-dash polling stops, but cc2-dash cannot force firmware-side timelapse creation if the stock portal also fails.
+If export eventually errors or times out, refresh Video List and compare with the stock Elegoo portal. The backend waits up to about 30 minutes for the printer to mark the video as generated, and the phone UI polls for up to about 35 minutes. The printer firmware may still finish generation after cc2-dash polling stops, but cc2-dash cannot force firmware-side timelapse creation if the stock portal also fails.
 
 ### Filament sensor says unknown
 
@@ -1346,6 +1348,14 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.63 timelapse export confirmation
+
+- Fixed timelapse export jobs reporting complete too early on longer videos by treating the initial firmware export response as an acknowledgement only.
+- Backend export jobs now keep polling the printer Video List until the selected row reports generated/download-ready before exposing the Download URL.
+- Extended timelapse export waiting to better handle longer videos: backend timeout is about 30 minutes; mobile UI polling is about 35 minutes.
+- Added a friendly mapping for sub-status `3020` so the dashboard shows **Time-lapse video generating** instead of `Sub 3020`.
+- Updated File Manager docs and troubleshooting notes for confirmed export readiness.
 
 ### v1.2.62 async timelapse export
 
