@@ -28,6 +28,17 @@
         </div>
         <button class="button secondary tiny" id="refreshPrinterFilesButton" type="button"><span class="button-label">Refresh</span></button>
       </div>
+      <div class="file-selection-toolbar" id="printerFileSelectionToolbar" data-selection-toolbar="printer">
+        <div class="file-selection-copy">
+          <strong id="printerSelectedCount">0 selected</strong>
+          <span>Select multiple printer files, then delete them in one batch.</span>
+        </div>
+        <div class="button-row compact-actions file-selection-actions">
+          <button class="button secondary tiny" id="selectAllPrinterFilesButton" type="button">Select all visible</button>
+          <button class="button secondary tiny" id="clearPrinterSelectionButton" type="button">Clear</button>
+          <button class="button danger tiny" id="deleteSelectedPrinterFilesButton" type="button" disabled>Delete selected</button>
+        </div>
+      </div>
       <div id="printerFileLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading printer files...</span></div>
       <div id="printerFileList" class="file-list empty">Tap Refresh to load printer files.</div>
     </section>
@@ -44,6 +55,17 @@
         </div>
       </div>
       <div class="path-pill">Path: <strong id="usbPathLabel">/</strong></div>
+      <div class="file-selection-toolbar" id="usbFileSelectionToolbar" data-selection-toolbar="usb">
+        <div class="file-selection-copy">
+          <strong id="usbSelectedCount">0 selected</strong>
+          <span>Select multiple USB files in this folder, then delete them in one batch.</span>
+        </div>
+        <div class="button-row compact-actions file-selection-actions">
+          <button class="button secondary tiny" id="selectAllUsbFilesButton" type="button">Select all visible</button>
+          <button class="button secondary tiny" id="clearUsbSelectionButton" type="button">Clear</button>
+          <button class="button danger tiny" id="deleteSelectedUsbFilesButton" type="button" disabled>Delete selected</button>
+        </div>
+      </div>
       <div id="usbFileLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading USB files...</span></div>
       <div id="usbFileList" class="file-list empty">Tap Refresh to load USB files.</div>
     </section>
@@ -56,6 +78,17 @@
         </div>
         <button class="button secondary tiny" id="refreshHistoryButton" type="button"><span class="button-label">Refresh</span></button>
       </div>
+      <div class="file-selection-toolbar" id="historySelectionToolbar" data-selection-toolbar="history">
+        <div class="file-selection-copy">
+          <strong id="historySelectedCount">0 selected</strong>
+          <span>Select multiple history rows, then delete them together.</span>
+        </div>
+        <div class="button-row compact-actions file-selection-actions">
+          <button class="button secondary tiny" id="selectAllHistoryButton" type="button">Select all visible</button>
+          <button class="button secondary tiny" id="clearHistorySelectionButton" type="button">Clear</button>
+          <button class="button danger tiny" id="deleteSelectedHistoryButton" type="button" disabled>Delete selected</button>
+        </div>
+      </div>
       <div id="historyLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading print history...</span></div>
       <div id="historyList" class="file-list empty">Tap Refresh to load print history.</div>
     </section>
@@ -67,6 +100,17 @@
           <p>Stock-style timelapse list derived from print history rows. Pick <strong>Export</strong> first to let the printer generate the MP4, then Download appears when it is ready.</p>
         </div>
         <button class="button secondary tiny" id="refreshTimelapseButton" type="button"><span class="button-label">Refresh</span></button>
+      </div>
+      <div class="file-selection-toolbar" id="videosSelectionToolbar" data-selection-toolbar="videos">
+        <div class="file-selection-copy">
+          <strong id="videosSelectedCount">0 selected</strong>
+          <span>Select multiple timelapse/history rows, then delete them together.</span>
+        </div>
+        <div class="button-row compact-actions file-selection-actions">
+          <button class="button secondary tiny" id="selectAllVideosButton" type="button">Select all visible</button>
+          <button class="button secondary tiny" id="clearVideosSelectionButton" type="button">Clear</button>
+          <button class="button danger tiny" id="deleteSelectedVideosButton" type="button" disabled>Delete selected</button>
+        </div>
       </div>
       <div id="timelapseLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading timelapse records...</span></div>
       <div id="timelapseList" class="file-list empty">Tap Refresh to load timelapse records.</div>

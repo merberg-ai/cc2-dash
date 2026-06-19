@@ -3174,7 +3174,20 @@
     usbPath: '/',
     loadedTabs: new Set(),
     timelapseItems: [],
+    historyItems: [],
     timelapseJobs: new Map(),
+    selections: {
+      printer: new Map(),
+      usb: new Map(),
+      history: new Map(),
+      videos: new Map(),
+    },
+    visibleSelections: {
+      printer: [],
+      usb: [],
+      history: [],
+      videos: [],
+    },
   };
 
   function fileIsFolder(file) {
@@ -3225,21 +3238,146 @@
     return item?.task_id ?? item?.TaskId ?? item?.taskId ?? item?.id ?? item?.Id;
   }
 
+
+  const fileSelectionUi = {
+    printer: { count: '#printerSelectedCount', del: '#deleteSelectedPrinterFilesButton', clear: '#clearPrinterSelectionButton', selectAll: '#selectAllPrinterFilesButton' },
+    usb: { count: '#usbSelectedCount', del: '#deleteSelectedUsbFilesButton', clear: '#clearUsbSelectionButton', selectAll: '#selectAllUsbFilesButton' },
+    history: { count: '#historySelectedCount', del: '#deleteSelectedHistoryButton', clear: '#clearHistorySelectionButton', selectAll: '#selectAllHistoryButton' },
+    videos: { count: '#videosSelectedCount', del: '#deleteSelectedVideosButton', clear: '#clearVideosSelectionButton', selectAll: '#selectAllVideosButton' },
+  };
+
+  function selectionMap(kind) {
+    return fileManagerState.selections[kind] || new Map();
+  }
+
+  function selectionRecordLabel(kind, count) {
+    if (kind === 'history') return `${count} history row${count === 1 ? '' : 's'} selected`;
+    if (kind === 'videos') return `${count} video row${count === 1 ? '' : 's'} selected`;
+    return `${count} file${count === 1 ? '' : 's'} selected`;
+  }
+
+  function updateSelectionToolbar(kind) {
+    const map = selectionMap(kind);
+    const count = map.size;
+    const ui = fileSelectionUi[kind] || {};
+    const countEl = $(ui.count);
+    if (countEl) countEl.textContent = selectionRecordLabel(kind, count);
+    const del = $(ui.del);
+    if (del) del.disabled = count <= 0;
+    const clear = $(ui.clear);
+    if (clear) clear.disabled = count <= 0;
+    const selectAll = $(ui.selectAll);
+    if (selectAll) selectAll.disabled = !(fileManagerState.visibleSelections[kind] || []).length;
+    const toolbar = $(`[data-selection-toolbar="${kind}"]`);
+    if (toolbar) toolbar.classList.toggle('has-selection', count > 0);
+  }
+
+  function updateSelectionToolbars() {
+    Object.keys(fileSelectionUi).forEach(updateSelectionToolbar);
+  }
+
+  function fileSelectionKey(storage, pathVal) {
+    return `${storage || 'local'}:${String(pathVal || '').replace(/\/+$/, '')}`;
+  }
+
+  function historySelectionKey(item) {
+    const id = historyIdOf(item);
+    if (id !== undefined && id !== null && id !== '') return `history:${id}`;
+    return `history-name:${historyNameOf(item)}`;
+  }
+
+  function selectRecord(kind, record, checked) {
+    if (!record || !record.key) return;
+    const map = selectionMap(kind);
+    if (checked) map.set(record.key, record);
+    else map.delete(record.key);
+    updateSelectionToolbar(kind);
+    $$(`[data-selection-kind="${kind}"]`).forEach(input => {
+      if (input.dataset.selectKey !== record.key) return;
+      input.checked = map.has(record.key);
+      input.closest('.file-item')?.classList.toggle('is-selected', map.has(record.key));
+    });
+  }
+
+  function pruneSelection(kind, visibleRecords = []) {
+    const visibleKeys = new Set((visibleRecords || []).map(r => r.key));
+    const map = selectionMap(kind);
+    Array.from(map.keys()).forEach(key => {
+      if (!visibleKeys.has(key)) map.delete(key);
+    });
+    (visibleRecords || []).forEach(record => {
+      if (map.has(record.key)) map.set(record.key, record);
+    });
+    updateSelectionToolbar(kind);
+  }
+
+  function setVisibleSelectionRecords(kind, records = []) {
+    fileManagerState.visibleSelections[kind] = records || [];
+    pruneSelection(kind, records || []);
+  }
+
+  function clearSelection(kind) {
+    const map = selectionMap(kind);
+    map.clear();
+    $$(`[data-selection-kind="${kind}"]`).forEach(input => {
+      input.checked = false;
+      input.closest('.file-item')?.classList.remove('is-selected');
+    });
+    updateSelectionToolbar(kind);
+  }
+
+  function selectAllVisible(kind) {
+    const records = fileManagerState.visibleSelections[kind] || [];
+    const map = selectionMap(kind);
+    records.forEach(record => record?.key && map.set(record.key, record));
+    $$(`[data-selection-kind="${kind}"]`).forEach(input => {
+      input.checked = true;
+      input.closest('.file-item')?.classList.add('is-selected');
+    });
+    updateSelectionToolbar(kind);
+  }
+
+  function bindSelectionInputs(box, kind) {
+    $$(`[data-selection-kind="${kind}"]`, box).forEach(input => {
+      input.addEventListener('change', () => {
+        const record = (fileManagerState.visibleSelections[kind] || []).find(r => r.key === input.dataset.selectKey);
+        selectRecord(kind, record, !!input.checked);
+      });
+    });
+  }
+
+  function fileSelectionControl(kind, record, label = 'Select') {
+    if (!record || !record.key) return '<span class="file-select-spacer" aria-hidden="true"></span>';
+    const checked = selectionMap(kind).has(record.key) ? 'checked' : '';
+    return `<label class="file-select-control">
+      <input type="checkbox" data-selection-kind="${esc(kind)}" data-select-key="${esc(record.key)}" ${checked} aria-label="Select ${esc(record.name || 'item')}">
+      <span>${esc(label)}</span>
+    </label>`;
+  }
+
   function renderFileRows(box, files, storage, directory = '/') {
     if (!box) return;
+    const kind = storage === 'u-disk' ? 'usb' : 'printer';
     if (!files.length) {
+      setVisibleSelectionRecords(kind, []);
       const label = storage === 'u-disk' ? 'No USB files returned.' : 'No printer files returned.';
       const hint = storage === 'u-disk' ? 'Make sure the USB drive is inserted and mounted, then tap Refresh.' : 'The printer returned an empty local file list.';
       renderEmpty(box, label, hint);
       return;
     }
+    const records = [];
     box.className = 'file-list';
     box.innerHTML = files.map((file, i) => {
       const name = fileNameOf(file);
       const folder = fileIsFolder(file);
       const meta = fileMetaLine(file, storage, directory);
       const icon = folder ? '📁 ' : '';
-      return `<div class="file-item" data-file-index="${i}">
+      const pathVal = storage === 'u-disk' ? fullFilePath(file, storage, directory) : (filePathOf(file) || fileNameOf(file));
+      const record = folder ? null : { key: fileSelectionKey(storage, pathVal), name, path: pathVal, storage, directory, file };
+      if (record) records.push(record);
+      const selected = record && selectionMap(kind).has(record.key);
+      return `<div class="file-item selectable-file-item ${selected ? 'is-selected' : ''}" data-file-index="${i}">
+        ${record ? fileSelectionControl(kind, record) : '<span class="file-select-spacer" aria-hidden="true"></span>'}
         <div class="file-main"><strong>${icon}${esc(name)}</strong><span>${esc(meta || 'file')}</span></div>
         <div class="file-actions">
           ${folder && storage === 'u-disk' ? `<button class="button primary tiny" type="button" data-file-open="${i}">Open</button>` : ''}
@@ -3249,6 +3387,8 @@
         </div>
       </div>`;
     }).join('');
+    setVisibleSelectionRecords(kind, records);
+    bindSelectionInputs(box, kind);
     $$('[data-file-open]', box).forEach(el => el.addEventListener('click', () => openUsbFolder(files[Number(el.dataset.fileOpen)])));
     $$('[data-file-info]', box).forEach(el => el.addEventListener('click', () => showFileDetail(files[Number(el.dataset.fileInfo)], storage, directory)));
     $$('[data-file-print]', box).forEach(el => el.addEventListener('click', () => startFile(files[Number(el.dataset.filePrint)], storage, directory)));
@@ -3266,6 +3406,7 @@
       const data = await printerApi(`/files?storage_media=${encodeURIComponent(storage)}&path=${encodeURIComponent(directory)}&page_size=150`);
       const printerErr = printerResultError(data);
       if (printerErr) {
+        setVisibleSelectionRecords(storage === 'u-disk' ? 'usb' : 'printer', []);
         const hint = storage === 'u-disk' ? 'USB storage may be empty, missing, or not mounted.' : 'The printer rejected the local file-list request.';
         renderEmpty(box, 'File load returned a printer error.', `${printerErr}. ${hint}`);
         toast(printerErr, 'warn', 7000);
@@ -3276,6 +3417,7 @@
       toast(`Loaded ${files.length} ${storage === 'u-disk' ? 'USB' : 'printer'} file item(s)`, 'success');
       return files;
     } catch (err) {
+      setVisibleSelectionRecords(storage === 'u-disk' ? 'usb' : 'printer', []);
       renderEmpty(box, 'File load failed.', err.message);
       toast(err.message, 'error', 7000);
       return [];
@@ -3357,6 +3499,47 @@
       toast(err.message, 'error', 7000);
     } finally {
       setButtonBusy(button, false);
+    }
+  }
+
+  async function deleteSelectedFiles(kind) {
+    const records = Array.from(selectionMap(kind).values());
+    if (!records.length) return toast('Select at least one file first.', 'warn');
+    const storage = kind === 'usb' ? 'u-disk' : 'local';
+    const names = records.slice(0, 8).map(r => r.name || r.path).join('\n');
+    const extra = records.length > 8 ? `\n…plus ${records.length - 8} more` : '';
+    if (!confirm(`Delete ${records.length} selected ${kind === 'usb' ? 'USB' : 'printer'} file(s)? This cannot be undone.\n\n${names}${extra}`)) return;
+    const button = $(kind === 'usb' ? '#deleteSelectedUsbFilesButton' : '#deleteSelectedPrinterFilesButton');
+    setButtonBusy(button, true, 'Deleting...');
+    const status = kind === 'usb' ? $('#usbFileLoadStatus') : $('#printerFileLoadStatus');
+    const failures = [];
+    try {
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        if (status) {
+          status.classList.remove('hidden', 'good', 'bad');
+          status.classList.add('warn');
+          status.innerHTML = `<span class="spinner"></span><span>Deleting ${i + 1}/${records.length}: ${esc(record.name || record.path || 'file')}</span>`;
+        }
+        try {
+          await printerApi('/files/delete', { method: 'POST', body: JSON.stringify({ file_path: record.path, storage_media: record.storage || storage }) });
+        } catch (err) {
+          failures.push(`${record.name || record.path}: ${err.message}`);
+        }
+      }
+      if (failures.length) {
+        toast(`${records.length - failures.length}/${records.length} file delete command(s) sent. Some failed.`, 'warn', 9000);
+        console.warn('[cc2-dash] bulk file delete failures', failures);
+        alert(`Some deletes failed:\n\n${failures.slice(0, 12).join('\n')}${failures.length > 12 ? '\n…see browser console for full list.' : ''}`);
+      } else {
+        toast(`${records.length} file delete command(s) sent.`, 'success');
+      }
+      clearSelection(kind);
+      if (kind === 'usb') await loadUsbFiles();
+      else await loadPrinterFiles();
+    } finally {
+      setButtonBusy(button, false);
+      if (status) status.classList.add('hidden');
     }
   }
 
@@ -3652,6 +3835,46 @@
   }
 
 
+  function renderHistoryRows(rows) {
+    const box = $('#historyList');
+    if (!box) return;
+    fileManagerState.historyItems = Array.isArray(rows) ? rows : [];
+    if (!fileManagerState.historyItems.length) {
+      setVisibleSelectionRecords('history', []);
+      renderEmpty(box, 'No print history returned.', 'The printer did not return any saved history rows. The stock portal uses method 1036 for this section.');
+      return;
+    }
+    const records = [];
+    box.className = 'file-list';
+    box.innerHTML = fileManagerState.historyItems.map((item, i) => {
+      const name = historyNameOf(item);
+      const id = historyIdOf(item);
+      const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime;
+      const end = item?.end_time || item?.EndTime;
+      const size = bytesHuman(item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size);
+      const status = item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '';
+      const video = item?.has_timelapse || item?.time_lapse_video_status ? 'timelapse' : '';
+      const meta = [size, fmtDate(start), end ? `ended ${fmtDate(end)}` : '', status ? `status ${status}` : '', video, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
+      const record = { key: historySelectionKey(item), name, task_id: id, item };
+      records.push(record);
+      const selected = selectionMap('history').has(record.key);
+      return `<div class="file-item selectable-file-item ${selected ? 'is-selected' : ''}" data-history-index="${i}">
+        ${fileSelectionControl('history', record)}
+        <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
+        <div class="file-actions">
+          <button class="button secondary tiny" type="button" data-history-info="${i}">Info</button>
+          <button class="button primary tiny" type="button" data-history-reprint="${i}">Reprint</button>
+          <button class="button danger tiny" type="button" data-history-delete="${i}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+    setVisibleSelectionRecords('history', records);
+    bindSelectionInputs(box, 'history');
+    $$('[data-history-info]', box).forEach(el => el.addEventListener('click', () => showHistoryInfo(fileManagerState.historyItems[Number(el.dataset.historyInfo)])));
+    $$('[data-history-reprint]', box).forEach(el => el.addEventListener('click', () => reprintHistory(fileManagerState.historyItems[Number(el.dataset.historyReprint)])));
+    $$('[data-history-delete]', box).forEach(el => el.addEventListener('click', () => deleteHistory(fileManagerState.historyItems[Number(el.dataset.historyDelete)])));
+  }
+
   async function loadHistoryList() {
     const box = $('#historyList');
     const loading = $('#historyLoadStatus');
@@ -3662,39 +3885,16 @@
       const data = await printerApi('/history/list?page_size=150');
       const printerErr = printerResultError(data);
       if (printerErr) {
+        setVisibleSelectionRecords('history', []);
         renderEmpty(box, 'Print history returned a printer error.', printerErr);
         toast(printerErr, 'warn', 7000);
         return;
       }
       const rows = data?.history || arrayFromAny(data, ['history_task_list', 'HistoryTaskList', 'task_list', 'items', 'list']);
-      if (!rows.length) {
-        renderEmpty(box, 'No print history returned.', 'The printer did not return any saved history rows. The stock portal uses method 1036 for this section.');
-        return;
-      }
-      box.className = 'file-list';
-      box.innerHTML = rows.map((item, i) => {
-        const name = historyNameOf(item);
-        const id = historyIdOf(item);
-        const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime;
-        const end = item?.end_time || item?.EndTime;
-        const size = bytesHuman(item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size);
-        const status = item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '';
-        const video = item?.has_timelapse || item?.time_lapse_video_status ? 'timelapse' : '';
-        const meta = [size, fmtDate(start), end ? `ended ${fmtDate(end)}` : '', status ? `status ${status}` : '', video, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
-        return `<div class="file-item" data-history-index="${i}">
-          <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
-          <div class="file-actions">
-            <button class="button secondary tiny" type="button" data-history-info="${i}">Info</button>
-            <button class="button primary tiny" type="button" data-history-reprint="${i}">Reprint</button>
-            <button class="button danger tiny" type="button" data-history-delete="${i}">Delete</button>
-          </div>
-        </div>`;
-      }).join('');
-      $$('[data-history-info]', box).forEach(el => el.addEventListener('click', () => showHistoryInfo(rows[Number(el.dataset.historyInfo)])));
-      $$('[data-history-reprint]', box).forEach(el => el.addEventListener('click', () => reprintHistory(rows[Number(el.dataset.historyReprint)])));
-      $$('[data-history-delete]', box).forEach(el => el.addEventListener('click', () => deleteHistory(rows[Number(el.dataset.historyDelete)])));
-      toast(`Loaded ${rows.length} history row(s)`, 'success');
+      renderHistoryRows(rows || []);
+      if (rows?.length) toast(`Loaded ${rows.length} history row(s)`, 'success');
     } catch (err) {
+      setVisibleSelectionRecords('history', []);
       renderEmpty(box, 'Print history load failed.', err.message);
       toast(err.message, 'error', 7000);
     } finally {
@@ -3736,6 +3936,27 @@
       await printerApi('/history/delete', { method: 'POST', body: JSON.stringify({ task_ids: [id] }) });
       toast('History delete command sent', 'success');
       await loadHistoryList();
+    } catch (err) {
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function deleteSelectedHistoryRows(kind = 'history') {
+    const records = Array.from(selectionMap(kind).values()).filter(r => r?.task_id !== undefined && r.task_id !== null && r.task_id !== '');
+    if (!records.length) return toast('Select at least one row with a task ID first.', 'warn');
+    const names = records.slice(0, 8).map(r => `${r.name || 'Task'} · ID ${r.task_id}`).join('\n');
+    const extra = records.length > 8 ? `\n…plus ${records.length - 8} more` : '';
+    if (!confirm(`Delete ${records.length} selected ${kind === 'videos' ? 'timelapse/video' : 'history'} row(s)?\n\n${names}${extra}`)) return;
+    const button = $(kind === 'videos' ? '#deleteSelectedVideosButton' : '#deleteSelectedHistoryButton');
+    setButtonBusy(button, true, 'Deleting...');
+    try {
+      await printerApi('/history/delete', { method: 'POST', body: JSON.stringify({ task_ids: records.map(r => r.task_id) }) });
+      toast(`${records.length} delete command(s) sent.`, 'success');
+      clearSelection(kind);
+      if (kind === 'videos') await loadTimelapseList();
+      else await loadHistoryList();
     } catch (err) {
       toast(err.message, 'error', 9000);
     } finally {
@@ -3812,6 +4033,12 @@
     const box = $('#timelapseList');
     if (!box) return;
     fileManagerState.timelapseItems = Array.isArray(items) ? items : [];
+    if (!fileManagerState.timelapseItems.length) {
+      setVisibleSelectionRecords('videos', []);
+      renderEmpty(box, 'No timelapse videos returned.', 'The printer did not return any video records. The stock portal only shows history rows with timelapse status 1 or 2.');
+      return;
+    }
+    const records = [];
     box.className = 'file-list';
     box.innerHTML = fileManagerState.timelapseItems.map((item, i) => {
       const name = timelapseNameOf(item, i);
@@ -3830,15 +4057,21 @@
       const readyText = ready ? 'download ready' : (generating ? 'exporting' : 'export needed');
       const jobText = job?.message && (generating || failed) ? job.message : '';
       const meta = [size, fmtDate(start), duration !== '' && duration !== undefined && duration !== null ? `${duration}s` : '', statusLabel, readyText, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
-      return `<div class="file-item timelapse-item ${generating ? 'is-generating' : ''} ${ready ? 'is-ready' : ''}" data-timelapse-index="${i}" data-timelapse-key="${esc(key)}">
+      const record = (id === undefined || id === null || id === '') ? null : { key: historySelectionKey(item), name, task_id: id, item };
+      if (record && !generating) records.push(record);
+      const selected = record && selectionMap('videos').has(record.key);
+      return `<div class="file-item selectable-file-item timelapse-item ${generating ? 'is-generating' : ''} ${ready ? 'is-ready' : ''} ${selected ? 'is-selected' : ''}" data-timelapse-index="${i}" data-timelapse-key="${esc(key)}">
+        ${record && !generating ? fileSelectionControl('videos', record) : '<span class="file-select-spacer" aria-hidden="true"></span>'}
         <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span>${jobText ? `<em class="timelapse-job-line">${generating ? '<span class="spinner"></span> ' : ''}${esc(jobText)}</em>` : ''}</div>
         <div class="file-actions">
           <button class="button primary tiny" type="button" data-tl-download="${i}" ${ready ? '' : 'disabled'}>${ready ? 'Download' : 'Export first'}</button>
-          <button class="button secondary tiny" type="button" data-tl-export="${i}" ${generating ? 'disabled' : ''}>${generating ? 'Generating...' : 'Export'}</button>
+          <button class="button primary tiny timelapse-export-button" type="button" data-tl-export="${i}" ${generating ? 'disabled' : ''}>${generating ? 'Generating...' : 'Export'}</button>
           <button class="button danger tiny" type="button" data-tl-delete="${i}" ${generating ? 'disabled' : ''}>Delete</button>
         </div>
       </div>`;
     }).join('');
+    setVisibleSelectionRecords('videos', records);
+    bindSelectionInputs(box, 'videos');
     $$('[data-tl-download]', box).forEach(el => el.addEventListener('click', () => downloadTimelapse(fileManagerState.timelapseItems[Number(el.dataset.tlDownload)])));
     $$('[data-tl-export]', box).forEach(el => el.addEventListener('click', e => exportTimelapse(fileManagerState.timelapseItems[Number(el.dataset.tlExport)], e.currentTarget)));
     $$('[data-tl-delete]', box).forEach(el => el.addEventListener('click', () => deleteTimelapse(fileManagerState.timelapseItems[Number(el.dataset.tlDelete)])));
@@ -3854,6 +4087,7 @@
       const data = await printerApi('/timelapse');
       const printerErr = printerResultError(data);
       if (printerErr) {
+        setVisibleSelectionRecords('videos', []);
         renderEmpty(box, 'Timelapse/history load returned a printer error.', printerErr);
         toast(printerErr, 'warn', 7000);
         return;
@@ -3861,6 +4095,7 @@
       let items = arrayFromAny(data, ['videos', 'time_lapse_video_list', 'TimeLapseVideoList', 'items', 'list']);
       if (!items.length && Array.isArray(data?.videos)) items = data.videos;
       if (!items.length) {
+        setVisibleSelectionRecords('videos', []);
         const root = unwrapCommand(data);
         const rawCount = root?.raw_history_total ?? data?.result?.raw_history_total ?? 0;
         renderEmpty(box, 'No timelapse videos returned.', rawCount ? `History loaded (${rawCount} task(s)), but none were marked as timelapse video rows by the printer.` : 'The printer did not return any video records. The stock portal only shows history rows with timelapse status 1 or 2.');
@@ -3869,6 +4104,7 @@
       renderTimelapseRows(items);
       toast(`Loaded ${items.length} timelapse/history item(s)`, 'success');
     } catch (err) {
+      setVisibleSelectionRecords('videos', []);
       renderEmpty(box, 'Timelapse load failed.', err.message);
       toast(err.message, 'error', 7000);
     } finally {
@@ -4612,6 +4848,19 @@
       fileManagerState.loadedTabs.add('videos');
       loadTimelapseList();
     });
+    $('#selectAllPrinterFilesButton')?.addEventListener('click', () => selectAllVisible('printer'));
+    $('#clearPrinterSelectionButton')?.addEventListener('click', () => clearSelection('printer'));
+    $('#deleteSelectedPrinterFilesButton')?.addEventListener('click', () => deleteSelectedFiles('printer'));
+    $('#selectAllUsbFilesButton')?.addEventListener('click', () => selectAllVisible('usb'));
+    $('#clearUsbSelectionButton')?.addEventListener('click', () => clearSelection('usb'));
+    $('#deleteSelectedUsbFilesButton')?.addEventListener('click', () => deleteSelectedFiles('usb'));
+    $('#selectAllHistoryButton')?.addEventListener('click', () => selectAllVisible('history'));
+    $('#clearHistorySelectionButton')?.addEventListener('click', () => clearSelection('history'));
+    $('#deleteSelectedHistoryButton')?.addEventListener('click', () => deleteSelectedHistoryRows('history'));
+    $('#selectAllVideosButton')?.addEventListener('click', () => selectAllVisible('videos'));
+    $('#clearVideosSelectionButton')?.addEventListener('click', () => clearSelection('videos'));
+    $('#deleteSelectedVideosButton')?.addEventListener('click', () => deleteSelectedHistoryRows('videos'));
+    updateSelectionToolbars();
     activateFileTab('printer');
   }
 

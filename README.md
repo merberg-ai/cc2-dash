@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.63-blue)
+![Version](https://img.shields.io/badge/version-1.2.64-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,7 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.63 timelapse-export-confirmation
+1.2.64 file-manager-multiselect
 1.2.62 async-timelapse-export
 1.2.61 roi-feedback-mobile-cache-fix
 1.2.60 roi-missed-failure-feedback
@@ -84,7 +84,7 @@ Major current capabilities:
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
-| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, and friendly timelapse composing status labels |
+| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, and mobile-friendly multi-select deletion |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
 | Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
 | Themes | Built-in theme library with preview cards |
@@ -750,6 +750,8 @@ Sections:
 | **Print History** | Print history records where firmware reports them. |
 | **Video List** | Timelapse/video records derived from stock history/video metadata. Videos with status `1` must be exported/generated first; Download is enabled after export completes/status becomes ready. |
 
+Bulk deletion is available from the selection toolbar in each File Manager section. On mobile, tap the large **Select** control on each row, then use **Delete selected**. Printer and USB file deletes are sent one at a time with visible progress, so cleaning up a pile of files no longer requires one confirmation per file. Print History and Video List rows can also be selected and deleted together through the stock history delete command.
+
 Stock command IDs used include:
 
 ```text
@@ -1348,6 +1350,14 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.64 File Manager multi-select polish
+
+- The File Manager now has touch-friendly multi-select toolbars for Printer Files, USB Drive, Print History, and Video List.
+- Printer/USB file rows include large mobile-safe selection controls plus Select all visible, Clear, and Delete selected actions.
+- Bulk file deletion sends delete commands one at a time with visible progress, so mobile browsers are not stuck doing repetitive one-file confirms.
+- Print History and Video List rows can also be selected and deleted together through the existing history delete command.
+- The timelapse Export button now uses the configured cc2-dash theme colors instead of looking like an uninvited stock portal gremlin.
 
 ### v1.2.63 timelapse export confirmation
 
