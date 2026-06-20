@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.69-blue)
+![Version](https://img.shields.io/badge/version-1.2.70-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.70 chamber-readout-only
 1.2.69 chamber-temperature-status
 1.2.68 ai-training-backup-restore
 1.2.67 file-manager-info-modal
@@ -91,7 +92,7 @@ Major current capabilities:
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
 | File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, search/filter/sort controls, themed mobile-friendly info modals with thumbnail previews, and stock-shaped local printer-file delete payloads |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
-| Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, bed/extruder temperature controls, and chamber temperature readout |
+| Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, bed/extruder temperature controls, and read-only chamber temperature readout |
 | Themes | Built-in theme library with preview cards |
 | Windows support | Not tested; may work manually, but scripts are Linux/systemd focused |
 
@@ -431,7 +432,7 @@ Primary pages:
 | **Portal** | Stock Elegoo portal bridge/fallback. |
 | **Kiosk** | Camera-first fullscreen display for tablets or spare monitors. |
 | **Upload** | Stage `.gcode` files in cc2-dash, review parsed metadata/thumbnails, then upload or upload-and-print. |
-| **Control** | Stock-portal-style jog/home, light, fans, speed, bed/extruder temperature controls, and chamber temperature readout with safety lockouts. |
+| **Control** | Stock-portal-style jog/home, light, fans, speed, bed/extruder temperature controls, and read-only chamber temperature readout with safety lockouts. |
 | **Files** | Experimental file/history/timelapse helper page. Locked off in this public test build. |
 | **Filament** | Experimental CANVAS/MMS filament manager. Locked off in this public test build. |
 | **Settings** | Printer Manager, themes, menu visibility, quick actions, access, camera relay, AI settings. |
@@ -1384,12 +1385,19 @@ cc2-dash/
 ## Release notes
 
 
+
+### v1.2.70 Chamber readout-only polish
+
+- Changed dashboard chamber temperature display from `current / off` to a single read-only temperature value.
+- Kept Hotend and Bed as `current / target` because those are controllable heaters, while Chamber is telemetry-only on the CC2 firmware.
+- Updated the vision context wording so chamber temperature is treated as a read-only sensor rather than a controllable target/setpoint.
+
 ### v1.2.69 Chamber temperature status
 
 - Added chamber temperature normalization from CC2 telemetry aliases such as `ztemperature_sensor.temperature` and `chamber.temperature`.
 - Dashboard Print Status now shows **Chamber** beside Hotend and Bed when telemetry is available.
 - Control page temperature section now includes a read-only Chamber card, matching the stock portal's chamber temperature visibility without exposing unsupported chamber heater controls.
-- Status/API payloads now include `chamber_current` and `chamber_target`, and the vision prompt context includes chamber temperature for better print-environment awareness.
+- Status/API payloads now include `chamber_current` and optional `chamber_target` when firmware ever exposes it, and the vision prompt context includes chamber temperature for better print-environment awareness.
 
 ### v1.2.68 AI Training backup and restore
 

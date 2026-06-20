@@ -91,6 +91,12 @@
     return `${c} / ${t}`;
   }
 
+  function tempReadoutOnly(current) {
+    if (current === null || current === undefined || current === '') return '-';
+    const n = Number(current);
+    return Number.isFinite(n) ? n.toFixed(1) : '-';
+  }
+
   function niceStatusLabel(value, fallback = 'Unknown') {
     const raw = String(value || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
     if (!raw) return fallback;
@@ -816,7 +822,7 @@
       renderGcodeThumbnail(st);
       setText('hotendTemp', tempLine(st.hotend_current, st.hotend_target));
       setText('bedTemp', tempLine(st.bed_current, st.bed_target));
-      setText('chamberTemp', tempLine(st.chamber_current, st.chamber_target));
+      setText('chamberTemp', tempReadoutOnly(st.chamber_current));
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
       setText('lastUpdate', new Date().toLocaleTimeString());
