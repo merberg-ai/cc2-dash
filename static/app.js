@@ -3636,7 +3636,7 @@
         <div class="file-main"><strong>${icon}${esc(name)}</strong><span>${esc(meta || 'file')}</span></div>
         <div class="file-actions">
           ${folder && storage === 'u-disk' ? `<button class="button primary tiny" type="button" data-file-open="${i}">Open</button>` : ''}
-          ${!folder ? `<button class="button secondary tiny" type="button" data-file-info="${i}">Info</button>` : ''}
+          ${!folder ? `<button class="button info tiny file-info-button" type="button" data-file-info="${i}">Info</button>` : ''}
           ${!folder ? `<button class="button primary tiny" type="button" data-file-print="${i}">Print</button>` : ''}
           <button class="button danger tiny" type="button" data-file-delete="${i}">Delete</button>
         </div>
@@ -3710,16 +3710,197 @@
     loadUsbFiles();
   }
 
-  async function showFileDetail(file, storage, directory = '/') {
+  function fileInfoModalElements() {
+    return {
+      modal: $('#fileInfoModal'),
+      title: $('#fileInfoModalTitle'),
+      subtitle: $('#fileInfoModalSubtitle'),
+      status: $('#fileInfoModalStatus'),
+      grid: $('#fileInfoSummaryGrid'),
+      raw: $('#fileInfoRawJson'),
+      thumb: $('#fileInfoThumbnail'),
+      thumbPlaceholder: $('#fileInfoThumbnailPlaceholder'),
+      previewHint: $('#fileInfoPreviewHint'),
+    };
+  }
+
+  function openFileInfoModal() {
+    const { modal } = fileInfoModalElements();
+    if (!modal) return false;
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+    return true;
+  }
+
+  function closeFileInfoModal() {
+    const { modal, thumb } = fileInfoModalElements();
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    if (thumb) {
+      thumb.removeAttribute('src');
+      thumb.classList.add('hidden');
+    }
+  }
+
+  function setFileInfoStatus(message = '', tone = '') {
+    const { status } = fileInfoModalElements();
+    if (!status) return;
+    status.classList.toggle('hidden', !message);
+    status.classList.remove('good', 'bad', 'warn');
+    if (tone) status.classList.add(tone);
+    status.textContent = message || '';
+  }
+
+  function fileInfoValueFromAny(source, keys) {
+    if (!source || typeof source !== 'object') return '';
+    for (const key of keys) {
+      const value = source[key];
+      if (value !== undefined && value !== null && value !== '') return value;
+    }
+    return '';
+  }
+
+  function fileInfoStorageLabel(storage) {
+    if (storage === 'u-disk') return 'USB drive';
+    if (storage === 'local') return 'Printer local';
+    return storage || 'Unknown';
+  }
+
+  function fileInfoDuration(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return value || '';
+    const h = Math.floor(n / 3600);
+    const m = Math.floor((n % 3600) / 60);
+    const s = Math.floor(n % 60);
+    return [h ? `${h}h` : '', m ? `${m}m` : '', (!h && !m) || s ? `${s}s` : ''].filter(Boolean).join(' ');
+  }
+
+  function fileInfoTypeLabel(file, detail = null) {
+    const raw = fileInfoValueFromAny(detail || {}, ['type', 'file_type', 'FileType', 'media_type', 'MediaType']) || fileTypeOf(file);
+    if (fileIsFolder(file) || String(raw).toLowerCase().includes('folder')) return 'Folder';
+    const name = String(fileNameOf(file) || '').toLowerCase();
+    if (/\.(gcode|gco|gc)$/i.test(name)) return 'G-code';
+    if (/\.(3mf|stl|obj)$/i.test(name)) return 'Model file';
+    if (/\.(png|jpg|jpeg|webp|gif)$/i.test(name)) return 'Image';
+    if (/\.(mp4|mov|avi|mkv)$/i.test(name)) return 'Video';
+    return raw || 'File';
+  }
+
+  function fileInfoThumbnailCandidate(file, storage, directory = '/') {
+    if (!file || fileIsFolder(file)) return '';
     const name = storage === 'u-disk' ? fullFilePath(file, storage, directory) : fileNameOf(file);
+    const lower = String(name || '').toLowerCase();
+    if (!/\.(gcode|gco|gc|3mf)$/i.test(lower)) return '';
+    return `/api/printers/${encodeURIComponent(activePrinterId())}/files/thumbnail-image?storage_media=${encodeURIComponent(storage)}&filename=${encodeURIComponent(name)}&v=${Date.now()}`;
+  }
+
+  function renderFileInfoRows(rows = []) {
+    return rows
+      .filter(row => row && row[1] !== undefined && row[1] !== null && String(row[1]) !== '')
+      .map(([label, value]) => `<div class="file-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`)
+      .join('') || '<div class="file-info-empty">No details returned for this file.</div>';
+  }
+
+  function setFileInfoThumbnail(url = '', name = '') {
+    const { thumb, thumbPlaceholder, previewHint } = fileInfoModalElements();
+    if (!thumb || !thumbPlaceholder) return;
+    thumb.onload = () => {
+      thumb.classList.remove('hidden');
+      thumbPlaceholder.classList.add('hidden');
+      if (previewHint) previewHint.textContent = 'Thumbnail loaded from the printer.';
+    };
+    thumb.onerror = () => {
+      thumb.removeAttribute('src');
+      thumb.classList.add('hidden');
+      thumbPlaceholder.classList.remove('hidden');
+      thumbPlaceholder.textContent = 'No thumbnail available';
+      if (previewHint) previewHint.textContent = 'The printer did not provide a thumbnail for this file.';
+    };
+    if (!url) {
+      thumb.removeAttribute('src');
+      thumb.classList.add('hidden');
+      thumbPlaceholder.classList.remove('hidden');
+      thumbPlaceholder.textContent = 'No thumbnail available';
+      if (previewHint) previewHint.textContent = 'G-code thumbnails appear here when the printer provides one.';
+      return;
+    }
+    thumb.alt = `Thumbnail preview for ${name || 'file'}`;
+    thumbPlaceholder.classList.remove('hidden');
+    thumbPlaceholder.textContent = 'Loading thumbnail…';
+    thumb.classList.add('hidden');
+    thumb.src = url;
+  }
+
+  function renderFileInfoModal({ title = 'File info', subtitle = '', rows = [], raw = null, thumbnailUrl = '', thumbnailName = '', status = '', tone = '' } = {}) {
+    const els = fileInfoModalElements();
+    if (!els.modal) return false;
+    if (els.title) els.title.textContent = title;
+    if (els.subtitle) els.subtitle.textContent = subtitle || 'Details returned by the printer.';
+    if (els.grid) els.grid.innerHTML = renderFileInfoRows(rows);
+    if (els.raw) els.raw.textContent = raw === null || raw === undefined ? 'Waiting for printer response...' : JSON.stringify(raw, null, 2);
+    setFileInfoThumbnail(thumbnailUrl, thumbnailName || title);
+    setFileInfoStatus(status, tone);
+    return openFileInfoModal();
+  }
+
+  function fileInfoBaseRows(file, storage, directory = '/', detail = null) {
+    const name = storage === 'u-disk' ? fullFilePath(file, storage, directory) : fileNameOf(file);
+    const detailRoot = detail && typeof detail === 'object' ? detail : {};
+    const size = fileInfoValueFromAny(detailRoot, ['file_size', 'FileSize', 'size', 'Size']) || fileSizeOf(file);
+    const modified = fileInfoValueFromAny(detailRoot, ['mtime', 'modified_time', 'ModifyTime', 'update_time', 'UpdateTime', 'create_time', 'CreateTime', 'time']) || fileTimeOf(file);
+    const layerHeight = fileInfoValueFromAny(detailRoot, ['layer_height', 'LayerHeight', 'layerHeight']);
+    const printTime = fileInfoValueFromAny(detailRoot, ['estimated_time', 'EstimateTime', 'print_time', 'PrintTime', 'estimated_print_time']);
+    const filament = fileInfoValueFromAny(detailRoot, ['filament_used', 'FilamentUsed', 'material_length', 'MaterialLength', 'filament_length']);
+    const slicer = fileInfoValueFromAny(detailRoot, ['slicer', 'Slicer', 'slicer_version', 'SlicerVersion']);
+    return [
+      ['Name', basename(name) || name],
+      ['Path', name],
+      ['Storage', fileInfoStorageLabel(storage)],
+      ['Type', fileInfoTypeLabel(file, detailRoot)],
+      ['Size', bytesHuman(size)],
+      ['Modified', fmtDate(modified) || modified],
+      ['Directory', storage === 'u-disk' ? directory : '/'],
+      ['Layer height', layerHeight],
+      ['Estimated print time', fileInfoDuration(printTime)],
+      ['Filament', filament],
+      ['Slicer', slicer],
+    ];
+  }
+
+  async function showFileDetail(file, storage, directory = '/') {
+    if (!file || fileIsFolder(file)) return;
+    const name = storage === 'u-disk' ? fullFilePath(file, storage, directory) : fileNameOf(file);
+    const thumbUrl = fileInfoThumbnailCandidate(file, storage, directory);
+    const opened = renderFileInfoModal({
+      title: basename(name) || 'File info',
+      subtitle: `${fileInfoStorageLabel(storage)} · loading printer detail…`,
+      rows: fileInfoBaseRows(file, storage, directory),
+      raw: { list_row: file },
+      thumbnailUrl: thumbUrl,
+      thumbnailName: name,
+      status: 'Loading detailed file info from the printer…',
+    });
+    if (!opened) return toast('File info modal is not available on this page.', 'warn');
     try {
       const url = `/files/detail?storage_media=${encodeURIComponent(storage)}&filename=${encodeURIComponent(name)}&directory=${encodeURIComponent(directory)}`;
       const data = await printerApi(url);
-      const pretty = JSON.stringify(unwrapCommand(data), null, 2);
-      toast('File info loaded. Details printed to browser console.', 'success');
+      const detail = unwrapCommand(data);
+      const pretty = JSON.stringify(detail, null, 2);
       console.log('[cc2-dash] file detail', name, pretty);
-      alert(`File details for ${name}:\n\n${pretty.slice(0, 1800)}${pretty.length > 1800 ? '\n\n…truncated; see browser console for full detail.' : ''}`);
+      renderFileInfoModal({
+        title: basename(name) || 'File info',
+        subtitle: `${fileInfoStorageLabel(storage)} · ${fileInfoTypeLabel(file, detail)}`,
+        rows: fileInfoBaseRows(file, storage, directory, detail),
+        raw: detail,
+        thumbnailUrl: thumbUrl,
+        thumbnailName: name,
+      });
+      toast('File info loaded.', 'success');
     } catch (err) {
+      setFileInfoStatus('File detail failed: ' + err.message, 'bad');
       toast('File detail failed: ' + err.message, 'error');
     }
   }
@@ -4126,7 +4307,7 @@
         ${fileSelectionControl('history', record)}
         <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
         <div class="file-actions">
-          <button class="button secondary tiny" type="button" data-history-info="${i}">Info</button>
+          <button class="button info tiny file-info-button" type="button" data-history-info="${i}">Info</button>
           <button class="button primary tiny" type="button" data-history-reprint="${i}">Reprint</button>
           <button class="button danger tiny" type="button" data-history-delete="${i}">Delete</button>
         </div>
@@ -4169,9 +4350,34 @@
 
   function showHistoryInfo(item) {
     const name = historyNameOf(item);
-    const pretty = JSON.stringify(item?.raw || item, null, 2);
-    console.log('[cc2-dash] history detail', name, pretty);
-    alert(`Print history details for ${name}:\n\n${pretty.slice(0, 1800)}${pretty.length > 1800 ? '\n\n…truncated; see browser console for full detail.' : ''}`);
+    const raw = item?.raw || item;
+    const id = historyIdOf(item);
+    const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime;
+    const end = item?.end_time || item?.EndTime;
+    const status = item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '';
+    const size = item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size;
+    const hasTimelapse = item?.has_timelapse || item?.time_lapse_video_status || item?.TimeLapseVideoStatus;
+    const rows = [
+      ['Task name', name],
+      ['Task ID', id],
+      ['Status', status],
+      ['Size', bytesHuman(size)],
+      ['Started', fmtDate(start) || start],
+      ['Ended', fmtDate(end) || end],
+      ['Timelapse', hasTimelapse ? 'Yes' : 'No'],
+    ];
+    console.log('[cc2-dash] history detail', name, JSON.stringify(raw, null, 2));
+    const thumbUrl = /\.(gcode|gco|gc|3mf)$/i.test(String(name || ''))
+      ? `/api/printers/${encodeURIComponent(activePrinterId())}/files/thumbnail-image?storage_media=local&filename=${encodeURIComponent(name)}&v=${Date.now()}`
+      : '';
+    renderFileInfoModal({
+      title: name || 'Print history row',
+      subtitle: 'Print history details',
+      rows,
+      raw,
+      thumbnailUrl: thumbUrl,
+      thumbnailName: name,
+    });
   }
 
   async function reprintHistory(item) {
@@ -5108,6 +5314,10 @@
 
 
   function initFiles() {
+    $('#fileInfoModalClose')?.addEventListener('click', closeFileInfoModal);
+    $('#fileInfoModalCloseBottom')?.addEventListener('click', closeFileInfoModal);
+    $('#fileInfoModal')?.addEventListener('click', e => { if (e.target?.id === 'fileInfoModal') closeFileInfoModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#fileInfoModal')?.classList.contains('hidden')) closeFileInfoModal(); });
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
     $$('[data-file-search]').forEach(input => input.addEventListener('input', () => scheduleFileFilterRender(input.dataset.fileSearch)));
     $$('[data-file-type-filter]').forEach(select => select.addEventListener('change', () => renderFilteredFileKind(select.dataset.fileTypeFilter)));

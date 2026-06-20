@@ -242,4 +242,41 @@
     </section>
   </article>
 </section>
+
+
+<div id="fileInfoModal" class="modal-backdrop file-info-modal hidden" role="dialog" aria-modal="true" aria-labelledby="fileInfoModalTitle" aria-hidden="true">
+  <div class="modal-card file-info-card">
+    <div class="modal-header file-info-modal-header">
+      <div>
+        <h2 id="fileInfoModalTitle">File info</h2>
+        <p id="fileInfoModalSubtitle">Loading file details...</p>
+      </div>
+      <button class="icon-button" id="fileInfoModalClose" type="button" aria-label="Close file info">×</button>
+    </div>
+
+    <div id="fileInfoModalStatus" class="file-info-status hidden" aria-live="polite"></div>
+
+    <div class="file-info-modal-layout">
+      <section class="file-info-preview-card" aria-label="File thumbnail preview">
+        <div class="file-info-preview-frame" id="fileInfoPreviewFrame">
+          <img id="fileInfoThumbnail" class="file-info-thumbnail hidden" alt="File thumbnail preview">
+          <div id="fileInfoThumbnailPlaceholder" class="file-info-thumbnail-placeholder">No thumbnail available</div>
+        </div>
+        <div id="fileInfoPreviewHint" class="mini-note">G-code thumbnails appear here when the printer provides one.</div>
+      </section>
+
+      <section class="file-info-detail-panel" aria-label="File details">
+        <div id="fileInfoSummaryGrid" class="file-info-grid"></div>
+        <details class="file-info-raw-details">
+          <summary>Raw printer response</summary>
+          <pre id="fileInfoRawJson" class="file-info-raw-json">Waiting for printer response...</pre>
+        </details>
+      </section>
+    </div>
+
+    <div class="modal-actions">
+      <button class="button secondary" id="fileInfoModalCloseBottom" type="button">Close</button>
+    </div>
+  </div>
+</div>
 {% endblock %}

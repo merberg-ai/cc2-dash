@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.66-blue)
+![Version](https://img.shields.io/badge/version-1.2.67-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.67 file-manager-info-modal
 1.2.66 file-manager-search-sort
 1.2.64 file-manager-multiselect
 1.2.63 timelapse-export-confirmation
@@ -86,7 +87,7 @@ Major current capabilities:
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
-| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, search/filter/sort controls, and stock-shaped local printer-file delete payloads |
+| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, search/filter/sort controls, themed mobile-friendly info modals with thumbnail previews, and stock-shaped local printer-file delete payloads |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
 | Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
 | Themes | Built-in theme library with preview cards |
@@ -754,6 +755,8 @@ Sections:
 
 Each File Manager section has mobile-friendly search, filter, and sort controls. Printer Files and USB Drive can filter by folders, G-code, images, videos, or other files. Print History can filter timelapse/completed/failed rows. Video List can filter ready, needs-export, generating, or failed rows. Sorting is client-side after the list loads, so changing search/sort does not re-query the printer.
 
+The **Info** buttons are themed from the active cc2-dash theme and open a responsive modal instead of a browser alert. The modal shows a friendly file/history summary, an optional G-code thumbnail preview when firmware provides one, and an expandable raw printer response for troubleshooting.
+
 Bulk deletion is available from the selection toolbar in each File Manager section. On mobile, tap the large **Select** control on each row, then use **Delete selected**. **Select all visible** respects the active search/filter results, making it safer to delete a targeted group without selecting the whole printer list. Printer and USB file deletes are sent one at a time with visible progress, so cleaning up a pile of files no longer requires one confirmation per file. Local Printer Files deletion uses the stock portal shape for method `1047`: `file_path` is sent as a selected-file array even for one file, and cc2-dash normalizes accidental `/local/...` paths back to plain filenames before sending. Print History and Video List rows can also be selected and deleted together through the stock history delete command.
 
 Stock command IDs used include:
@@ -1358,6 +1361,14 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.67 File Manager themed info modal
+
+- Replaced the old File Manager `alert()`/console-only Info behavior with a themed, mobile-friendly modal.
+- The Printer Files, USB Drive, and Print History **Info** buttons now use active cc2-dash theme colors.
+- File info modals show a friendly summary, optional G-code thumbnail preview when the printer exposes one, and an expandable raw printer response for troubleshooting.
+- Added tap-backdrop, close-button, and Escape-key modal dismissal.
+- Updated README File Manager documentation and release notes.
 
 ### v1.2.66 File Manager search, filter, and sort
 
