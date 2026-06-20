@@ -2655,6 +2655,7 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
     temps = n.get("temps") or {}
     nozzle = temps.get("nozzle") or {}
     bed = temps.get("bed") or {}
+    chamber = temps.get("chamber") or {}
     position = n.get("position") or {}
     speed_mode = position.get("speed_mode")
     speed_raw = position.get("speed")
@@ -2717,6 +2718,8 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "hotend_target": nozzle.get("target"),
         "bed_current": bed.get("actual"),
         "bed_target": bed.get("target"),
+        "chamber_current": chamber.get("actual"),
+        "chamber_target": chamber.get("target"),
         "light_on": _extract_light_on(n, snap.get("raw_status") or {}),
         "file": n.get("file") or "-",
         "gcode_thumbnail_url": None,
@@ -4421,8 +4424,10 @@ def _control_temperatures(n: dict[str, Any], raw: dict[str, Any], base_status: d
     chamber_pair = _control_temp_pair(
         chamber,
         raw_chamber,
-        raw_current_keys=("temperature", "actual", "current"),
-        raw_target_keys=("target",),
+        base_current=base_status.get("chamber_current"),
+        base_target=base_status.get("chamber_target"),
+        raw_current_keys=("temperature", "actual", "current", "TempCurrentChamber", "CurrentChamberTemp"),
+        raw_target_keys=("target", "target_temperature", "TempTargetChamber", "TargetChamberTemp"),
     )
     return {
         "extruder": {**extruder_pair, "min": 0, "max": 350, "label": "Extruder"},

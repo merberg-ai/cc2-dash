@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.68-blue)
+![Version](https://img.shields.io/badge/version-1.2.69-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.69 chamber-temperature-status
 1.2.68 ai-training-backup-restore
 1.2.67 file-manager-info-modal
 1.2.66 file-manager-search-sort
@@ -90,7 +91,7 @@ Major current capabilities:
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
 | File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, search/filter/sort controls, themed mobile-friendly info modals with thumbnail previews, and stock-shaped local printer-file delete payloads |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
-| Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
+| Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, bed/extruder temperature controls, and chamber temperature readout |
 | Themes | Built-in theme library with preview cards |
 | Windows support | Not tested; may work manually, but scripts are Linux/systemd focused |
 
@@ -430,7 +431,7 @@ Primary pages:
 | **Portal** | Stock Elegoo portal bridge/fallback. |
 | **Kiosk** | Camera-first fullscreen display for tablets or spare monitors. |
 | **Upload** | Stage `.gcode` files in cc2-dash, review parsed metadata/thumbnails, then upload or upload-and-print. |
-| **Control** | Stock-portal-style jog/home, light, fans, speed, and bed/extruder temperature controls with safety lockouts. |
+| **Control** | Stock-portal-style jog/home, light, fans, speed, bed/extruder temperature controls, and chamber temperature readout with safety lockouts. |
 | **Files** | Experimental file/history/timelapse helper page. Locked off in this public test build. |
 | **Filament** | Experimental CANVAS/MMS filament manager. Locked off in this public test build. |
 | **Settings** | Printer Manager, themes, menu visibility, quick actions, access, camera relay, AI settings. |
@@ -868,6 +869,7 @@ Current control features:
 - Fan UI displays 0–100%, while outgoing method `1030` values are converted to the stock portal's 0–255 PWM-style scale.
 - Light toggle using the same stock-style `power` payload as the dashboard light control.
 - Current/target extruder and bed temperature display.
+- Chamber temperature readout when firmware telemetry provides it.
 - Set extruder target temperature, bed target temperature, and turn either heater off.
 - Compact themed temperature inputs populated from the current target/set values.
 - Live status refresh that avoids overlapping refreshes and avoids overwriting fan/temp inputs while you are typing.
@@ -898,6 +900,7 @@ Temperature limits in the UI/backend:
 |---|---:|
 | Extruder | `0–350°C` |
 | Bed | `0–110°C` |
+| Chamber | Read-only telemetry |
 
 Safety behavior:
 
@@ -1034,7 +1037,7 @@ Current command mapping summary:
 | Control page jog/home | `1026`, `1027` gated by dangerous-command permission |
 | Control page fans/speed/light/temp | `1030`, `1031`, `1029`, `1028` gated by command permission |
 | Control page fan value scaling | UI percent is converted to 0–255 stock portal fan values |
-| Control page temperature | `1028` with `{extruder}` or `{heater_bed}` |
+| Control page temperature | `1028` with `{extruder}` or `{heater_bed}`; chamber is read-only telemetry |
 | Light toggle | `1029` |
 | Upload staged G-code | Stage locally, then HTTP upload to printer; upload-and-print can request print start after transfer |
 | Pause print | `1021` |
@@ -1380,6 +1383,13 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.69 Chamber temperature status
+
+- Added chamber temperature normalization from CC2 telemetry aliases such as `ztemperature_sensor.temperature` and `chamber.temperature`.
+- Dashboard Print Status now shows **Chamber** beside Hotend and Bed when telemetry is available.
+- Control page temperature section now includes a read-only Chamber card, matching the stock portal's chamber temperature visibility without exposing unsupported chamber heater controls.
+- Status/API payloads now include `chamber_current` and `chamber_target`, and the vision prompt context includes chamber temperature for better print-environment awareness.
 
 ### v1.2.68 AI Training backup and restore
 

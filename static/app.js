@@ -816,6 +816,7 @@
       renderGcodeThumbnail(st);
       setText('hotendTemp', tempLine(st.hotend_current, st.hotend_target));
       setText('bedTemp', tempLine(st.bed_current, st.bed_target));
+      setText('chamberTemp', tempLine(st.chamber_current, st.chamber_target));
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
       setText('lastUpdate', new Date().toLocaleTimeString());
@@ -5048,6 +5049,7 @@
     temperatures: {
       extruder: { current: null, target: null, max: 350 },
       bed: { current: null, target: null, max: 110 },
+      chamber: { current: null, target: null, max: 100 },
     },
     allowCommands: false,
     allowDangerous: false,
@@ -5211,7 +5213,7 @@
     if (!controlState.temperatures[key]) controlState.temperatures[key] = {};
     const current = tempData.current ?? controlState.temperatures[key].current ?? null;
     const target = tempData.target ?? controlState.temperatures[key].target ?? null;
-    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : 350));
+    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : (key === 'chamber' ? 100 : 350)));
     controlState.temperatures[key] = { current, target, max };
 
     const input = $(`[data-control-temp-input="${key}"]`);
@@ -5224,9 +5226,9 @@
       if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target, max);
     }
 
-    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
+    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout', chamber: 'controlTempChamberReadout' };
     const readout = readoutIds[key] ? $(`#${readoutIds[key]}`) : null;
-    if (readout) readout.textContent = `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
+    if (readout) readout.textContent = key === 'chamber' ? controlFormatTemp(current, '') : `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
 
     const card = $(`[data-control-temp-card="${key}"]`);
     if (card) card.dataset.heating = Number(target || 0) > 0 ? 'true' : 'false';
@@ -5275,6 +5277,7 @@
     setControlFanUi('case', data.fans?.case ?? 0);
     setControlTempUi('extruder', data.temperatures?.extruder || {});
     setControlTempUi('bed', data.temperatures?.bed || {});
+    setControlTempUi('chamber', data.temperatures?.chamber || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
     updateControlCommandLocks();

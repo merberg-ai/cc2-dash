@@ -2599,3 +2599,6 @@ body.modal-open { overflow:hidden; }
   .file-info-row { grid-template-columns:1fr; gap:.25rem; padding:.55rem .65rem; }
   .file-info-modal-header h2 { max-width:calc(100vw - 6rem); }
 }
+
+.control-temp-readonly { justify-content:space-between; }
+.control-temp-note { margin:.45rem 0 0; color:var(--cc2-muted); font-size:.78rem; line-height:1.35; }

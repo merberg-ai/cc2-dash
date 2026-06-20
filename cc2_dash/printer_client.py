@@ -87,6 +87,8 @@ class PrinterClient:
             "hotend_target": None,
             "bed_current": None,
             "bed_target": None,
+            "chamber_current": None,
+            "chamber_target": None,
             "file": "-",
             "updated_at": int(time.time()),
             "camera_url": self.printer.get("camera_url") or f"http://{self.host}:8080/",
@@ -107,6 +109,7 @@ class PrinterClient:
             progress_pct = 0
         hotend = d.get("hotend") or d.get("nozzle") or d.get("extruder") or {}
         bed = d.get("bed") or d.get("heater_bed") or {}
+        chamber = d.get("chamber") or d.get("enclosure") or d.get("ztemperature_sensor") or d.get("ztemperatureSensor") or {}
         return {
             "printer_id": self.printer_id,
             "name": self.printer.get("name", self.printer_id),
@@ -124,6 +127,8 @@ class PrinterClient:
             "hotend_target": _num(hotend.get("target") if isinstance(hotend, dict) else d.get("hotend_target")),
             "bed_current": _num(bed.get("current") if isinstance(bed, dict) else d.get("bed_current")),
             "bed_target": _num(bed.get("target") if isinstance(bed, dict) else d.get("bed_target")),
+            "chamber_current": _num((chamber.get("current") or chamber.get("actual") or chamber.get("temperature")) if isinstance(chamber, dict) else d.get("chamber_current")),
+            "chamber_target": _num(chamber.get("target") if isinstance(chamber, dict) else d.get("chamber_target")),
             "file": d.get("file") or d.get("filename") or d.get("gcode_file") or "-",
             "updated_at": int(time.time()),
             "camera_url": self.printer.get("camera_url") or f"http://{self.host}:8080/",
