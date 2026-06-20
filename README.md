@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.58-blue)
+![Version](https://img.shields.io/badge/version-1.2.67-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -16,7 +16,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 > This is an unofficial project. It is not affiliated with, endorsed by, or supported by Elegoo, OctoEverywhere, or any printer vendor. Firmware behavior can change. Some stock command paths behave differently across firmware versions.
 
 > [!NOTE]
-> In this version, **Failure Detection can optionally pause a print after a high-risk warning countdown**. Auto-pause is off by default, has a configurable countdown/cancel window, and only sends a pause command when explicitly enabled. Cancel print remains locked behind manual controls; AI never cancels, resumes, loads/unloads filament, or overrides the stock printer controls.
+> In this version, **Failure Detection can optionally pause a print after a high-risk warning countdown**. Auto-pause is off by default, has a configurable countdown/cancel window, uses a shared pause-permission gate, and performs a fresh telemetry/vision recheck immediately before sending `PAUSE_PRINT`. Cancel print remains locked behind manual controls; AI never cancels, resumes, loads/unloads filament, or overrides the stock printer controls.
 
 ---
 
@@ -63,7 +63,13 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.58 control-and-release-lock-polish
+1.2.67 file-manager-info-modal
+1.2.66 file-manager-search-sort
+1.2.64 file-manager-multiselect
+1.2.63 timelapse-export-confirmation
+1.2.62 async-timelapse-export
+1.2.61 roi-feedback-mobile-cache-fix
+1.2.60 roi-missed-failure-feedback
 ```
 
 Major current capabilities:
@@ -77,11 +83,11 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Failure Detection telemetry checks | Working, with optional guarded auto-pause off by default |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
+| AI feedback dataset | Working, includes fresh-frame capture, missed-failure ROI annotation/crops, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
-| File Manager | Experimental code retained, disabled and locked off for this public test build |
+| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, search/filter/sort controls, themed mobile-friendly info modals with thumbnail previews, and stock-shaped local printer-file delete payloads |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
 | Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
 | Themes | Built-in theme library with preview cards |
@@ -580,6 +586,7 @@ Feedback buttons:
 - **Looks Good**
 - **Looks Bad**
 - **False Alarm**
+- **Report Missed Failure** — captures a frozen camera frame and lets you draw a mobile-friendly box around the failed area.
 
 Feedback records are saved to:
 
@@ -591,6 +598,8 @@ data/ai_learning.sqlite3
 ```
 
 When feedback is clicked, cc2-dash tries to capture a fresh frame. If that fails, it falls back to the latest cached frame. After the fast click is saved, an optional reason-chip panel can tag why the feedback was given, such as normal supports, purge tower, spaghetti/stringing, detached print, low light but visible, or a custom note.
+
+For missed localized failures, **Report Missed Failure** opens a frozen snapshot with a touch-safe SVG overlay. Draw one box around the specific failed area, choose the failure type, and save. The backend stores normalized ROI coordinates plus a full-frame image, tight ROI crop, and padded context crop under `data/ai_feedback_frames/<printer_id>/`. This is review/training evidence only in v1.2.60; it does not change auto-pause or cancel permissions yet.
 
 Feedback is interpreted against what Portal AI believed at the time:
 
@@ -611,8 +620,10 @@ GET /api/ai/feedback/stats
 GET /api/ai/feedback/suppressions
 GET /api/ai/learning/samples
 GET /api/ai/learning/samples/<sample_id>/frame
+GET /api/ai/learning/samples/<sample_id>/roi-frame
 POST /api/ai/learning/import-jsonl
 GET /api/printers/<printer_id>/ai/learning/samples
+POST /api/printers/<printer_id>/ai/feedback/frame
 POST /api/printers/<printer_id>/ai/feedback/reason
 ```
 
@@ -740,7 +751,13 @@ Sections:
 | **Printer Files** | Stock-style local printer file list. |
 | **USB Drive** | Stock-style USB/u-disk file list with folder navigation. |
 | **Print History** | Print history records where firmware reports them. |
-| **Video List** | Timelapse/video records derived from stock history/video metadata. |
+| **Video List** | Timelapse/video records derived from stock history/video metadata. Videos with status `1` must be exported/generated first; Download is enabled after export completes/status becomes ready. |
+
+Each File Manager section has mobile-friendly search, filter, and sort controls. Printer Files and USB Drive can filter by folders, G-code, images, videos, or other files. Print History can filter timelapse/completed/failed rows. Video List can filter ready, needs-export, generating, or failed rows. Sorting is client-side after the list loads, so changing search/sort does not re-query the printer.
+
+The **Info** buttons are themed from the active cc2-dash theme and open a responsive modal instead of a browser alert. The modal shows a friendly file/history summary, an optional G-code thumbnail preview when firmware provides one, and an expandable raw printer response for troubleshooting.
+
+Bulk deletion is available from the selection toolbar in each File Manager section. On mobile, tap the large **Select** control on each row, then use **Delete selected**. **Select all visible** respects the active search/filter results, making it safer to delete a targeted group without selecting the whole printer list. Printer and USB file deletes are sent one at a time with visible progress, so cleaning up a pile of files no longer requires one confirmation per file. Local Printer Files deletion uses the stock portal shape for method `1047`: `file_path` is sent as a selected-file array even for one file, and cc2-dash normalizes accidental `/local/...` paths back to plain filenames before sending. Print History and Video List rows can also be selected and deleted together through the stock history delete command.
 
 Stock command IDs used include:
 
@@ -755,8 +772,27 @@ Stock command IDs used include:
 1051  Get/export timelapse video list
 ```
 
+Timelapse export/download flow:
+
+```text
+1. Open Files → Video List.
+2. Rows marked needs export/status 1 show Download disabled.
+3. Tap Export. cc2-dash starts a backend export job and the UI shows Time-lapse video generating… instead of holding the browser request open.
+4. The backend keeps polling the printer Video List until that row is actually reported as generated/download-ready, instead of trusting the initial export-command acknowledgement.
+5. The frontend polls the lightweight cc2-dash job status until the backend confirms readiness or times out.
+6. Once ready, refresh/download uses cc2-dash's proxied `/download` route so the printer PIN/internal URL is not exposed to the browser.
+```
+
+API helpers:
+
+```text
+POST /api/printers/<printer_id>/timelapse/export
+GET  /api/printers/<printer_id>/timelapse/export/<job_id>
+GET  /api/printers/<printer_id>/timelapse/download?file_name=<printer-file-token>
+```
+
 > [!CAUTION]
-> The stock firmware may not reliably generate/export timelapse videos even when the stock portal shows the UI. cc2-dash includes a proxy for the stock `/download` flow, but it cannot fix firmware-side export failures.
+> The stock firmware may not reliably generate/export timelapse videos even when the stock portal shows the UI. cc2-dash now starts timelapse export as a backend job, shows **Time-lapse video generating…**, polls the printer Video List for confirmed generated/download-ready status, and only enables Download once a generated file is available. It still cannot fix firmware-side export failures.
 
 ---
 
@@ -1072,7 +1108,9 @@ GET  /api/ai/monitor
 GET  /api/printers/<printer_id>/ai/status
 POST /api/printers/<printer_id>/ai/check-now
 POST /api/printers/<printer_id>/ai/feedback
+POST /api/printers/<printer_id>/ai/feedback/frame
 POST /api/printers/<printer_id>/ai/feedback/reason
+GET  /api/ai/feedback/frame
 GET  /api/ai/feedback/recent
 GET  /api/ai/feedback/stats
 GET  /api/ai/feedback/suppressions
@@ -1084,6 +1122,7 @@ GET  /api/printers/<printer_id>/ai/learning
 POST /api/printers/<printer_id>/ai/learning/rebuild
 POST /api/printers/<printer_id>/ai/learning/reset
 GET  /api/printers/<printer_id>/ai/learning/samples
+GET  /api/ai/learning/samples/<sample_id>/roi-frame
 GET  /api/printers/<printer_id>/vision/status
 POST /api/printers/<printer_id>/vision/check-now
 GET  /api/printers/<printer_id>/vision/latest.jpg
@@ -1218,9 +1257,15 @@ The CC2 stock portal shows fans as percentages, but the command payload uses 0�
 
 The Control page prefers the firmware-reported target/set temperature. If target temperature is missing from telemetry, it may fall back to blank or current values depending on what the printer reports. Compare against the stock portal and check **Logs → command** after sending a new target.
 
+### Printer Files delete fails with error 1003
+
+Error `1003` means the printer rejected the delete command parameters. For local Printer Files, cc2-dash now matches the stock Elegoo portal by sending method `1047` with `file_path` as an array, even for a single selected file. It also strips accidental local path prefixes before sending. If this still fails, compare the same file delete in the stock portal and check **Logs → files/command** for the raw payload/response.
+
 ### File Manager video download/export fails
 
-If the stock Elegoo portal also fails, the problem is probably firmware-side. cc2-dash includes the stock-style command path and download proxy, but it cannot force the printer firmware to generate a missing timelapse file.
+For timelapse rows, use **Export** first. cc2-dash starts the export in the backend and shows **Time-lapse video generating…** while the printer creates the MP4. Download stays disabled until the printer Video List reports the video as generated/download-ready. The initial export command can return before the MP4 is done, so cc2-dash keeps showing generation status until the list confirms readiness.
+
+If export eventually errors or times out, refresh Video List and compare with the stock Elegoo portal. The backend waits up to about 30 minutes for the printer to mark the video as generated, and the phone UI polls for up to about 35 minutes. The printer firmware may still finish generation after cc2-dash polling stops, but cc2-dash cannot force firmware-side timelapse creation if the stock portal also fails.
 
 ### Filament sensor says unknown
 
@@ -1274,6 +1319,7 @@ cc2-dash/
 │   ├── config.py
 │   ├── feedback_learning.py
 │   ├── logger.py
+│   ├── print_state.py
 │   ├── printer_client.py
 │   ├── scanner.py
 │   ├── themes.py
@@ -1315,6 +1361,79 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.67 File Manager themed info modal
+
+- Replaced the old File Manager `alert()`/console-only Info behavior with a themed, mobile-friendly modal.
+- The Printer Files, USB Drive, and Print History **Info** buttons now use active cc2-dash theme colors.
+- File info modals show a friendly summary, optional G-code thumbnail preview when the printer exposes one, and an expandable raw printer response for troubleshooting.
+- Added tap-backdrop, close-button, and Escape-key modal dismissal.
+- Updated README File Manager documentation and release notes.
+
+### v1.2.66 File Manager search, filter, and sort
+
+- Added mobile-friendly search, type/status filters, and sort controls to File Manager sections.
+- Printer Files and USB Drive can now be filtered by folders, G-code, image, video, or other files and sorted by name, date, size, or type.
+- Print History can now be searched, filtered by timelapse/completed/failed rows, and sorted by date, name, or size.
+- Video List can now be searched, filtered by ready/needs-export/generating/failed states, and sorted by date, name, size, or status.
+- Select all visible now respects the active search/filter results, making bulk delete safer and less annoying on mobile.
+
+### v1.2.65 Printer Files delete payload fix
+
+- Fixed Printer Files deletion returning `1003 — Invalid parameter` on firmware builds that require the stock portal's array-shaped delete payload.
+- Method `1047` now sends `file_path` as a selected-file array even when deleting one local printer file, matching the stock Elegoo portal behavior.
+- Local printer-file delete paths are normalized before sending so `/local/foo.gcode`, `local/foo.gcode`, and `foo.gcode` all become the stock-style `foo.gcode`.
+- Kept a legacy string-payload retry only as a fallback for firmware variants that reject the stock array shape.
+- README troubleshooting/docs updated for Printer Files deletion behavior.
+
+### v1.2.64 File Manager multi-select polish
+
+- The File Manager now has touch-friendly multi-select toolbars for Printer Files, USB Drive, Print History, and Video List.
+- Printer/USB file rows include large mobile-safe selection controls plus Select all visible, Clear, and Delete selected actions.
+- Bulk file deletion sends delete commands one at a time with visible progress, so mobile browsers are not stuck doing repetitive one-file confirms.
+- Print History and Video List rows can also be selected and deleted together through the existing history delete command.
+- The timelapse Export button now uses the configured cc2-dash theme colors instead of looking like an uninvited stock portal gremlin.
+
+### v1.2.63 timelapse export confirmation
+
+- Fixed timelapse export jobs reporting complete too early on longer videos by treating the initial firmware export response as an acknowledgement only.
+- Backend export jobs now keep polling the printer Video List until the selected row reports generated/download-ready before exposing the Download URL.
+- Extended timelapse export waiting to better handle longer videos: backend timeout is about 30 minutes; mobile UI polling is about 35 minutes.
+- Added a friendly mapping for sub-status `3020` so the dashboard shows **Time-lapse video generating** instead of `Sub 3020`.
+- Updated File Manager docs and troubleshooting notes for confirmed export readiness.
+
+### v1.2.62 async timelapse export
+
+- Reworked File Manager → Video List timelapse export so the browser no longer waits on the long-running firmware export request.
+- Added backend timelapse export jobs with polling status: generating, ready/complete, or error.
+- Updated the Video List UI so status `1`/not-yet-generated rows require **Export** before **Download**; Download is disabled until the generated video is ready.
+- Added visible **Time-lapse video generating…** status with row-level spinner/state so the phone browser can sit on a lightweight polling loop instead of timing out.
+- Kept downloads proxied through cc2-dash after export so the stock printer `/download` URL/PIN stays behind the dashboard.
+- Updated File Manager documentation and troubleshooting notes for the export-first workflow.
+
+### v1.2.61 ROI feedback mobile/cache fix
+
+- Adds cache-busting query strings to `/static/app.css` and `/static/app.js` so phone browsers pick up new dashboard JavaScript/CSS after upgrades.
+- Themes the Report Missed Failure button with a fallback for browsers that do not support newer CSS color-mix rules.
+- Prevents the Report Missed Failure button from also firing the normal generic feedback handler.
+- Makes the ROI feedback modal opening handler delegated and mobile-safe so it still works if dashboard markup is refreshed later.
+
+### v1.2.60 ROI missed-failure feedback
+
+- Added a **Report Missed Failure** dashboard workflow for localized failures the detector missed, especially detached small parts, fallen prime towers, and air-printing zones.
+- Added a mobile-safe ROI annotation modal using a frozen still frame plus SVG/pointer-event drawing, so mouse, touch, and stylus all use the same code path.
+- Added `POST /api/printers/<printer_id>/ai/feedback/frame` to capture a still feedback frame before the user draws an ROI box.
+- Extended `POST /api/printers/<printer_id>/ai/feedback` with optional ROI annotation metadata while keeping existing Looks Good / Looks Bad / False Alarm feedback compatible.
+- Saved normalized ROI coordinates, tight ROI crops, padded context crops, and annotation metadata into JSONL/SQLite raw training data and AI Training review/export flows.
+- Added safe image-serving endpoints for feedback frames and ROI crops. ROI evidence is stored for learning/review only in this release and does not alter auto-pause behavior.
+
+### v1.2.59 failure-detection pause gate
+
+- Added a shared print-state helper module so dashboard status, Portal AI, vision checks, and auto-pause permission use the same preparation/active-print/pause-safety classification instead of drifting apart across files.
+- Added a single Failure Detection pause-permission gate that returns explicit allowed actions, veto reasons, evidence, failure family, and a hard `cancel_allowed: false` decision.
+- Hardened auto-pause so a countdown only arms when the gate allows pause, and the backend performs a fresh status + forced vision recheck before sending `PAUSE_PRINT`.
+- Hardened the dashboard **Pause now** action so it requires the active auto-pause token and also passes the same fresh recheck/gate before sending a pause command.
+- Made camera/view-quality and telemetry-only warnings inspect/warn states rather than auto-pause triggers, keeping auto-pause reserved for pause-grade print failure evidence.
 
 ### v1.2.58 control, upload, error-code, and release-lock polish
 

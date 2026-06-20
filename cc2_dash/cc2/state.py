@@ -17,11 +17,12 @@ MACHINE_STATUS = {
     9: "updating",
     10: "homing",
     11: "file transferring",
-    12: "video composing",
+    12: "time-lapse video generating",
     13: "extruder operating",
     14: "emergency stop",
     15: "power loss recovery",
     16: "completed",
+    18: "time-lapse video generating",
 }
 
 SUB_STATUS = {
@@ -44,6 +45,7 @@ SUB_STATUS = {
     2802: "homing complete",
     2901: "auto leveling",
     2902: "auto leveling complete",
+    3020: "time-lapse video generating",
 }
 
 SPEED_MODES = {

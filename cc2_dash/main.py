@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import time
+import threading
 import uuid
 import zipfile
 from pathlib import Path
@@ -23,6 +24,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+
+try:
+    from PIL import Image
+except Exception:  # Pillow is installed for normal use, but keep startup resilient.
+    Image = None  # type: ignore[assignment]
 
 from . import __version__
 from .config import (
@@ -74,6 +80,7 @@ from .cc2.commands import (
     START_VIDEO_STREAM,
     STOP_PRINT,
     delete_file_params,
+    delete_file_params_legacy,
     history_delete_params,
     history_detail_params,
     file_detail_params,
@@ -114,6 +121,13 @@ from .feedback_learning import (
     record_feedback_suppression,
 )
 from .vision import vision_monitor
+from .print_state import (
+    IDLE_MACHINE_STATUS_CODES,
+    IDLE_SUB_STATUS_CODES,
+    print_phase_from_status as _shared_print_phase_from_status,
+    status_looks_active_print as _shared_status_looks_active_print,
+    status_is_safe_to_pause as _shared_status_is_safe_to_pause,
+)
 
 app = FastAPI(title="cc2-dash", version=__version__)
 app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="static")
@@ -134,6 +148,10 @@ _AI_MONITOR_LAST_LOGGED: dict[str, dict[str, Any]] = {}
 _AI_AUTO_PAUSE_PENDING: dict[str, dict[str, Any]] = {}
 _AI_AUTO_PAUSE_CANCELLED: dict[str, float] = {}
 _AI_AUTO_PAUSE_LAST_SENT: dict[str, float] = {}
+_TIMELAPSE_EXPORT_JOBS: dict[str, dict[str, Any]] = {}
+_TIMELAPSE_EXPORT_LOCK = threading.Lock()
+_TIMELAPSE_EXPORT_JOB_TTL_SEC = 6 * 60 * 60
+_TIMELAPSE_EXPORT_TIMEOUT_SEC = 30 * 60
 _LAYER_TOTAL_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 _LAYER_TOTAL_CACHE_TTL_SEC = 300.0
 _LAYER_TOTAL_MISS_TTL_SEC = 90.0
@@ -146,35 +164,6 @@ SPEED_PRESETS = {
 }
 
 
-ACTIVE_MACHINE_STATUS_CODES = {2}
-ACTIVE_SUB_STATUS_CODES = {
-    1041,  # idle in print / active job context
-    1045, 1096,  # extruder preheating during a queued/active print
-    1405, 1906,  # bed preheating during a queued/active print
-    2075,  # printing
-    2401, 2402,  # resuming / resume complete
-    2501, 2502, 2503, 2504, 2505,  # pause/stop states while a job exists
-}
-IDLE_MACHINE_STATUS_CODES = {1, 16}
-IDLE_SUB_STATUS_CODES = {0, 2077}
-PRINT_PREP_MACHINE_STATUS_CODES = {0, 5, 8, 10}
-PRINT_PREP_SUB_STATUS_CODES = {1041, 1045, 1096, 1405, 1906, 2801, 2802, 2901, 2902}
-PRINT_PREP_TEXT_TERMS = (
-    "preheating",
-    "extruder heating",
-    "extruder preheating",
-    "bed heating",
-    "bed preheating",
-    "heating bed",
-    "homing",
-    "auto leveling",
-    "leveling",
-    "self checking",
-    "initializing",
-    "warming",
-    "warmup",
-    "warm up",
-)
 CONNECTION_STALE_AFTER_SEC = 35.0
 CONNECTION_OFFLINE_AFTER_SEC = 75.0
 CONNECTION_MESSAGE_STALE_AFTER_SEC = 90.0
@@ -213,114 +202,11 @@ def _has_real_file(value: Any) -> bool:
 
 
 def _print_phase_from_status(status: dict[str, Any] | None, snap: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Classify start-of-job preparation states separately from real failures.
-
-    The firmware legitimately reports active-job file/progress/temperature targets
-    while it is preheating, homing, or leveling. During those phases the bed can be
-    empty/dark and filament sensors can briefly report odd values, so Portal AI
-    should show Preparing instead of Failure Likely.
-    """
-    status = status or {}
-    n = ((snap or {}).get("normalized") or {}) if isinstance(snap, dict) else {}
-    machine_code = _coerce_int(status.get("status_code", n.get("status_code")))
-    sub_code = _coerce_int(status.get("sub_status_code", n.get("sub_status_code")))
-    state_text = " ".join(
-        str(x or "")
-        for x in (
-            status.get("state"),
-            status.get("status_text"),
-            n.get("state"),
-            n.get("sub_state"),
-        )
-    ).strip().lower()
-
-    is_preparing = bool(
-        machine_code in PRINT_PREP_MACHINE_STATUS_CODES
-        or sub_code in PRINT_PREP_SUB_STATUS_CODES
-        or any(term in state_text for term in PRINT_PREP_TEXT_TERMS)
-    )
-    if "bed preheating" in state_text or sub_code in {1405, 1906}:
-        kind = "bed_preheating"
-        label = "Bed Preheating"
-    elif ("extruder" in state_text and ("preheat" in state_text or "heating" in state_text)) or sub_code in {1045, 1096}:
-        kind = "extruder_preheating"
-        label = "Extruder Preheating"
-    elif "homing" in state_text or machine_code == 10 or sub_code in {2801, 2802}:
-        kind = "homing"
-        label = "Homing"
-    elif "level" in state_text or machine_code == 5 or sub_code in {2901, 2902}:
-        kind = "auto_leveling"
-        label = "Auto Leveling"
-    elif "self" in state_text or machine_code == 8:
-        kind = "self_checking"
-        label = "Self Checking"
-    elif "initial" in state_text or machine_code == 0:
-        kind = "initializing"
-        label = "Initializing"
-    else:
-        kind = "preparing"
-        label = str(status.get("status_text") or n.get("sub_state") or status.get("state") or n.get("state") or "Preparing")
-
-    return {
-        "is_preparing": is_preparing,
-        "kind": kind,
-        "label": label,
-        "status_code": machine_code,
-        "sub_status_code": sub_code,
-    }
+    return _shared_print_phase_from_status(status, snap)
 
 
 def _status_looks_active_print(status: dict[str, Any] | None, snap: dict[str, Any] | None = None) -> bool:
-    """Best-effort active job detector used to gate AI/vision work.
-
-    The CC2 can leave old file/progress values around after a job completes, so
-    raw file name alone is not enough. Prefer explicit machine/sub status codes,
-    then fall back to state text plus print markers.
-    """
-    status = status or {}
-    n = ((snap or {}).get("normalized") or {}) if isinstance(snap, dict) else {}
-    machine_code = n.get("status_code")
-    sub_code = n.get("sub_status_code")
-    try:
-        machine_code = int(machine_code) if machine_code is not None else None
-    except Exception:
-        machine_code = None
-    try:
-        sub_code = int(sub_code) if sub_code is not None else None
-    except Exception:
-        sub_code = None
-
-    file_name = status.get("file") if status.get("file") is not None else n.get("file")
-    has_file = _has_real_file(file_name)
-    progress = _coerce_float(status.get("progress", n.get("progress", 0.0)), 0.0)
-    elapsed = _coerce_float(((n.get("time") or {}).get("elapsed_sec")), 0.0)
-    hot_target = _coerce_float(status.get("hotend_target", ((n.get("temps") or {}).get("nozzle") or {}).get("target")), 0.0)
-    bed_target = _coerce_float(status.get("bed_target", ((n.get("temps") or {}).get("bed") or {}).get("target")), 0.0)
-    state_text = " ".join(
-        str(x or "")
-        for x in (
-            status.get("state"),
-            status.get("status_text"),
-            n.get("state"),
-            n.get("sub_state"),
-        )
-    ).lower()
-
-    if machine_code in ACTIVE_MACHINE_STATUS_CODES:
-        return True
-    if sub_code in ACTIVE_SUB_STATUS_CODES and (has_file or machine_code not in IDLE_MACHINE_STATUS_CODES):
-        return True
-    if machine_code in IDLE_MACHINE_STATUS_CODES and sub_code in IDLE_SUB_STATUS_CODES:
-        return False
-    if "completed" in state_text or state_text.strip() == "idle":
-        return False
-    if any(word in state_text for word in ("printing", "paused", "pausing", "resuming", "stopping", "idle in print")):
-        return True
-    if has_file and 0.0 < progress < 99.9:
-        return True
-    if has_file and elapsed > 0 and progress < 99.9 and (hot_target > 0 or bed_target > 0):
-        return True
-    return False
+    return _shared_status_looks_active_print(status, snap)
 
 
 def _connection_health_from_snapshot(snap: dict[str, Any] | None) -> dict[str, Any]:
@@ -1476,6 +1362,8 @@ class StagedUploadSendRequest(BaseModel):
 
 class TimelapseExportRequest(BaseModel):
     url: str
+    task_id: str | int | None = None
+    task_name: str | None = None
 
 
 class HistoryDeleteRequest(BaseModel):
@@ -1489,6 +1377,12 @@ class SaveConfigRequest(BaseModel):
 class AIFeedbackRequest(BaseModel):
     label: str
     note: str = ""
+    context: dict[str, Any] = Field(default_factory=dict)
+    annotation: dict[str, Any] = Field(default_factory=dict)
+
+
+class AIFeedbackFrameRequest(BaseModel):
+    label: str = "missed_failure"
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1507,6 +1401,10 @@ class AIEnabledRequest(BaseModel):
 class AutoPauseCancelRequest(BaseModel):
     token: Optional[str] = None
     reason: str = ""
+
+
+class AutoPauseNowRequest(BaseModel):
+    token: Optional[str] = None
 
 
 class LearningResetRequest(BaseModel):
@@ -1612,20 +1510,181 @@ def _auto_pause_failure_type(result: dict[str, Any]) -> str:
     return "High-risk failure warning"
 
 
+def _auto_pause_vision_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    for key in ("vision", "vision_ai"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _auto_pause_failure_family(result: dict[str, Any]) -> str:
+    """Stable-ish bucket used to verify that a fresh recheck sees the same failure type."""
+    vision = _auto_pause_vision_result(result)
+    text = " ".join(str(x or "") for x in (result.get("reasons") or [])).lower()
+    if isinstance(vision, dict):
+        visual_state = str(vision.get("visual_state") or "").lower()
+        failure_types = [str(x or "").strip().lower() for x in (vision.get("failure_types") or []) if str(x or "").strip()]
+        if visual_state == "camera_bad":
+            return "camera_quality"
+        if visual_state in {"possible_failure", "failure_likely"} or any(w in text for w in ("spaghetti", "stringing", "detached", "blob", "ollama vision")):
+            first = failure_types[0] if failure_types else "unknown"
+            return f"vision:{first}"
+    if any(w in text for w in ("filament", "runout", "no filament")):
+        return "filament"
+    if any(w in text for w in ("hotend", "bed", "temperature", "target", "below")):
+        return "temperature"
+    if any(w in text for w in ("progress", "unchanged", "stuck")):
+        return "progress"
+    if any(w in text for w in ("stale", "mqtt", "telemetry", "reachable", "registered")):
+        return "telemetry"
+    if "camera" in text:
+        return "camera_quality"
+    return "general"
+
+
+def _auto_pause_progress_bucket(status: dict[str, Any]) -> int | None:
+    try:
+        return int((_coerce_float(status.get("progress"), 0.0) // 5) * 5)
+    except Exception:
+        return None
+
+
+def _auto_pause_permission_gate(
+    printer_id: str,
+    status: dict[str, Any],
+    result: dict[str, Any],
+    cfg: dict[str, Any],
+    pending: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Single source of truth for whether Failure Detection may send PAUSE_PRINT.
+
+    This gate is intentionally stricter than the dashboard warning level. Warnings can
+    be noisy; pause permission should be boring, explainable, and reversible. Cancel
+    permission stays locked out here on purpose.
+    """
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    threshold = max(50, min(100, int(_coerce_float(ai_cfg.get("auto_pause_threshold"), 90))))
+    require_high = bool(ai_cfg.get("auto_pause_require_high_level", True))
+    enabled = bool(ai_cfg.get("enabled", True)) and bool(ai_cfg.get("auto_pause_enabled", False))
+    out = result or {}
+    risk = int(_coerce_float(out.get("risk"), 0.0))
+    level = str(out.get("level") or "low").lower()
+    state = str(out.get("state") or "").lower()
+    family = _auto_pause_failure_family(out)
+    vision = _auto_pause_vision_result(out)
+    safe_to_pause, safety_reason = _status_is_safe_to_pause(status)
+
+    vetoes: list[str] = []
+    evidence: list[str] = []
+    if not enabled:
+        vetoes.append("auto-pause is disabled")
+    if out.get("enabled", True) is False:
+        vetoes.append("Failure Detection is disabled for this result")
+    if not safe_to_pause:
+        vetoes.append(safety_reason)
+    else:
+        evidence.append("printer state is pause-eligible")
+    if risk < threshold:
+        vetoes.append(f"risk {risk}% is below the auto-pause threshold {threshold}%")
+    else:
+        evidence.append(f"risk {risk}% meets threshold {threshold}%")
+    if require_high and not (level == "high" or state == "failure_likely"):
+        vetoes.append("result is not high/failure-likely")
+    elif require_high:
+        evidence.append("result is high/failure-likely")
+
+    connection_state = str(status.get("connection_state") or "online").lower()
+    if status.get("offline") or status.get("stale") or connection_state not in {"", "online"}:
+        vetoes.append(f"printer telemetry is {connection_state or 'not online'}")
+
+    if family == "telemetry":
+        vetoes.append("telemetry warning alone is not pause-grade")
+    if family == "camera_quality":
+        vetoes.append("camera/view quality alone only allows inspect, not auto-pause")
+
+    if isinstance(vision, dict) and family.startswith("vision:"):
+        visual_state = str(vision.get("visual_state") or "").lower()
+        recommended_action = str(vision.get("recommended_action") or "").lower()
+        if vision.get("feedback_suppressed"):
+            vetoes.append("similar vision result was suppressed by feedback learning")
+        if vision.get("benign_uncertainty") or vision.get("normalized_from") == "uncertain":
+            vetoes.append("vision result was normalized to benign uncertainty")
+        if visual_state not in {"possible_failure", "failure_likely"}:
+            vetoes.append(f"vision state {visual_state or 'unknown'} is not a pause-grade failure")
+        if not vision.get("bad_confirmed"):
+            bad = int(_coerce_float(vision.get("consecutive_bad"), 0.0))
+            required = int(_coerce_float(vision.get("required_bad_checks"), 2.0))
+            vetoes.append(f"vision has not confirmed repeated bad frames ({bad}/{required})")
+        if recommended_action in {"keep_watching", "inspect"} and visual_state != "failure_likely":
+            vetoes.append(f"vision recommended {recommended_action}, not pause_print")
+        if not vetoes:
+            bad = int(_coerce_float(vision.get("consecutive_bad"), 0.0))
+            required = int(_coerce_float(vision.get("required_bad_checks"), 2.0))
+            evidence.append(f"vision confirmed {visual_state.replace('_', ' ')} over {bad}/{required} bad checks")
+
+    if pending:
+        pending_family = str(pending.get("failure_family") or "")
+        if pending_family and pending_family != family:
+            vetoes.append(f"fresh recheck reported a different failure family ({family}, was {pending_family})")
+        pending_file = str(pending.get("file") or "").strip()
+        current_file = str(status.get("file") or "").strip()
+        if pending_file and current_file and pending_file != current_file:
+            vetoes.append("fresh recheck is for a different print file")
+        pending_bucket = pending.get("progress_bucket")
+        current_bucket = _auto_pause_progress_bucket(status)
+        if isinstance(pending_bucket, int) and isinstance(current_bucket, int) and abs(current_bucket - pending_bucket) > 10:
+            vetoes.append("fresh recheck is too far from the original progress window")
+
+    pause_allowed = not vetoes
+    reason = "pause permitted" if pause_allowed else vetoes[0]
+    return {
+        "pause_allowed": pause_allowed,
+        "cancel_allowed": False,
+        "warn_allowed": True,
+        "allowed_actions": {"warn": True, "pause": pause_allowed, "cancel": False},
+        "reason": reason,
+        "vetoes": vetoes[:8],
+        "evidence": evidence[:8],
+        "failure_family": family,
+        "requires_fresh_recheck": True,
+        "threshold": threshold,
+        "require_high_level": require_high,
+    }
+
+
+def _auto_pause_fresh_recheck(printer_id: str, cfg: dict[str, Any], pending: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a fresh status + AI result immediately before a pause command is sent."""
+    printer = (cfg.get("printers") or {}).get(printer_id)
+    if not printer:
+        return {"ok": False, "error": "Printer not configured"}
+    try:
+        if not runtime.get_client(printer_id):
+            runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
+        snap = runtime.snapshot(printer_id)
+        status = _status_from_snapshot(
+            printer_id,
+            printer,
+            snap,
+            ai_source="auto_pause_recheck",
+            force_ai_evaluate=False,
+            attach_ai=False,
+        )
+        # Force a fresh vision frame before acting. If vision is disabled or the
+        # printer is no longer active, _maybe_attach_vision will safely stand down.
+        status = _maybe_attach_vision(printer_id, printer, status, cfg, ai_source="background", force=True)
+        result = portal_ai.evaluate(printer_id, status, snap, cfg, source="auto_pause_recheck")
+        status["portal_ai"] = result
+        gate = _auto_pause_permission_gate(printer_id, status, result, cfg, pending=pending)
+        return {"ok": True, "status": status, "result": result, "gate": gate}
+    except Exception as exc:
+        return {"ok": False, "error": str(getattr(exc, "detail", None) or exc)}
+
+
 def _status_is_safe_to_pause(status: dict[str, Any]) -> tuple[bool, str]:
-    if not status.get("active_print"):
-        return False, "printer is not reporting an active print"
-    phase = status.get("print_phase") if isinstance(status.get("print_phase"), dict) else {}
-    if phase.get("is_preparing"):
-        return False, "printer is still preparing the job"
-    state_text = f"{status.get('state') or ''} {status.get('status_text') or ''}".lower()
-    if any(word in state_text for word in ("idle", "standby", "complete", "finished", "stopped", "stopping")) and "print" not in state_text:
-        return False, "printer is not in a running print state"
-    if any(word in state_text for word in ("paused", "pausing")):
-        return False, "printer is already paused"
-    if not status.get("reachable") or not status.get("connected"):
-        return False, "printer is not connected enough to send a pause command"
-    return True, "eligible"
+    return _shared_status_is_safe_to_pause(status)
 
 
 def _auto_pause_public_pending(pending: dict[str, Any] | None, now: float | None = None) -> dict[str, Any] | None:
@@ -1642,8 +1701,10 @@ def _auto_pause_public_pending(pending: dict[str, Any] | None, now: float | None
         "risk": pending.get("risk"),
         "level": pending.get("level"),
         "failure_type": pending.get("failure_type"),
+        "failure_family": pending.get("failure_family"),
         "message": pending.get("message"),
         "reason": pending.get("reason"),
+        "permission": pending.get("permission"),
     }
 
 
@@ -1651,9 +1712,9 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
     """Attach auto-pause metadata and, from the background watchdog only, execute due pauses.
 
     The dashboard owns the human-facing countdown modal, but the backend owns the
-    pending timer so the action is not just a browser-side toy. Cancelled tokens
-    are suppressed for a configurable cooldown so the same failure does not
-    immediately re-arm like a cursed jack-in-the-box.
+    pending timer so the action is not just a browser-side toy. Every pause command
+    now passes through one permission gate and a fresh recheck immediately before
+    PAUSE_PRINT is sent. Cancel remains manual-only by design.
     """
     ai_cfg = cfg.get("portal_ai", {}) or {}
     now = time.time()
@@ -1665,19 +1726,13 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
     enabled = bool(ai_cfg.get("enabled", True)) and bool(ai_cfg.get("auto_pause_enabled", False))
     risk = int(_coerce_float(out.get("risk"), 0.0))
     level = str(out.get("level") or "low").lower()
-    state = str(out.get("state") or "").lower()
-    safe_to_pause, safety_reason = _status_is_safe_to_pause(status)
     token = _auto_pause_signature(printer_id, status, out)
     failure_type = _auto_pause_failure_type(out)
     reason = str((out.get("reasons") or ["Failure Detection reported a high-risk condition."])[0] or "Failure Detection reported a high-risk condition.")
-    require_high = bool(ai_cfg.get("auto_pause_require_high_level", True))
-    eligible = bool(
-        enabled
-        and safe_to_pause
-        and risk >= threshold
-        and (not require_high or level == "high" or state == "failure_likely")
-        and out.get("enabled", True) is not False
-    )
+    gate = _auto_pause_permission_gate(printer_id, status, out, cfg)
+    safety_reason = str(gate.get("reason") or "standing by")
+    failure_family = str(gate.get("failure_family") or _auto_pause_failure_family(out))
+    eligible = bool(gate.get("pause_allowed"))
 
     pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
     if pending and (not eligible or pending.get("token") != token):
@@ -1697,22 +1752,40 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
 
     sent = None
     error = None
+    recheck_public = None
     if pending and eligible and schedule and now >= float(pending.get("deadline_epoch") or 0):
-        try:
-            _send_command(printer_id, PAUSE_PRINT, {}, True, 60.0, True)
-            sent = {"ok": True, "sent_epoch": now, "message": "Pause command sent by Failure Detection."}
-            _AI_AUTO_PAUSE_LAST_SENT[printer_id] = now
+        recheck = _auto_pause_fresh_recheck(printer_id, cfg, pending=pending)
+        recheck_gate = recheck.get("gate") if isinstance(recheck.get("gate"), dict) else None
+        recheck_public = {
+            "ok": bool(recheck.get("ok")),
+            "reason": (recheck_gate or {}).get("reason") or recheck.get("error"),
+            "allowed": bool((recheck_gate or {}).get("pause_allowed")),
+            "failure_family": (recheck_gate or {}).get("failure_family"),
+            "vetoes": (recheck_gate or {}).get("vetoes", []),
+        }
+        if not recheck.get("ok") or not (recheck_gate or {}).get("pause_allowed"):
+            error = str(recheck_public.get("reason") or "fresh recheck did not permit auto-pause")
+            pending["last_error"] = error
             _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
             pending = None
-            log("warning", f"Failure Detection auto-pause sent: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
-        except Exception as exc:
-            error = str(getattr(exc, "detail", None) or exc)
-            pending["last_error"] = error
-            # Avoid hammering the printer every watchdog tick after one failed attempt.
-            _AI_AUTO_PAUSE_CANCELLED[token] = now + min(300.0, cooldown_minutes * 60.0)
-            log("error", f"Failure Detection auto-pause failed: {error}", "portal_ai", printer=printer_id)
+            _AI_AUTO_PAUSE_CANCELLED[token] = now + min(180.0, cooldown_minutes * 60.0)
+            log("warning", f"Failure Detection auto-pause blocked by fresh recheck: {error}", "portal_ai", printer=printer_id)
+        else:
+            try:
+                _send_command(printer_id, PAUSE_PRINT, {}, True, 60.0, True)
+                sent = {"ok": True, "sent_epoch": now, "message": "Pause command sent by Failure Detection after a fresh safety recheck."}
+                _AI_AUTO_PAUSE_LAST_SENT[printer_id] = now
+                _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
+                pending = None
+                log("warning", f"Failure Detection auto-pause sent: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
+            except Exception as exc:
+                error = str(getattr(exc, "detail", None) or exc)
+                pending["last_error"] = error
+                # Avoid hammering the printer every watchdog tick after one failed attempt.
+                _AI_AUTO_PAUSE_CANCELLED[token] = now + min(300.0, cooldown_minutes * 60.0)
+                log("error", f"Failure Detection auto-pause failed: {error}", "portal_ai", printer=printer_id)
 
-    if not pending and eligible and schedule:
+    if not pending and eligible and schedule and sent is None and error is None:
         pending = {
             "token": token,
             "created_epoch": now,
@@ -1721,8 +1794,12 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
             "risk": risk,
             "level": level,
             "failure_type": failure_type,
+            "failure_family": failure_family,
+            "file": str(status.get("file") or "").strip(),
+            "progress_bucket": _auto_pause_progress_bucket(status),
             "message": f"Failure Detection may pause this print in {countdown} seconds unless you cancel.",
             "reason": reason,
+            "permission": gate,
         }
         _AI_AUTO_PAUSE_PENDING[printer_id] = pending
         log("warning", f"Failure Detection auto-pause countdown armed: {failure_type} ({risk}%). {reason}", "portal_ai", printer=printer_id)
@@ -1736,14 +1813,19 @@ def _process_auto_pause(printer_id: str, status: dict[str, Any], result: dict[st
         "threshold": threshold,
         "countdown_seconds": countdown,
         "cooldown_minutes": cooldown_minutes,
-        "require_high_level": require_high,
+        "require_high_level": bool(ai_cfg.get("auto_pause_require_high_level", True)),
         "eligible": eligible,
         "safety_reason": safety_reason,
         "failure_type": failure_type,
+        "failure_family": failure_family,
         "reason": reason,
+        "permission": gate,
+        "allowed_actions": gate.get("allowed_actions"),
+        "requires_fresh_recheck": True,
         "state": action_state,
         "pending": _auto_pause_public_pending(pending, now),
         "sent": sent,
+        "fresh_recheck": recheck_public,
         "error": error or (pending or {}).get("last_error"),
     }
     out["auto_pause"] = auto_pause
@@ -2816,14 +2898,28 @@ async def api_ai_auto_pause_cancel(printer_id: str, req: AutoPauseCancelRequest 
 
 
 @app.post("/api/printers/{printer_id}/ai/auto-pause/pause-now")
-async def api_ai_auto_pause_now(printer_id: str):
-    if printer_id not in (load_config().get("printers") or {}):
+async def api_ai_auto_pause_now(printer_id: str, req: AutoPauseNowRequest | None = None):
+    cfg = load_config()
+    if printer_id not in (cfg.get("printers") or {}):
         raise HTTPException(404, "Printer not configured")
+    pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
+    if not pending:
+        raise HTTPException(409, "No active Failure Detection auto-pause warning is pending.")
+    requested_token = str((req.token if req else None) or "").strip()
+    if requested_token and requested_token != str(pending.get("token") or ""):
+        raise HTTPException(409, "The auto-pause warning token no longer matches the active warning.")
+
+    recheck = await asyncio.to_thread(_auto_pause_fresh_recheck, printer_id, cfg, pending)
+    gate = recheck.get("gate") if isinstance(recheck.get("gate"), dict) else {}
+    if not recheck.get("ok") or not gate.get("pause_allowed"):
+        reason = str(gate.get("reason") or recheck.get("error") or "Fresh recheck did not permit pausing.")
+        raise HTTPException(409, f"Pause blocked: {reason}")
+
     result = await asyncio.to_thread(_send_command, printer_id, PAUSE_PRINT, {}, True, 60.0, True)
     _AI_AUTO_PAUSE_PENDING.pop(printer_id, None)
     _AI_AUTO_PAUSE_LAST_SENT[printer_id] = time.time()
-    log("warning", "Failure Detection pause-now command sent", "portal_ai", printer=printer_id)
-    return {"ok": True, "message": "Pause command sent", "result": result.get("result")}
+    log("warning", f"Failure Detection pause-now command sent after recheck: {gate.get('failure_family') or 'unknown'}", "portal_ai", printer=printer_id)
+    return {"ok": True, "message": "Pause command sent after a fresh safety recheck.", "result": result.get("result"), "permission": gate}
 
 
 @app.get("/api/printers/{printer_id}/ai/status")
@@ -2889,6 +2985,158 @@ def _capture_feedback_frame(printer_id: str, printer: dict[str, Any], cfg: dict[
             return fallback
         return {"captured": False, "fresh": False, "error": str(exc)}
 
+
+
+
+def _feedback_frame_url(relative_path: str | None) -> str | None:
+    if not relative_path:
+        return None
+    return f"/api/ai/feedback/frame?path={quote(str(relative_path), safe='')}"
+
+
+def _feedback_frame_info_from_path(frame_path: str | None, source: str = "annotation_frame") -> dict[str, Any] | None:
+    path = _feedback_frame_path(frame_path)
+    if not path:
+        return None
+    try:
+        rel = str(path.relative_to(DATA_DIR)) if DATA_DIR in path.parents else str(path)
+    except Exception:
+        rel = str(path)
+    try:
+        size = path.stat().st_size
+    except Exception:
+        size = 0
+    return {
+        "captured": True,
+        "fresh": False,
+        "source": source,
+        "path": str(path),
+        "relative_path": rel,
+        "url": _feedback_frame_url(rel),
+        "bytes": size,
+    }
+
+
+def _clamp_unit_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+        if out != out:  # NaN
+            return default
+    except Exception:
+        return default
+    return max(0.0, min(1.0, out))
+
+
+def _normalize_roi_annotation(annotation: dict[str, Any] | None, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if not isinstance(annotation, dict):
+        return None
+    box = annotation.get("box") if isinstance(annotation.get("box"), dict) else annotation
+    if not isinstance(box, dict):
+        return None
+    x = _clamp_unit_float(box.get("x"), 0.0)
+    y = _clamp_unit_float(box.get("y"), 0.0)
+    w = _clamp_unit_float(box.get("w"), 0.0)
+    h = _clamp_unit_float(box.get("h"), 0.0)
+    if x + w > 1.0:
+        w = max(0.0, 1.0 - x)
+    if y + h > 1.0:
+        h = max(0.0, 1.0 - y)
+    if w < 0.015 or h < 0.015:
+        return None
+    failure_type = str(annotation.get("failure_type") or annotation.get("reason_key") or (context or {}).get("failure_type") or "unknown").strip().lower()
+    failure_type = re.sub(r"[^a-z0-9_\-]+", "_", failure_type)[:64] or "unknown"
+    reason = str(annotation.get("reason") or annotation.get("reason_text") or (context or {}).get("reason") or "").strip()[:240]
+    source = str(annotation.get("source") or "dashboard_roi_modal").strip()[:80] or "dashboard_roi_modal"
+    return {
+        "schema": "cc2-ai-roi-annotation-v1",
+        "type": "box",
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "w": round(w, 6),
+        "h": round(h, 6),
+        "failure_type": failure_type,
+        "reason": reason,
+        "source": source,
+        "created_at_epoch": time.time(),
+        "display": annotation.get("display") if isinstance(annotation.get("display"), dict) else {},
+    }
+
+
+def _safe_crop_name(value: Any, fallback: str = "roi") -> str:
+    text = str(value or fallback).strip().lower().replace(" ", "_")
+    text = re.sub(r"[^a-z0-9_\-.]+", "_", text).strip("._-")
+    return text[:72] or fallback
+
+
+def _attach_roi_crops(frame_info: dict[str, Any] | None, annotation: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Save ROI crops next to the feedback frame and return annotation metadata.
+
+    Uses normalized coordinates so the same box survives phone browsers, rotated
+    displays, and camera resolution changes.
+    """
+    ann = _normalize_roi_annotation(annotation)
+    if not ann:
+        return None
+    frame_path = _feedback_frame_path((frame_info or {}).get("relative_path") or (frame_info or {}).get("path"))
+    if not frame_path:
+        ann["crop_error"] = "feedback_frame_not_found"
+        return ann
+    if Image is None:
+        ann["crop_error"] = "pillow_unavailable"
+        return ann
+    try:
+        with Image.open(frame_path) as img:
+            img = img.convert("RGB")
+            width, height = img.size
+            x1 = int(round(ann["x"] * width))
+            y1 = int(round(ann["y"] * height))
+            x2 = int(round((ann["x"] + ann["w"]) * width))
+            y2 = int(round((ann["y"] + ann["h"]) * height))
+            x1 = max(0, min(width - 1, x1))
+            y1 = max(0, min(height - 1, y1))
+            x2 = max(x1 + 1, min(width, x2))
+            y2 = max(y1 + 1, min(height, y2))
+            pad_x = max(8, int(round((x2 - x1) * 0.25)))
+            pad_y = max(8, int(round((y2 - y1) * 0.25)))
+            px1 = max(0, x1 - pad_x)
+            py1 = max(0, y1 - pad_y)
+            px2 = min(width, x2 + pad_x)
+            py2 = min(height, y2 + pad_y)
+            root = frame_path.parent
+            crop_stem = f"{frame_path.stem}_{_safe_crop_name(ann.get('failure_type'))}_{uuid.uuid4().hex[:6]}"
+            crop_path = root / f"{crop_stem}_roi.jpg"
+            padded_path = root / f"{crop_stem}_roi_context.jpg"
+            img.crop((x1, y1, x2, y2)).save(crop_path, format="JPEG", quality=90)
+            img.crop((px1, py1, px2, py2)).save(padded_path, format="JPEG", quality=90)
+            ann["image_size"] = {"width": width, "height": height}
+            ann["pixel_box"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+            ann["pixel_box_padded"] = {"x1": px1, "y1": py1, "x2": px2, "y2": py2}
+            crop_rel = str(crop_path.relative_to(DATA_DIR)) if DATA_DIR in crop_path.parents else str(crop_path)
+            padded_rel = str(padded_path.relative_to(DATA_DIR)) if DATA_DIR in padded_path.parents else str(padded_path)
+            ann["crops"] = {
+                "roi_path": str(crop_path),
+                "roi_relative_path": crop_rel,
+                "roi_url": _feedback_frame_url(crop_rel),
+                "roi_bytes": crop_path.stat().st_size,
+                "context_path": str(padded_path),
+                "context_relative_path": padded_rel,
+                "context_url": _feedback_frame_url(padded_rel),
+                "context_bytes": padded_path.stat().st_size,
+            }
+    except Exception as exc:
+        ann["crop_error"] = str(exc)
+    return ann
+
+
+def _feedback_annotation_source_path(annotation: dict[str, Any] | None, context: dict[str, Any] | None = None) -> str | None:
+    ann = annotation if isinstance(annotation, dict) else {}
+    ctx = context if isinstance(context, dict) else {}
+    return (
+        ann.get("source_frame_path")
+        or ann.get("frame_path")
+        or ctx.get("feedback_frame_path")
+        or ctx.get("source_frame_path")
+    )
 
 def _feedback_kind(label: str) -> str:
     label = str(label or "").strip().lower()
@@ -2977,6 +3225,32 @@ async def api_ai_feedback_suppressions(printer_id: str | None = None):
     return {"ok": True, "count": len(items), "suppressions": items}
 
 
+@app.get("/api/ai/feedback/frame")
+async def api_ai_feedback_frame(path: str):
+    frame_path = _feedback_frame_path(path)
+    if not frame_path:
+        raise HTTPException(status_code=404, detail="Feedback frame not found")
+    media = "image/png" if frame_path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(frame_path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
+
+
+@app.post("/api/printers/{printer_id}/ai/feedback/frame")
+async def api_printer_ai_feedback_frame(printer_id: str, body: AIFeedbackFrameRequest | None = None):
+    cfg = load_config()
+    printer = cfg.get("printers", {}).get(printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not configured")
+    if not runtime.get_client(printer_id):
+        runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
+    label = str((body.label if body else "missed_failure") or "missed_failure").strip() or "missed_failure"
+    frame_info = _capture_feedback_frame(printer_id, printer, cfg, label)
+    if not frame_info or not frame_info.get("captured"):
+        detail = (frame_info or {}).get("error") or "Could not capture camera frame"
+        raise HTTPException(status_code=503, detail=detail)
+    frame_info.pop("heuristics", None)
+    frame_info["url"] = _feedback_frame_url(frame_info.get("relative_path"))
+    return {"ok": True, "printer_id": printer_id, "frame": frame_info}
+
 def _json_maybe(value: Any, fallback: Any = None) -> Any:
     if value is None:
         return fallback
@@ -3054,6 +3328,9 @@ def _public_learning_sample(sample: dict[str, Any]) -> dict[str, Any]:
         "frame_path": frame_path,
         "has_frame": has_frame,
         "frame_url": f"/api/ai/learning/samples/{sample_id}/frame" if sample_id and has_frame else None,
+        "has_annotation": isinstance(snapshot.get("annotation"), dict) and bool(snapshot.get("annotation")),
+        "annotation": snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else None,
+        "roi_frame_url": f"/api/ai/learning/samples/{sample_id}/roi-frame?variant=context" if sample_id and isinstance(snapshot.get("annotation"), dict) and isinstance((snapshot.get("annotation") or {}).get("crops"), dict) else None,
         "has_raw_json": bool(sample.get("raw_json")),
     }
 
@@ -3099,6 +3376,20 @@ def _training_export_zip(rows: list[dict[str, Any]], include_frames: bool = True
                 seen.add(resolved)
                 suffix = path.suffix.lower() or ".jpg"
                 zf.write(path, f"frames/{sample_id}_{_export_safe_name(path.stem)}{suffix}")
+                raw_obj = _json_maybe(row.get("raw_json"), {})
+                snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+                ann = snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else {}
+                crops = ann.get("crops") if isinstance(ann.get("crops"), dict) else {}
+                for crop_key in ("roi_relative_path", "context_relative_path"):
+                    crop_path = _feedback_frame_path(crops.get(crop_key))
+                    if not crop_path:
+                        continue
+                    resolved_crop = str(crop_path.resolve())
+                    if resolved_crop in seen:
+                        continue
+                    seen.add(resolved_crop)
+                    crop_suffix = crop_path.suffix.lower() or ".jpg"
+                    zf.write(crop_path, f"roi_frames/{sample_id}_{crop_key}_{_export_safe_name(crop_path.stem)}{crop_suffix}")
     return buf.getvalue()
 
 
@@ -3207,6 +3498,21 @@ async def api_ai_learning_sample_frame(sample_id: int):
     return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
 
 
+@app.get("/api/ai/learning/samples/{sample_id}/roi-frame")
+async def api_ai_learning_sample_roi_frame(sample_id: int, variant: str = Query("context")):
+    sample = await asyncio.to_thread(ai_learning_db.get_sample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Feedback sample not found")
+    raw_obj = _json_maybe(sample.get("raw_json"), {})
+    snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+    ann = snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else {}
+    crops = ann.get("crops") if isinstance(ann.get("crops"), dict) else {}
+    key = "roi_relative_path" if str(variant or "").lower() == "roi" else "context_relative_path"
+    path = _feedback_frame_path(crops.get(key) or crops.get("context_relative_path") or crops.get("roi_relative_path"))
+    if not path:
+        raise HTTPException(status_code=404, detail="ROI crop not found")
+    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(path), media_type=media, headers={"Cache-Control": "private, max-age=60"})
 
 
 @app.post("/api/ai/learning/samples/{sample_id}/review")
@@ -3320,8 +3626,16 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
     status = _status_from_snapshot(printer_id, printer, snap, ai_source="request", force_ai_evaluate=False)
     portal_cached = portal_ai.cached_result(printer_id) or status.get("portal_ai")
     vision_cached = vision_monitor.cached_result(printer_id) or status.get("vision_ai") or (portal_cached or {}).get("vision")
-    frame_info = _capture_feedback_frame(printer_id, printer, cfg, body.label)
+    source_frame_path = _feedback_annotation_source_path(body.annotation, body.context)
+    frame_info = _feedback_frame_info_from_path(source_frame_path, source="roi_annotation_existing_frame") if source_frame_path else None
+    if body.annotation and source_frame_path and not frame_info:
+        raise HTTPException(status_code=400, detail="ROI annotation source frame was not found")
+    if not frame_info:
+        frame_info = _capture_feedback_frame(printer_id, printer, cfg, body.label)
     fresh_heuristics = (frame_info or {}).pop("heuristics", None) if isinstance(frame_info, dict) else None
+    if isinstance(frame_info, dict) and frame_info.get("relative_path") and not frame_info.get("url"):
+        frame_info["url"] = _feedback_frame_url(frame_info.get("relative_path"))
+    annotation_info = _attach_roi_crops(frame_info, body.annotation) if body.annotation else None
     interpretation = interpret_feedback(body.label, portal_cached, vision_cached)
     suppression = record_feedback_suppression(
         printer_id,
@@ -3347,6 +3661,7 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
         "interpretation": interpretation,
         "suppression": suppression,
         "frame": frame_info,
+        "annotation": annotation_info,
         "client_context": body.context or {},
         "raw_snapshot_summary": {
             "connected": bool((snap or {}).get("connected")),
@@ -3358,7 +3673,7 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
             "used_for_live_decisions": bool(suppression),
             "threshold_auto_tuning": False,
             "suppression_active": bool(suppression),
-            "note": "Saved as labeled review data. False-positive feedback may suppress similar low/severity warnings for this active print only. Heuristic thresholds are not overwritten.",
+            "note": "Saved as labeled review data. False-positive feedback may suppress similar low/severity warnings for this active print only. ROI annotations are stored as review/crop evidence and do not change pause behavior yet. Heuristic thresholds are not overwritten.",
         },
     }
     row = portal_ai.feedback(printer_id, body.label, body.note, training_snapshot)
@@ -3375,8 +3690,9 @@ async def api_ai_feedback(printer_id: str, body: AIFeedbackRequest):
     outcome = interpretation.get("outcome")
     sup_msg = "; suppression=active" if suppression else ""
     learn_msg = "; learning=sqlite" if learning_result.get("inserted") else ""
-    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
-    return {"ok": True, "feedback": row, "frame": frame_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
+    roi_msg = "; roi=yes" if annotation_info and annotation_info.get("crops") else ("; roi=metadata" if annotation_info else "")
+    log("info", f"Portal AI feedback saved: {body.label} ({outcome}); frame={'yes' if frame_info and frame_info.get('captured') else 'no'}{roi_msg}{sup_msg}{learn_msg}", "portal_ai", printer=printer_id, label=body.label, outcome=outcome, frame=(frame_info or {}).get("relative_path"))
+    return {"ok": True, "feedback": row, "frame": frame_info, "annotation": annotation_info, "training": training_snapshot.get("training_use"), "interpretation": interpretation, "suppression": suppression, "learning": learning_result}
 
 
 @app.post("/api/printers/{printer_id}/ai/feedback/reason")
@@ -4715,10 +5031,38 @@ async def api_file_thumbnail_image(printer_id: str, filename: str, storage_media
     raise HTTPException(404, "No G-code thumbnail returned for this file")
 
 
+def _delete_file_command(printer_id: str, file_path: str, storage_media: str) -> dict[str, Any]:
+    """Delete a printer/USB file using the stock portal payload shape.
+
+    The stock Elegoo UI sends method 1047 with ``file_path`` as an array,
+    even for a single selected file.  Firmware may reject the older string
+    shape with 1003, most visibly for local Printer Files.  Try the stock
+    array payload first and keep the old string payload as a cautious fallback
+    for any firmware build that still expects it.
+    """
+    media = normalize_storage_media(storage_media)
+    primary_params = delete_file_params(file_path, media)
+    try:
+        return _send_command(printer_id, DELETE_FILE, primary_params, True, 15.0)
+    except HTTPException as exc:
+        detail = str(exc.detail or exc)
+        if "1003" not in detail and "Invalid parameter" not in detail:
+            raise
+        legacy_params = delete_file_params_legacy(file_path, media)
+        log(
+            "warning",
+            f"Delete file array payload was rejected; retrying legacy string payload for {file_path}",
+            "files",
+            printer=printer_id,
+            raw={"primary_params": primary_params, "legacy_params": legacy_params, "error": detail},
+        )
+        return _send_command(printer_id, DELETE_FILE, legacy_params, True, 15.0)
+
+
 @app.post("/api/printers/{printer_id}/files/delete")
 async def api_file_delete(printer_id: str, body: DeleteFileRequest):
     _raise_if_feature_locked("file_manager_enabled")
-    return await asyncio.to_thread(_send_command, printer_id, DELETE_FILE, delete_file_params(body.file_path, body.storage_media), True, 15.0)
+    return await asyncio.to_thread(_delete_file_command, printer_id, body.file_path, body.storage_media)
 
 
 @app.post("/api/printers/{printer_id}/files/start")
@@ -5021,6 +5365,294 @@ def _timelapse_proxy_download_url(printer_id: str, file_name: str, media: str = 
     return f"/api/printers/{quote(str(printer_id), safe='')}/timelapse/download?file_name={quote(str(file_name or ''), safe='')}&media={quote(str(media or 'local'), safe='')}"
 
 
+def _cleanup_timelapse_export_jobs(now: float | None = None) -> None:
+    now = float(now or time.time())
+    with _TIMELAPSE_EXPORT_LOCK:
+        for job_id, job in list(_TIMELAPSE_EXPORT_JOBS.items()):
+            updated = float(job.get("updated_at") or job.get("started_at") or now)
+            status = str(job.get("status") or "")
+            if now - updated > _TIMELAPSE_EXPORT_JOB_TTL_SEC and status != "generating":
+                _TIMELAPSE_EXPORT_JOBS.pop(job_id, None)
+            elif status == "generating" and now - float(job.get("started_at") or now) > _TIMELAPSE_EXPORT_TIMEOUT_SEC + 300:
+                job.update({
+                    "status": "error",
+                    "message": "Time-lapse export timed out. Refresh Video List; the printer may still finish it firmware-side.",
+                    "error": "export job exceeded backend timeout",
+                    "updated_at": now,
+                    "finished_at": now,
+                })
+
+
+def _public_timelapse_export_job(job: dict[str, Any] | None) -> dict[str, Any]:
+    if not job:
+        return {}
+    allowed = {
+        "id", "printer_id", "task_id", "task_name", "status", "message", "error",
+        "started_at", "updated_at", "finished_at", "download_file_name", "download_url",
+        "direct_download_url", "token", "elapsed_sec", "confirmed_by",
+        "last_video_status", "source_record",
+    }
+    return {key: job.get(key) for key in allowed if key in job}
+
+
+def _update_timelapse_export_job(job_id: str, **updates: Any) -> dict[str, Any] | None:
+    with _TIMELAPSE_EXPORT_LOCK:
+        job = _TIMELAPSE_EXPORT_JOBS.get(job_id)
+        if not job:
+            return None
+        job.update(updates)
+        job["updated_at"] = time.time()
+        return dict(job)
+
+
+def _decorate_timelapse_export_result(data: dict[str, Any], pcfg: Any, token: str) -> dict[str, Any]:
+    root = _unwrap_command_payload(data)
+    returned = ""
+    if isinstance(root, dict):
+        returned = str(_field(root, "url", "Url", "download_url", "DownloadUrl", "time_lapse_video_url", "TimeLapseVideoUrl", default="") or "")
+    download_file_name = _download_file_name_from_token(returned or token)
+    if pcfg and download_file_name:
+        data["download_file_name"] = download_file_name
+        data["download_url"] = _timelapse_proxy_download_url(pcfg.id, download_file_name)
+        data["direct_download_url"] = _stock_download_url(pcfg, download_file_name)
+        if isinstance(data.get("result"), dict):
+            data["result"]["download_file_name"] = download_file_name
+            data["result"]["download_url"] = data["download_url"]
+            data["result"]["direct_download_url"] = data["direct_download_url"]
+    return data
+
+
+def _load_timelapse_videos_sync(printer_id: str, pcfg: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Load and normalize the stock-style Video List from print history.
+
+    The printer marks timelapse rows as status 1 while the captured video still
+    needs to be generated/exported, then status 2 once the MP4 is actually ready.
+    Export jobs use this as the source of truth instead of trusting the immediate
+    1051 command response, because firmware may acknowledge the export request
+    before generation is finished.
+    """
+    history_payload = _send_command(printer_id, GET_HISTORY_TASK, {}, True, 20.0, False)
+    root = _unwrap_command_payload(history_payload)
+    if isinstance(root, dict) and _as_int(root.get("error_code") or root.get("ErrorCode"), 0) != 0:
+        return [], {"raw_history_total": 0, "raw_detail_total": 0}
+
+    history_items = _extract_history_items(root)
+    videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in history_items) if v]
+    detail_items: list[Any] = []
+
+    if not videos and history_items:
+        ids: list[Any] = []
+        for item in history_items[:80]:
+            if isinstance(item, dict):
+                ids.append(_field(item, "task_id", "TaskId", "taskId", "id", "Id"))
+            else:
+                ids.append(item)
+        detail_items = _try_history_details(printer_id, ids)
+        videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in detail_items) if v]
+
+    return videos, {"raw_history_total": len(history_items), "raw_detail_total": len(detail_items)}
+
+
+def _normalized_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _timelapse_record_matches(record: dict[str, Any], *, task_id: Any = None, task_name: Any = None, token: str = "") -> bool:
+    wanted_task = str(task_id).strip() if task_id not in (None, "") else ""
+    record_task = str(record.get("task_id") or "").strip()
+    if wanted_task and record_task and wanted_task == record_task:
+        return True
+
+    token_file = _download_file_name_from_token(token)
+    record_token = str(record.get("time_lapse_video_url") or "")
+    record_file = str(record.get("download_file_name") or "")
+    record_file_from_token = _download_file_name_from_token(record_token or record_file)
+    if token_file and token_file in {record_token, record_file, record_file_from_token}:
+        return True
+
+    wanted_name = _normalized_text(task_name)
+    record_name = _normalized_text(record.get("task_name") or record.get("filename"))
+    return bool(wanted_name and record_name and wanted_name == record_name)
+
+
+def _find_timelapse_record(videos: list[dict[str, Any]], *, task_id: Any = None, task_name: Any = None, token: str = "") -> dict[str, Any] | None:
+    for record in videos:
+        if _timelapse_record_matches(record, task_id=task_id, task_name=task_name, token=token):
+            return record
+    return None
+
+
+def _timelapse_status_message(record: dict[str, Any] | None, elapsed: int) -> str:
+    if not record:
+        return f"Time-lapse export requested; waiting for the printer Video List to refresh… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+    status = _as_int(record.get("time_lapse_video_status"), 0)
+    if bool(record.get("export_ready")):
+        return "Time-lapse video ready to download."
+    if status == 1:
+        return f"Time-lapse video generating… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+    if status == 3:
+        return f"Printer reports timelapse export is still processing… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+    return f"Waiting for printer to mark the time-lapse as generated… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})"
+
+
+def _wait_for_timelapse_export_ready(job_id: str, pcfg: Any, *, task_id: Any = None, task_name: Any = None, token: str = "") -> dict[str, Any]:
+    """Poll printer history until the selected timelapse is truly downloadable."""
+    started = time.time()
+    deadline = started + float(_TIMELAPSE_EXPORT_TIMEOUT_SEC)
+    last_error = ""
+    last_record: dict[str, Any] | None = None
+    poll_interval = 5.0
+
+    while time.time() < deadline:
+        elapsed = int(time.time() - started)
+        try:
+            videos, _counts = _load_timelapse_videos_sync(pcfg.id, pcfg)
+            record = _find_timelapse_record(videos, task_id=task_id, task_name=task_name, token=token)
+            if record:
+                last_record = record
+                status = _as_int(record.get("time_lapse_video_status"), 0)
+                _update_timelapse_export_job(
+                    job_id,
+                    status="generating",
+                    message=_timelapse_status_message(record, elapsed),
+                    elapsed_sec=elapsed,
+                    last_video_status=status,
+                    download_file_name=str(record.get("download_file_name") or _download_file_name_from_token(token) or ""),
+                )
+                if bool(record.get("export_ready")) and record.get("download_url"):
+                    return record
+            else:
+                _update_timelapse_export_job(
+                    job_id,
+                    status="generating",
+                    message=_timelapse_status_message(None, elapsed),
+                    elapsed_sec=elapsed,
+                )
+        except Exception as exc:
+            last_error = str(exc)
+            _update_timelapse_export_job(
+                job_id,
+                status="generating",
+                message=f"Time-lapse export requested; waiting for printer status… ({seconds_to_hms(elapsed) or str(elapsed) + 's'})",
+                elapsed_sec=elapsed,
+                error=last_error,
+            )
+        time.sleep(poll_interval)
+
+    if last_record:
+        raise TimeoutError(
+            f"Timed out waiting for the printer to mark the timelapse as generated "
+            f"(last video status {last_record.get('time_lapse_video_status')})."
+        )
+    if last_error:
+        raise TimeoutError(f"Timed out waiting for timelapse generation; last status error: {last_error}")
+    raise TimeoutError("Timed out waiting for the printer Video List to confirm the generated timelapse.")
+
+
+def _run_timelapse_export_job(job_id: str) -> None:
+    with _TIMELAPSE_EXPORT_LOCK:
+        job = dict(_TIMELAPSE_EXPORT_JOBS.get(job_id) or {})
+    if not job:
+        return
+    printer_id = str(job.get("printer_id") or "")
+    token = str(job.get("token") or "").strip()
+    task_id = job.get("task_id")
+    task_name = job.get("task_name")
+    if not printer_id or not token:
+        _update_timelapse_export_job(job_id, status="error", message="Time-lapse export could not start: missing printer or video token.", error="missing printer_id/token", finished_at=time.time())
+        return
+    pcfg = _portal_target(printer_id)
+    if not pcfg:
+        _update_timelapse_export_job(job_id, status="error", message="Time-lapse export could not start: printer is not configured.", error="printer not configured", finished_at=time.time())
+        return
+
+    started = time.time()
+    try:
+        _update_timelapse_export_job(job_id, status="generating", message="Time-lapse video generating…", elapsed_sec=0)
+        log("info", "Time-lapse export started", "files", printer=printer_id)
+
+        command_data: dict[str, Any] = {}
+        try:
+            # Method 1051 may only acknowledge/start the firmware export. Do not
+            # treat this reply as completion; the history Video List is polled
+            # below until it reports the row as generated/downloadable.
+            command_data = _send_command(
+                printer_id,
+                GET_TIME_LAPSE_VIDEO_LIST,
+                timelapse_export_params(token),
+                True,
+                45.0,
+                True,
+            )
+        except Exception as exc:
+            # Some firmware builds hold the request open while generation starts.
+            # If that initial request times out, keep watching the Video List
+            # instead of instantly failing; non-timeout errors still stop the job.
+            msg = str(exc)
+            if "timeout" not in msg.lower() and "timed out" not in msg.lower():
+                raise
+            _update_timelapse_export_job(
+                job_id,
+                status="generating",
+                message="Export request is taking a while; watching printer Video List for completion…",
+                error=msg,
+                elapsed_sec=int(time.time() - started),
+            )
+            log("warning", f"Time-lapse export command timed out; polling for completion anyway: {exc}", "files", printer=printer_id)
+
+        if command_data:
+            decorated = _decorate_timelapse_export_result(dict(command_data), pcfg, token)
+            _update_timelapse_export_job(
+                job_id,
+                status="generating",
+                message="Export accepted; waiting for printer to finish generating the time-lapse…",
+                result=decorated,
+                download_file_name=str(decorated.get("download_file_name") or _download_file_name_from_token(token) or ""),
+                # Keep the derived URL out of the public job until the Video List
+                # confirms status 2/export_ready. The token alone is not proof.
+                download_url="",
+                direct_download_url="",
+                elapsed_sec=int(time.time() - started),
+            )
+
+        ready_record = _wait_for_timelapse_export_ready(
+            job_id,
+            pcfg,
+            task_id=task_id,
+            task_name=task_name,
+            token=token,
+        )
+        download_file_name = str(ready_record.get("download_file_name") or _download_file_name_from_token(token) or "")
+        download_url = str(ready_record.get("download_url") or (_timelapse_proxy_download_url(pcfg.id, download_file_name) if download_file_name else ""))
+        direct_download_url = str(ready_record.get("direct_download_url") or (_stock_download_url(pcfg, download_file_name) if download_file_name else ""))
+        message = "Time-lapse video ready to download."
+        _update_timelapse_export_job(
+            job_id,
+            status="ready",
+            message=message,
+            source_record=ready_record,
+            download_file_name=download_file_name,
+            download_url=download_url,
+            direct_download_url=direct_download_url,
+            elapsed_sec=int(time.time() - started),
+            confirmed_by="video_list_status_2",
+            last_video_status=_as_int(ready_record.get("time_lapse_video_status"), 0),
+            finished_at=time.time(),
+            error="",
+        )
+        log("info", message, "files", printer=printer_id)
+    except Exception as exc:
+        _update_timelapse_export_job(
+            job_id,
+            status="error",
+            message="Time-lapse export did not finish before the backend timeout. Refresh Video List; the printer may still finish it firmware-side.",
+            error=str(exc),
+            elapsed_sec=int(time.time() - started),
+            finished_at=time.time(),
+        )
+        log("warning", f"Time-lapse export failed: {exc}", "files", printer=printer_id)
+
+
 def _normalize_timelapse_record(item: Any, pcfg: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
@@ -5038,6 +5670,15 @@ def _normalize_timelapse_record(item: Any, pcfg: Any) -> dict[str, Any] | None:
     has_video_marker = status in (1, 2) or bool(url) or _as_float(size, 0) > 0 or _as_float(duration, 0) > 0
     if not has_video_marker:
         return None
+    # Status 1 behaves like the stock portal's "captured but not exported" state: the
+    # row may include a TimeLapseVideoUrl token, but the actual MP4 download is not
+    # available until method 1051 finishes generating/exporting it. Do not expose a
+    # cc2-dash download button for that state, or the browser waits on a file that
+    # does not exist yet.
+    download_ready = bool(download_file_name) and (
+        status == 2
+        or (status not in (1, 3) and (bool(url) or _as_float(size, 0) > 0 or _as_float(duration, 0) > 0))
+    )
     return {
         "task_id": task_id,
         "task_name": name or f"Task {task_id}",
@@ -5047,8 +5688,10 @@ def _normalize_timelapse_record(item: Any, pcfg: Any) -> dict[str, Any] | None:
         "time_lapse_video_status": status,
         "time_lapse_video_url": url,
         "download_file_name": download_file_name,
-        "download_url": _timelapse_proxy_download_url(pcfg.id, download_file_name) if download_file_name else "",
-        "direct_download_url": _stock_download_url(pcfg, download_file_name) if download_file_name else "",
+        "download_url": _timelapse_proxy_download_url(pcfg.id, download_file_name) if download_ready else "",
+        "direct_download_url": _stock_download_url(pcfg, download_file_name) if download_ready else "",
+        "export_ready": download_ready,
+        "needs_export": bool(status == 1 and download_file_name),
         "time_lapse_video_size": size,
         "time_lapse_video_duration": duration,
         "raw": item,
@@ -5135,32 +5778,12 @@ async def api_timelapse(printer_id: str):
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
 
-    history_payload = await asyncio.to_thread(_send_command, printer_id, GET_HISTORY_TASK, {}, True, 20.0, False)
-    root = _unwrap_command_payload(history_payload)
-    if isinstance(root, dict) and _as_int(root.get("error_code") or root.get("ErrorCode"), 0) != 0:
-        return {"ok": False, "result": root, "videos": [], "total": 0}
-
-    history_items = _extract_history_items(root)
-    videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in history_items) if v]
-
-    # Some stock-web portal paths first fetch task ids, then task details. Try the
-    # same pattern if the basic history payload contains no video-marked records.
-    detail_items: list[Any] = []
-    if not videos and history_items:
-        ids: list[Any] = []
-        for item in history_items[:80]:
-            if isinstance(item, dict):
-                ids.append(_field(item, "task_id", "TaskId", "taskId", "id", "Id"))
-            else:
-                ids.append(item)
-        detail_items = await asyncio.to_thread(_try_history_details, printer_id, ids)
-        videos = [v for v in (_normalize_timelapse_record(item, pcfg) for item in detail_items) if v]
-
+    videos, counts = await asyncio.to_thread(_load_timelapse_videos_sync, printer_id, pcfg)
     result = {
         "error_code": 0,
         "total": len(videos),
-        "raw_history_total": len(history_items),
-        "raw_detail_total": len(detail_items),
+        "raw_history_total": int(counts.get("raw_history_total") or 0),
+        "raw_detail_total": int(counts.get("raw_detail_total") or 0),
         "videos": videos,
     }
     return {"ok": True, "result": result, "videos": videos, "total": len(videos)}
@@ -5231,23 +5854,42 @@ async def api_timelapse_download(printer_id: str, file_name: str = Query(..., mi
 @app.post("/api/printers/{printer_id}/timelapse/export")
 async def api_timelapse_export(printer_id: str, body: TimelapseExportRequest):
     _raise_if_feature_locked("file_manager_enabled")
-    token = _download_file_name_from_token(body.url)
-    data = await asyncio.to_thread(_send_command, printer_id, GET_TIME_LAPSE_VIDEO_LIST, timelapse_export_params(token), True, 180.0)
     pcfg = _portal_target(printer_id)
-    root = _unwrap_command_payload(data)
-    returned = ""
-    if isinstance(root, dict):
-        returned = str(_field(root, "url", "Url", "download_url", "DownloadUrl", "time_lapse_video_url", "TimeLapseVideoUrl", default="") or "")
-    download_file_name = _download_file_name_from_token(returned or token)
-    if pcfg and download_file_name:
-        data["download_file_name"] = download_file_name
-        data["download_url"] = _timelapse_proxy_download_url(pcfg.id, download_file_name)
-        data["direct_download_url"] = _stock_download_url(pcfg, download_file_name)
-        if isinstance(data.get("result"), dict):
-            data["result"]["download_file_name"] = download_file_name
-            data["result"]["download_url"] = data["download_url"]
-            data["result"]["direct_download_url"] = data["direct_download_url"]
-    return data
+    if not pcfg:
+        raise HTTPException(404, "Printer not configured")
+    token = str(body.url or "").strip()
+    if not token:
+        raise HTTPException(400, "Missing timelapse export token")
+    now = time.time()
+    _cleanup_timelapse_export_jobs(now)
+    job_id = uuid.uuid4().hex
+    job = {
+        "id": job_id,
+        "printer_id": printer_id,
+        "task_id": body.task_id,
+        "task_name": body.task_name,
+        "token": token,
+        "status": "generating",
+        "message": "Time-lapse video generating…",
+        "started_at": now,
+        "updated_at": now,
+    }
+    with _TIMELAPSE_EXPORT_LOCK:
+        _TIMELAPSE_EXPORT_JOBS[job_id] = job
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run_timelapse_export_job, job_id)
+    return {"ok": True, "job_id": job_id, "status": "generating", "message": job["message"], "job": _public_timelapse_export_job(job)}
+
+
+@app.get("/api/printers/{printer_id}/timelapse/export/{job_id}")
+async def api_timelapse_export_status(printer_id: str, job_id: str):
+    _raise_if_feature_locked("file_manager_enabled")
+    _cleanup_timelapse_export_jobs()
+    with _TIMELAPSE_EXPORT_LOCK:
+        job = dict(_TIMELAPSE_EXPORT_JOBS.get(job_id) or {})
+    if not job or str(job.get("printer_id") or "") != str(printer_id):
+        raise HTTPException(404, "Time-lapse export job not found")
+    return {"ok": True, "job": _public_timelapse_export_job(job)}
 
 
 @app.post("/api/printers/{printer_id}/history/delete")

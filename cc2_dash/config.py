@@ -19,7 +19,7 @@ CONFIG_PATH = Path(os.environ.get("CC2_CONFIG", DATA_DIR / "config.json"))
 # Control is intentionally NOT listed below anymore. It has its own runtime
 # safety checks (offline/active-print command lockouts) and remains available in
 # this release branch.
-COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = True
+COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = False
 
 EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
     "file_manager_enabled": {

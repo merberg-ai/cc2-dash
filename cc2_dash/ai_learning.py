@@ -172,10 +172,16 @@ def sample_from_feedback_row(row: dict[str, Any]) -> dict[str, Any]:
     heur = _heuristics_from_snapshot(snapshot)
     interpretation = snapshot.get("interpretation") if isinstance(snapshot.get("interpretation"), dict) else {}
     frame = snapshot.get("frame") if isinstance(snapshot.get("frame"), dict) else {}
+    annotation = snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else {}
     suppression = snapshot.get("suppression") if isinstance(snapshot.get("suppression"), dict) else None
 
     progress = _as_float(status.get("progress"), None)
-    flags = heur.get("warnings") if isinstance(heur.get("warnings"), list) else []
+    flags = list(heur.get("warnings") if isinstance(heur.get("warnings"), list) else [])
+    if annotation:
+        failure_type = str(annotation.get("failure_type") or "unknown").strip().lower().replace(" ", "_")
+        flags.append("roi_annotation")
+        if failure_type:
+            flags.append(f"roi_{failure_type}")
     return {
         "created_at": _timestamp_to_iso(row.get("timestamp") or snapshot.get("created_at_epoch")),
         "printer_id": str(row.get("printer_id") or snapshot.get("printer_id") or "unknown"),

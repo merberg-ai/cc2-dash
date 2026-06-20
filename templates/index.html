@@ -132,6 +132,7 @@
             <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_good">Looks Good</button>
             <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="looks_bad">Looks Bad</button>
             <button class="button secondary tiny ai-feedback-button" type="button" data-ai-feedback="false_alarm">False Alarm</button>
+            <button class="button danger tiny missed-failure-button" type="button" id="aiReportMissedFailureButton" data-roi-feedback-open><span class="button-label">Report Missed Failure</span></button>
           </div>
           <div class="ai-feedback-reasons hidden" id="aiFeedbackReasons" aria-live="polite"></div>
         </div>
@@ -206,6 +207,51 @@
     </div>
     <div class="thumbnail-modal-body">
       <img id="gcodeThumbnailModalImg" class="thumbnail-modal-img" alt="Large G-code thumbnail preview" />
+    </div>
+  </div>
+</div>
+
+
+<div id="roiFeedbackModal" class="modal-backdrop roi-feedback-modal hidden" role="dialog" aria-modal="true" aria-labelledby="roiFeedbackTitle" aria-hidden="true">
+  <div class="modal-card roi-feedback-card">
+    <div class="modal-header">
+      <div>
+        <h2 id="roiFeedbackTitle">Report Missed Failure</h2>
+        <p id="roiFeedbackSubtitle">Draw a box around the specific failed area. Works best with one clear rectangle.</p>
+      </div>
+      <button id="roiFeedbackClose" class="icon-button" type="button" aria-label="Close">×</button>
+    </div>
+    <div id="roiFeedbackStatus" class="roi-feedback-status">Capturing a still frame...</div>
+    <div id="roiEditor" class="roi-editor hidden" aria-label="Draw failed area on camera snapshot">
+      <img id="roiFeedbackImage" alt="Camera snapshot for missed failure annotation" draggable="false" />
+      <svg id="roiFeedbackOverlay" class="roi-overlay" role="img" aria-label="ROI drawing overlay">
+        <rect id="roiFeedbackRect" class="roi-box hidden" x="0" y="0" width="0" height="0"></rect>
+      </svg>
+    </div>
+    <div class="roi-feedback-controls">
+      <label>
+        <span>Failure type</span>
+        <select id="roiFailureType" class="input">
+          <option value="detached_part">Detached small object</option>
+          <option value="prime_tower_fell_over">Prime tower fell over</option>
+          <option value="air_printing">Air printing</option>
+          <option value="spaghetti">Spaghetti / stringing</option>
+          <option value="blob_nozzle">Blob / nozzle issue</option>
+          <option value="first_layer_issue">First-layer issue</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label>
+        <span>Optional note</span>
+        <input id="roiFailureNote" class="input" maxlength="240" placeholder="Example: small part popped loose near front-left">
+      </label>
+    </div>
+    <div class="roi-feedback-help">
+      <strong>Phone tip:</strong> drag with one finger. Tap Reset to redraw. This saves training evidence only; it will not change pause/cancel behavior yet.
+    </div>
+    <div class="modal-actions roi-feedback-actions">
+      <button id="roiFeedbackReset" class="button secondary" type="button">Reset Box</button>
+      <button id="roiFeedbackSubmit" class="button danger" type="button"><span class="button-label">Save Missed Failure</span></button>
     </div>
   </div>
 </div>

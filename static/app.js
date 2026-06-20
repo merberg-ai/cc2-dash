@@ -11,6 +11,8 @@
   let stageUploadInProgress = false;
   const baseDocumentTitle = document.title || 'cc2-dash';
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
+  let roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
+  let roiFeedbackModalInitialized = false;
 
   function featureLocked(key) {
     return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
@@ -75,9 +77,11 @@
       button.dataset.originalLabel = labelEl ? labelEl.textContent : button.textContent;
       button.disabled = true;
       if (labelEl) labelEl.innerHTML = `<span class="spinner"></span> ${label || 'Working...'}`;
+      else button.innerHTML = `<span class="spinner"></span> ${label || 'Working...'}`;
     } else {
       button.disabled = false;
       if (labelEl) labelEl.textContent = button.dataset.originalLabel || labelEl.textContent;
+      else if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
     }
   }
 
@@ -536,7 +540,10 @@
     if (!printerId) return toast('No printer configured for pause command.', 'warn');
     setButtonBusy(button, true, 'Pausing...');
     try {
-      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/auto-pause/pause-now`, { method: 'POST' });
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/auto-pause/pause-now`, {
+        method: 'POST',
+        body: JSON.stringify({ token: autoPauseModalState.token || '' })
+      });
       toast(data.message || 'Pause command sent.', 'success');
       closeAutoPauseModal();
       await refreshDashboard();
@@ -892,6 +899,9 @@
     looks_bad: [
       ['spaghetti_stringing', 'Spaghetti / stringing'],
       ['detached_print', 'Detached print'],
+      ['prime_tower_fell_over', 'Prime tower fell over'],
+      ['air_printing', 'Air printing'],
+      ['small_object_detached', 'Small object detached'],
       ['blob_nozzle_buildup', 'Blob / nozzle buildup'],
       ['first_layer_issue', 'First-layer issue'],
       ['layer_shift', 'Layer shift'],
@@ -1008,17 +1018,260 @@
     });
   }
 
+
+
+  function setRoiStatus(message, tone = '') {
+    const el = $('#roiFeedbackStatus');
+    if (!el) return;
+    el.textContent = message || '';
+    el.classList.toggle('bad', tone === 'bad');
+    el.classList.toggle('good', tone === 'good');
+  }
+
+  function roiOverlaySize() {
+    const overlay = $('#roiFeedbackOverlay');
+    if (!overlay) return { width: 0, height: 0 };
+    const rect = overlay.getBoundingClientRect();
+    const width = Math.max(1, rect.width || 0);
+    const height = Math.max(1, rect.height || 0);
+    overlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    return { width, height };
+  }
+
+  function roiPointFromEvent(ev) {
+    const overlay = $('#roiFeedbackOverlay');
+    if (!overlay) return { x: 0, y: 0, width: 1, height: 1 };
+    const rect = overlay.getBoundingClientRect();
+    const width = Math.max(1, rect.width || 0);
+    const height = Math.max(1, rect.height || 0);
+    return {
+      x: Math.max(0, Math.min(width, ev.clientX - rect.left)),
+      y: Math.max(0, Math.min(height, ev.clientY - rect.top)),
+      width,
+      height,
+    };
+  }
+
+  function drawRoiBox(box) {
+    const rect = $('#roiFeedbackRect');
+    if (!rect) return;
+    if (!box || box.w <= 0 || box.h <= 0) {
+      rect.classList.add('hidden');
+      rect.setAttribute('x', '0');
+      rect.setAttribute('y', '0');
+      rect.setAttribute('width', '0');
+      rect.setAttribute('height', '0');
+      return;
+    }
+    rect.classList.remove('hidden');
+    rect.setAttribute('x', String(box.x));
+    rect.setAttribute('y', String(box.y));
+    rect.setAttribute('width', String(box.w));
+    rect.setAttribute('height', String(box.h));
+  }
+
+  function resetRoiBox() {
+    roiFeedbackState.box = null;
+    roiFeedbackState.drawing = false;
+    roiFeedbackState.start = null;
+    drawRoiBox(null);
+  }
+
+  function closeRoiFeedbackModal() {
+    const modal = $('#roiFeedbackModal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    $('#roiEditor')?.classList.add('hidden');
+    const img = $('#roiFeedbackImage');
+    if (img) img.removeAttribute('src');
+    roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
+    drawRoiBox(null);
+  }
+
+  async function openRoiFeedbackModal() {
+    const printerId = document.body.dataset.printerId;
+    if (!printerId) return toast('No printer configured for missed-failure feedback.', 'warn');
+    const modal = $('#roiFeedbackModal');
+    const img = $('#roiFeedbackImage');
+    const editor = $('#roiEditor');
+    if (!modal || !img || !editor) return toast('ROI feedback UI is not available on this page.', 'warn');
+    roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
+    drawRoiBox(null);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    editor.classList.add('hidden');
+    setRoiStatus('Capturing a still frame from the camera...', '');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback/frame`, {
+        method: 'POST',
+        body: JSON.stringify({ label: 'missed_failure', context: { page, saved_from: 'roi_feedback_modal_capture', user_agent: navigator.userAgent || '' } })
+      });
+      const frame = data?.frame || {};
+      if (!frame.url || !frame.relative_path) throw new Error('Feedback frame was captured but no image URL was returned.');
+      roiFeedbackState.frame = frame;
+      img.onload = () => {
+        editor.classList.remove('hidden');
+        roiOverlaySize();
+        setRoiStatus('Draw a box around the specific failed part, prime tower, blob, or air-printing area.', 'good');
+      };
+      img.onerror = () => setRoiStatus('Frame captured, but the browser could not display it. Try closing and reopening this dialog.', 'bad');
+      img.src = `${frame.url}${frame.url.includes('?') ? '&' : '?'}v=${Date.now()}`;
+    } catch (err) {
+      setRoiStatus(err.message || 'Could not capture a camera frame.', 'bad');
+      toast(err.message, 'error', 7600);
+    }
+  }
+
+  function normalizedRoiBox() {
+    const box = roiFeedbackState.box;
+    if (!box) return null;
+    const width = Math.max(1, Number(box.displayWidth || 0));
+    const height = Math.max(1, Number(box.displayHeight || 0));
+    if (box.w < 8 || box.h < 8) return null;
+    return {
+      x: Math.max(0, Math.min(1, box.x / width)),
+      y: Math.max(0, Math.min(1, box.y / height)),
+      w: Math.max(0, Math.min(1, box.w / width)),
+      h: Math.max(0, Math.min(1, box.h / height)),
+      display: { width, height, device_pixel_ratio: window.devicePixelRatio || 1 }
+    };
+  }
+
+  async function submitRoiFeedback(button) {
+    const printerId = document.body.dataset.printerId;
+    if (!printerId) return toast('No printer configured for missed-failure feedback.', 'warn');
+    const frame = roiFeedbackState.frame || {};
+    if (!frame.relative_path) return toast('No feedback frame captured yet.', 'warn');
+    const norm = normalizedRoiBox();
+    if (!norm) return toast('Draw a box around the failed area first.', 'warn');
+    const failureType = $('#roiFailureType')?.value || 'other';
+    const failureText = $('#roiFailureType')?.selectedOptions?.[0]?.textContent || 'Missed failure';
+    const note = ($('#roiFailureNote')?.value || '').trim();
+    const reason = note || failureText;
+    setButtonBusy(button, true, 'Saving...');
+    try {
+      const data = await api(`/api/printers/${encodeURIComponent(printerId)}/ai/feedback`, {
+        method: 'POST',
+        body: JSON.stringify({
+          label: 'looks_bad',
+          note: reason,
+          context: {
+            page,
+            saved_from: 'roi_missed_failure_modal',
+            feedback_frame_path: frame.relative_path,
+            failure_type: failureType,
+            reason,
+            user_agent: navigator.userAgent || ''
+          },
+          annotation: {
+            type: 'box',
+            x: norm.x,
+            y: norm.y,
+            w: norm.w,
+            h: norm.h,
+            display: norm.display,
+            source_frame_path: frame.relative_path,
+            failure_type: failureType,
+            reason,
+            source: 'dashboard_roi_modal'
+          }
+        })
+      });
+      const cropMsg = data?.annotation?.crops ? ' + ROI crop saved' : ' + ROI metadata saved';
+      toast(`Missed failure saved${cropMsg}.`, 'success', 5200);
+      closeRoiFeedbackModal();
+      showFeedbackReasons('looks_bad', data);
+    } catch (err) {
+      toast(err.message, 'error', 8000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function initRoiFeedbackModal() {
+    if (roiFeedbackModalInitialized) return;
+    roiFeedbackModalInitialized = true;
+    document.addEventListener('click', ev => {
+      const trigger = ev.target?.closest?.('[data-roi-feedback-open], #aiReportMissedFailureButton');
+      if (!trigger) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      openRoiFeedbackModal();
+    });
+    $('#roiFeedbackClose')?.addEventListener('click', closeRoiFeedbackModal);
+    $('#roiFeedbackModal')?.addEventListener('click', ev => { if (ev.target?.id === 'roiFeedbackModal') closeRoiFeedbackModal(); });
+    $('#roiFeedbackReset')?.addEventListener('click', resetRoiBox);
+    $('#roiFeedbackSubmit')?.addEventListener('click', ev => submitRoiFeedback(ev.currentTarget));
+    const overlay = $('#roiFeedbackOverlay');
+    if (!overlay) return;
+    const begin = (ev) => {
+      if (!roiFeedbackState.frame) return;
+      ev.preventDefault();
+      roiOverlaySize();
+      const pt = roiPointFromEvent(ev);
+      roiFeedbackState.drawing = true;
+      roiFeedbackState.start = pt;
+      roiFeedbackState.box = { x: pt.x, y: pt.y, w: 0, h: 0, displayWidth: pt.width, displayHeight: pt.height };
+      drawRoiBox(roiFeedbackState.box);
+      try { overlay.setPointerCapture(ev.pointerId); } catch {}
+    };
+    const move = (ev) => {
+      if (!roiFeedbackState.drawing || !roiFeedbackState.start) return;
+      ev.preventDefault();
+      const pt = roiPointFromEvent(ev);
+      const start = roiFeedbackState.start;
+      const box = {
+        x: Math.min(start.x, pt.x),
+        y: Math.min(start.y, pt.y),
+        w: Math.abs(pt.x - start.x),
+        h: Math.abs(pt.y - start.y),
+        displayWidth: pt.width,
+        displayHeight: pt.height,
+      };
+      roiFeedbackState.box = box;
+      drawRoiBox(box);
+    };
+    const end = (ev) => {
+      if (!roiFeedbackState.drawing) return;
+      ev.preventDefault();
+      roiFeedbackState.drawing = false;
+      roiFeedbackState.start = null;
+      try { overlay.releasePointerCapture(ev.pointerId); } catch {}
+      if (!normalizedRoiBox()) {
+        resetRoiBox();
+        setRoiStatus('Box was too small. Drag a larger square/rectangle around the failed area.', 'bad');
+      } else {
+        setRoiStatus('Box selected. Choose the failure type and save it.', 'good');
+      }
+    };
+    overlay.addEventListener('pointerdown', begin, { passive: false });
+    overlay.addEventListener('pointermove', move, { passive: false });
+    overlay.addEventListener('pointerup', end, { passive: false });
+    overlay.addEventListener('pointercancel', end, { passive: false });
+    window.addEventListener('resize', () => {
+      const old = roiFeedbackState.box;
+      const size = roiOverlaySize();
+      if (!old || !size.width || !size.height) return;
+      const norm = normalizedRoiBox();
+      if (!norm) return;
+      roiFeedbackState.box = { x: norm.x * size.width, y: norm.y * size.height, w: norm.w * size.width, h: norm.h * size.height, displayWidth: size.width, displayHeight: size.height };
+      drawRoiBox(roiFeedbackState.box);
+    });
+  }
+
   function initDashboard() {
     initDashboardAccordions();
     initGcodeThumbnailModal();
     initFailureDetectionToggle();
     initAutoPauseModal();
+    initRoiFeedbackModal();
     refreshDashboard();
     const interval = Number(cfg?.dashboard?.refresh_interval_seconds || 3) * 1000;
     setInterval(refreshDashboard, Math.max(1500, interval));
     const feedbackBox = $('#aiFeedbackButtons');
     if (feedbackBox && cfg?.portal_ai?.feedback_enabled === false) feedbackBox.classList.add('hidden');
-    $$('.ai-feedback-button').forEach(btn => {
+    $$('.ai-feedback-button[data-ai-feedback]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const label = btn.dataset.aiFeedback || 'unknown';
         const printerId = document.body.dataset.printerId;
@@ -1827,13 +2080,16 @@
       metricBit('edge', sample.edge_density, 3),
       metricBit('delta', sample.edge_delta, 3),
     ].filter(Boolean).join('');
-    const thumb = sample.frame_url
-      ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>`
+    const thumbUrl = sample.roi_frame_url || sample.frame_url || '';
+    const thumbLabel = sample.roi_frame_url ? 'ROI crop' : 'Feedback frame';
+    const thumb = thumbUrl
+      ? `<a class="ai-feedback-sample-thumb" href="${esc(thumbUrl)}" target="_blank" rel="noopener"><img src="${esc(thumbUrl)}" alt="${esc(thumbLabel)} ${esc(sample.id)}" loading="lazy"></a>`
       : '<div class="ai-feedback-sample-thumb empty">no frame</div>';
     const stageBits = [
       sample.print_stage ? String(sample.print_stage).replaceAll('_', ' ') : '',
       sample.progress_percent !== null && sample.progress_percent !== undefined ? `${fmtLearningNumber(sample.progress_percent, 1)}%` : '',
       sample.vision_state ? String(sample.vision_state).replaceAll('_', ' ') : '',
+      sample.has_annotation ? `ROI ${String(sample.annotation?.failure_type || 'annotated').replaceAll('_', ' ')}` : '',
       sample.suppression_match ? 'suppression match' : '',
     ].filter(Boolean).join(' · ');
     const reason = sample.reason || sample.feedback_note || '';
@@ -2917,6 +3173,32 @@
   const fileManagerState = {
     usbPath: '/',
     loadedTabs: new Set(),
+    timelapseItems: [],
+    historyItems: [],
+    timelapseJobs: new Map(),
+    fileSources: {
+      printer: { files: [], storage: 'local', directory: '/' },
+      usb: { files: [], storage: 'u-disk', directory: '/' },
+    },
+    filters: {
+      printer: { query: '', type: 'all', sort: 'default' },
+      usb: { query: '', type: 'all', sort: 'default' },
+      history: { query: '', type: 'all', sort: 'default' },
+      videos: { query: '', type: 'all', sort: 'default' },
+    },
+    filterTimers: new Map(),
+    selections: {
+      printer: new Map(),
+      usb: new Map(),
+      history: new Map(),
+      videos: new Map(),
+    },
+    visibleSelections: {
+      printer: [],
+      usb: [],
+      history: [],
+      videos: [],
+    },
   };
 
   function fileIsFolder(file) {
@@ -2967,34 +3249,405 @@
     return item?.task_id ?? item?.TaskId ?? item?.taskId ?? item?.id ?? item?.Id;
   }
 
-  function renderFileRows(box, files, storage, directory = '/') {
+  function rawTimestamp(value) {
+    if (value === undefined || value === null || value === '') return 0;
+    const n = Number(value);
+    if (Number.isFinite(n)) {
+      const ms = n > 1e12 ? n : n * 1000;
+      const d = new Date(ms);
+      return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+    }
+    const parsed = Date.parse(String(value));
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  function fileTimestampOf(file) {
+    return rawTimestamp(file?.mtime ?? file?.modified_time ?? file?.ModifyTime ?? file?.create_time ?? file?.CreateTime ?? file?.time);
+  }
+
+  function historyTimestampOf(item) {
+    return rawTimestamp(item?.end_time ?? item?.EndTime ?? item?.begin_time ?? item?.BeginTime ?? item?.create_time ?? item?.CreateTime ?? item?.time);
+  }
+
+  function timelapseTimestampOf(item) {
+    return historyTimestampOf(item);
+  }
+
+  function fileSizeNumber(file) {
+    const n = Number(fileSizeOf(file));
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function historySizeNumber(item) {
+    const n = Number(item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function textBlob(value) {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return value.map(textBlob).join(' ');
+    if (typeof value === 'object') return Object.values(value).map(textBlob).join(' ');
+    return '';
+  }
+
+  function fileExtension(name = '') {
+    const clean = basename(name).toLowerCase();
+    const idx = clean.lastIndexOf('.');
+    return idx >= 0 ? clean.slice(idx + 1) : '';
+  }
+
+  function fileCategory(file) {
+    if (fileIsFolder(file)) return 'folder';
+    const name = `${fileNameOf(file)} ${filePathOf(file)} ${fileTypeOf(file)}`.toLowerCase();
+    const ext = fileExtension(fileNameOf(file) || filePathOf(file));
+    if (/\.g(co|code|code\.gz)?$/i.test(fileNameOf(file)) || ['gcode', 'gc', 'gco'].includes(ext) || name.includes('gcode')) return 'gcode';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)) return 'image';
+    if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) return 'video';
+    return 'other';
+  }
+
+  function historyStatusText(item) {
+    return String(item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '').toLowerCase();
+  }
+
+  function historyHasTimelapse(item) {
+    return !!(item?.has_timelapse || item?.time_lapse_video_status || item?.TimeLapseVideoStatus || item?.time_lapse_video_url || item?.TimeLapseVideoUrl);
+  }
+
+  function historyCategory(item) {
+    const status = historyStatusText(item);
+    if (historyHasTimelapse(item)) return 'timelapse';
+    if (status.includes('fail') || status.includes('cancel') || status.includes('abort') || status === '3' || status === '4') return 'failed';
+    if (status.includes('complete') || status.includes('finish') || status === '2') return 'completed';
+    return 'other';
+  }
+
+  function timelapseCategory(item) {
+    const key = timelapseExportKey(item);
+    const job = fileManagerState.timelapseJobs.get(key);
+    if (job?.status === 'generating') return 'generating';
+    if (job?.status === 'error') return 'failed';
+    const status = timelapseStatusOf(item);
+    if (timelapseDownloadReady(item) || job?.download_url) return 'ready';
+    if (status === 3) return 'failed';
+    if (status === 1) return 'needs_export';
+    return 'other';
+  }
+
+  function getFileFilter(kind) {
+    const filter = fileManagerState.filters[kind] || { query: '', type: 'all', sort: 'default' };
+    const queryEl = $(`[data-file-search="${kind}"]`);
+    const typeEl = $(`[data-file-type-filter="${kind}"]`);
+    const sortEl = $(`[data-file-sort="${kind}"]`);
+    filter.query = (queryEl?.value || '').trim().toLowerCase();
+    filter.type = typeEl?.value || 'all';
+    filter.sort = sortEl?.value || 'default';
+    fileManagerState.filters[kind] = filter;
+    return filter;
+  }
+
+  function resetFileFilter(kind) {
+    const queryEl = $(`[data-file-search="${kind}"]`);
+    const typeEl = $(`[data-file-type-filter="${kind}"]`);
+    const sortEl = $(`[data-file-sort="${kind}"]`);
+    if (queryEl) queryEl.value = '';
+    if (typeEl) typeEl.value = 'all';
+    if (sortEl) sortEl.value = 'default';
+    fileManagerState.filters[kind] = { query: '', type: 'all', sort: 'default' };
+    renderFilteredFileKind(kind);
+  }
+
+  function updateFileFilterSummary(kind, shown, total) {
+    const el = $(`[data-file-filter-summary="${kind}"]`);
+    if (!el) return;
+    if (!total) {
+      el.textContent = kind === 'history' ? 'No history rows loaded.' : kind === 'videos' ? 'No video rows loaded.' : 'No files loaded.';
+      return;
+    }
+    const filter = fileManagerState.filters[kind] || {};
+    const bits = [];
+    if (filter.query) bits.push(`search “${filter.query}”`);
+    if (filter.type && filter.type !== 'all') bits.push(filter.type.replaceAll('_', ' '));
+    if (filter.sort && filter.sort !== 'default') bits.push(`sorted ${filter.sort.replaceAll('_', ' ')}`);
+    el.textContent = `Showing ${shown}/${total}${bits.length ? ` · ${bits.join(' · ')}` : ''}`;
+  }
+
+  function sortDisplayItems(kind, items, sort, accessors = {}) {
+    const decorated = (items || []).map((item, index) => ({ item, index }));
+    if (!sort || sort === 'default') return decorated.map(row => row.item);
+    const nameOf = accessors.name || (item => String(item?.name || '').toLowerCase());
+    const sizeOf = accessors.size || (() => 0);
+    const timeOf = accessors.time || (() => 0);
+    const typeOf = accessors.type || (() => '');
+    const compareText = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+    decorated.sort((a, b) => {
+      let result = 0;
+      if (sort === 'name_asc') result = compareText(nameOf(a.item), nameOf(b.item));
+      else if (sort === 'name_desc') result = compareText(nameOf(b.item), nameOf(a.item));
+      else if (sort === 'newest') result = timeOf(b.item) - timeOf(a.item);
+      else if (sort === 'oldest') result = timeOf(a.item) - timeOf(b.item);
+      else if (sort === 'largest') result = sizeOf(b.item) - sizeOf(a.item);
+      else if (sort === 'smallest') result = sizeOf(a.item) - sizeOf(b.item);
+      else if (sort === 'type' || sort === 'status') result = compareText(typeOf(a.item), typeOf(b.item));
+      if (!result) result = a.index - b.index;
+      return result;
+    });
+    return decorated.map(row => row.item);
+  }
+
+  function applyFileDisplayFilter(kind, files, storage, directory = '/') {
+    const filter = getFileFilter(kind);
+    const query = filter.query || '';
+    let items = (files || []).filter(file => {
+      const category = fileCategory(file);
+      if (filter.type && filter.type !== 'all' && filter.type !== category) return false;
+      if (!query) return true;
+      const haystack = [fileNameOf(file), filePathOf(file), fileTypeOf(file), fileMetaLine(file, storage, directory), textBlob(file)].join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+    items = sortDisplayItems(kind, items, filter.sort, {
+      name: file => fileNameOf(file),
+      size: file => fileSizeNumber(file),
+      time: file => fileTimestampOf(file),
+      type: file => fileCategory(file),
+    });
+    updateFileFilterSummary(kind, items.length, (files || []).length);
+    return { items, total: (files || []).length, shown: items.length };
+  }
+
+  function applyHistoryDisplayFilter(rows) {
+    const kind = 'history';
+    const filter = getFileFilter(kind);
+    const query = filter.query || '';
+    let items = (rows || []).filter(item => {
+      const statusText = historyStatusText(item);
+      const completed = statusText.includes('complete') || statusText.includes('finish') || statusText === '2';
+      const failed = statusText.includes('fail') || statusText.includes('cancel') || statusText.includes('abort') || statusText === '3' || statusText === '4';
+      if (filter.type === 'timelapse' && !historyHasTimelapse(item)) return false;
+      if (filter.type === 'no_timelapse' && historyHasTimelapse(item)) return false;
+      if (filter.type === 'completed' && !completed) return false;
+      if (filter.type === 'failed' && !failed) return false;
+      if (!query) return true;
+      const haystack = [historyNameOf(item), historyIdOf(item), fmtDate(historyTimestampOf(item)), historyStatusText(item), textBlob(item)].join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+    items = sortDisplayItems(kind, items, filter.sort, {
+      name: item => historyNameOf(item),
+      size: item => historySizeNumber(item),
+      time: item => historyTimestampOf(item),
+      type: item => historyCategory(item),
+    });
+    updateFileFilterSummary(kind, items.length, (rows || []).length);
+    return { items, total: (rows || []).length, shown: items.length };
+  }
+
+  function applyTimelapseDisplayFilter(items) {
+    const kind = 'videos';
+    const filter = getFileFilter(kind);
+    const query = filter.query || '';
+    let rows = (items || []).filter(item => {
+      const cat = timelapseCategory(item);
+      if (filter.type && filter.type !== 'all' && filter.type !== cat) return false;
+      if (!query) return true;
+      const haystack = [timelapseNameOf(item, 0), timelapseIdOf(item), timelapseStatusText(timelapseStatusOf(item)), cat, timelapseRawUrlOf(item), timelapseUrlOf(item), textBlob(item)].join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+    rows = sortDisplayItems(kind, rows, filter.sort, {
+      name: item => timelapseNameOf(item, 0),
+      size: item => Number(timelapseSizeOf(item)) || historySizeNumber(item),
+      time: item => timelapseTimestampOf(item),
+      type: item => timelapseCategory(item),
+    });
+    updateFileFilterSummary(kind, rows.length, (items || []).length);
+    return { items: rows, total: (items || []).length, shown: rows.length };
+  }
+
+  function renderFilteredFileKind(kind) {
+    if (kind === 'printer') {
+      const source = fileManagerState.fileSources.printer;
+      renderFileRows($('#printerFileList'), source.files || [], source.storage || 'local', source.directory || '/', true);
+    } else if (kind === 'usb') {
+      const source = fileManagerState.fileSources.usb;
+      renderFileRows($('#usbFileList'), source.files || [], source.storage || 'u-disk', source.directory || '/', true);
+    } else if (kind === 'history') {
+      renderHistoryRows();
+    } else if (kind === 'videos') {
+      renderTimelapseRows();
+    }
+  }
+
+  function scheduleFileFilterRender(kind) {
+    clearTimeout(fileManagerState.filterTimers.get(kind));
+    const wait = $(`[data-file-search="${kind}"]`) ? 120 : 0;
+    const timer = setTimeout(() => renderFilteredFileKind(kind), wait);
+    fileManagerState.filterTimers.set(kind, timer);
+  }
+
+
+  const fileSelectionUi = {
+    printer: { count: '#printerSelectedCount', del: '#deleteSelectedPrinterFilesButton', clear: '#clearPrinterSelectionButton', selectAll: '#selectAllPrinterFilesButton' },
+    usb: { count: '#usbSelectedCount', del: '#deleteSelectedUsbFilesButton', clear: '#clearUsbSelectionButton', selectAll: '#selectAllUsbFilesButton' },
+    history: { count: '#historySelectedCount', del: '#deleteSelectedHistoryButton', clear: '#clearHistorySelectionButton', selectAll: '#selectAllHistoryButton' },
+    videos: { count: '#videosSelectedCount', del: '#deleteSelectedVideosButton', clear: '#clearVideosSelectionButton', selectAll: '#selectAllVideosButton' },
+  };
+
+  function selectionMap(kind) {
+    return fileManagerState.selections[kind] || new Map();
+  }
+
+  function selectionRecordLabel(kind, count) {
+    if (kind === 'history') return `${count} history row${count === 1 ? '' : 's'} selected`;
+    if (kind === 'videos') return `${count} video row${count === 1 ? '' : 's'} selected`;
+    return `${count} file${count === 1 ? '' : 's'} selected`;
+  }
+
+  function updateSelectionToolbar(kind) {
+    const map = selectionMap(kind);
+    const count = map.size;
+    const ui = fileSelectionUi[kind] || {};
+    const countEl = $(ui.count);
+    if (countEl) countEl.textContent = selectionRecordLabel(kind, count);
+    const del = $(ui.del);
+    if (del) del.disabled = count <= 0;
+    const clear = $(ui.clear);
+    if (clear) clear.disabled = count <= 0;
+    const selectAll = $(ui.selectAll);
+    if (selectAll) selectAll.disabled = !(fileManagerState.visibleSelections[kind] || []).length;
+    const toolbar = $(`[data-selection-toolbar="${kind}"]`);
+    if (toolbar) toolbar.classList.toggle('has-selection', count > 0);
+  }
+
+  function updateSelectionToolbars() {
+    Object.keys(fileSelectionUi).forEach(updateSelectionToolbar);
+  }
+
+  function fileSelectionKey(storage, pathVal) {
+    return `${storage || 'local'}:${String(pathVal || '').replace(/\/+$/, '')}`;
+  }
+
+  function historySelectionKey(item) {
+    const id = historyIdOf(item);
+    if (id !== undefined && id !== null && id !== '') return `history:${id}`;
+    return `history-name:${historyNameOf(item)}`;
+  }
+
+  function selectRecord(kind, record, checked) {
+    if (!record || !record.key) return;
+    const map = selectionMap(kind);
+    if (checked) map.set(record.key, record);
+    else map.delete(record.key);
+    updateSelectionToolbar(kind);
+    $$(`[data-selection-kind="${kind}"]`).forEach(input => {
+      if (input.dataset.selectKey !== record.key) return;
+      input.checked = map.has(record.key);
+      input.closest('.file-item')?.classList.toggle('is-selected', map.has(record.key));
+    });
+  }
+
+  function pruneSelection(kind, visibleRecords = []) {
+    const visibleKeys = new Set((visibleRecords || []).map(r => r.key));
+    const map = selectionMap(kind);
+    Array.from(map.keys()).forEach(key => {
+      if (!visibleKeys.has(key)) map.delete(key);
+    });
+    (visibleRecords || []).forEach(record => {
+      if (map.has(record.key)) map.set(record.key, record);
+    });
+    updateSelectionToolbar(kind);
+  }
+
+  function setVisibleSelectionRecords(kind, records = []) {
+    fileManagerState.visibleSelections[kind] = records || [];
+    pruneSelection(kind, records || []);
+  }
+
+  function clearSelection(kind) {
+    const map = selectionMap(kind);
+    map.clear();
+    $$(`[data-selection-kind="${kind}"]`).forEach(input => {
+      input.checked = false;
+      input.closest('.file-item')?.classList.remove('is-selected');
+    });
+    updateSelectionToolbar(kind);
+  }
+
+  function selectAllVisible(kind) {
+    const records = fileManagerState.visibleSelections[kind] || [];
+    const map = selectionMap(kind);
+    records.forEach(record => record?.key && map.set(record.key, record));
+    $$(`[data-selection-kind="${kind}"]`).forEach(input => {
+      input.checked = true;
+      input.closest('.file-item')?.classList.add('is-selected');
+    });
+    updateSelectionToolbar(kind);
+  }
+
+  function bindSelectionInputs(box, kind) {
+    $$(`[data-selection-kind="${kind}"]`, box).forEach(input => {
+      input.addEventListener('change', () => {
+        const record = (fileManagerState.visibleSelections[kind] || []).find(r => r.key === input.dataset.selectKey);
+        selectRecord(kind, record, !!input.checked);
+      });
+    });
+  }
+
+  function fileSelectionControl(kind, record, label = 'Select') {
+    if (!record || !record.key) return '<span class="file-select-spacer" aria-hidden="true"></span>';
+    const checked = selectionMap(kind).has(record.key) ? 'checked' : '';
+    return `<label class="file-select-control">
+      <input type="checkbox" data-selection-kind="${esc(kind)}" data-select-key="${esc(record.key)}" ${checked} aria-label="Select ${esc(record.name || 'item')}">
+      <span>${esc(label)}</span>
+    </label>`;
+  }
+
+  function renderFileRows(box, files, storage, directory = '/', preserveSource = false) {
     if (!box) return;
+    files = Array.isArray(files) ? files : [];
+    const kind = storage === 'u-disk' ? 'usb' : 'printer';
+    if (!preserveSource) fileManagerState.fileSources[kind] = { files, storage, directory };
+    const filtered = applyFileDisplayFilter(kind, files, storage, directory);
+    const displayFiles = filtered.items || [];
     if (!files.length) {
+      setVisibleSelectionRecords(kind, []);
       const label = storage === 'u-disk' ? 'No USB files returned.' : 'No printer files returned.';
       const hint = storage === 'u-disk' ? 'Make sure the USB drive is inserted and mounted, then tap Refresh.' : 'The printer returned an empty local file list.';
       renderEmpty(box, label, hint);
       return;
     }
+    if (!displayFiles.length) {
+      setVisibleSelectionRecords(kind, []);
+      renderEmpty(box, 'No matching items.', 'Try a different search, filter, or sort option.');
+      return;
+    }
+    const records = [];
     box.className = 'file-list';
-    box.innerHTML = files.map((file, i) => {
+    box.innerHTML = displayFiles.map((file, i) => {
       const name = fileNameOf(file);
       const folder = fileIsFolder(file);
       const meta = fileMetaLine(file, storage, directory);
       const icon = folder ? '📁 ' : '';
-      return `<div class="file-item" data-file-index="${i}">
+      const pathVal = storage === 'u-disk' ? fullFilePath(file, storage, directory) : (filePathOf(file) || fileNameOf(file));
+      const record = folder ? null : { key: fileSelectionKey(storage, pathVal), name, path: pathVal, storage, directory, file };
+      if (record) records.push(record);
+      const selected = record && selectionMap(kind).has(record.key);
+      return `<div class="file-item selectable-file-item ${selected ? 'is-selected' : ''}" data-file-index="${i}">
+        ${record ? fileSelectionControl(kind, record) : '<span class="file-select-spacer" aria-hidden="true"></span>'}
         <div class="file-main"><strong>${icon}${esc(name)}</strong><span>${esc(meta || 'file')}</span></div>
         <div class="file-actions">
           ${folder && storage === 'u-disk' ? `<button class="button primary tiny" type="button" data-file-open="${i}">Open</button>` : ''}
-          ${!folder ? `<button class="button secondary tiny" type="button" data-file-info="${i}">Info</button>` : ''}
+          ${!folder ? `<button class="button info tiny file-info-button" type="button" data-file-info="${i}">Info</button>` : ''}
           ${!folder ? `<button class="button primary tiny" type="button" data-file-print="${i}">Print</button>` : ''}
           <button class="button danger tiny" type="button" data-file-delete="${i}">Delete</button>
         </div>
       </div>`;
     }).join('');
-    $$('[data-file-open]', box).forEach(el => el.addEventListener('click', () => openUsbFolder(files[Number(el.dataset.fileOpen)])));
-    $$('[data-file-info]', box).forEach(el => el.addEventListener('click', () => showFileDetail(files[Number(el.dataset.fileInfo)], storage, directory)));
-    $$('[data-file-print]', box).forEach(el => el.addEventListener('click', () => startFile(files[Number(el.dataset.filePrint)], storage, directory)));
-    $$('[data-file-delete]', box).forEach(el => el.addEventListener('click', () => deleteFile(files[Number(el.dataset.fileDelete)], storage, directory)));
+    setVisibleSelectionRecords(kind, records);
+    bindSelectionInputs(box, kind);
+    $$('[data-file-open]', box).forEach(el => el.addEventListener('click', () => openUsbFolder(displayFiles[Number(el.dataset.fileOpen)])));
+    $$('[data-file-info]', box).forEach(el => el.addEventListener('click', () => showFileDetail(displayFiles[Number(el.dataset.fileInfo)], storage, directory)));
+    $$('[data-file-print]', box).forEach(el => el.addEventListener('click', () => startFile(displayFiles[Number(el.dataset.filePrint)], storage, directory)));
+    $$('[data-file-delete]', box).forEach(el => el.addEventListener('click', () => deleteFile(displayFiles[Number(el.dataset.fileDelete)], storage, directory)));
   }
 
   async function loadFilesFor(storage, directory = '/', boxId, loadingId, buttonId) {
@@ -3008,6 +3661,7 @@
       const data = await printerApi(`/files?storage_media=${encodeURIComponent(storage)}&path=${encodeURIComponent(directory)}&page_size=150`);
       const printerErr = printerResultError(data);
       if (printerErr) {
+        setVisibleSelectionRecords(storage === 'u-disk' ? 'usb' : 'printer', []);
         const hint = storage === 'u-disk' ? 'USB storage may be empty, missing, or not mounted.' : 'The printer rejected the local file-list request.';
         renderEmpty(box, 'File load returned a printer error.', `${printerErr}. ${hint}`);
         toast(printerErr, 'warn', 7000);
@@ -3018,6 +3672,7 @@
       toast(`Loaded ${files.length} ${storage === 'u-disk' ? 'USB' : 'printer'} file item(s)`, 'success');
       return files;
     } catch (err) {
+      setVisibleSelectionRecords(storage === 'u-disk' ? 'usb' : 'printer', []);
       renderEmpty(box, 'File load failed.', err.message);
       toast(err.message, 'error', 7000);
       return [];
@@ -3055,16 +3710,197 @@
     loadUsbFiles();
   }
 
-  async function showFileDetail(file, storage, directory = '/') {
+  function fileInfoModalElements() {
+    return {
+      modal: $('#fileInfoModal'),
+      title: $('#fileInfoModalTitle'),
+      subtitle: $('#fileInfoModalSubtitle'),
+      status: $('#fileInfoModalStatus'),
+      grid: $('#fileInfoSummaryGrid'),
+      raw: $('#fileInfoRawJson'),
+      thumb: $('#fileInfoThumbnail'),
+      thumbPlaceholder: $('#fileInfoThumbnailPlaceholder'),
+      previewHint: $('#fileInfoPreviewHint'),
+    };
+  }
+
+  function openFileInfoModal() {
+    const { modal } = fileInfoModalElements();
+    if (!modal) return false;
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+    return true;
+  }
+
+  function closeFileInfoModal() {
+    const { modal, thumb } = fileInfoModalElements();
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    if (thumb) {
+      thumb.removeAttribute('src');
+      thumb.classList.add('hidden');
+    }
+  }
+
+  function setFileInfoStatus(message = '', tone = '') {
+    const { status } = fileInfoModalElements();
+    if (!status) return;
+    status.classList.toggle('hidden', !message);
+    status.classList.remove('good', 'bad', 'warn');
+    if (tone) status.classList.add(tone);
+    status.textContent = message || '';
+  }
+
+  function fileInfoValueFromAny(source, keys) {
+    if (!source || typeof source !== 'object') return '';
+    for (const key of keys) {
+      const value = source[key];
+      if (value !== undefined && value !== null && value !== '') return value;
+    }
+    return '';
+  }
+
+  function fileInfoStorageLabel(storage) {
+    if (storage === 'u-disk') return 'USB drive';
+    if (storage === 'local') return 'Printer local';
+    return storage || 'Unknown';
+  }
+
+  function fileInfoDuration(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return value || '';
+    const h = Math.floor(n / 3600);
+    const m = Math.floor((n % 3600) / 60);
+    const s = Math.floor(n % 60);
+    return [h ? `${h}h` : '', m ? `${m}m` : '', (!h && !m) || s ? `${s}s` : ''].filter(Boolean).join(' ');
+  }
+
+  function fileInfoTypeLabel(file, detail = null) {
+    const raw = fileInfoValueFromAny(detail || {}, ['type', 'file_type', 'FileType', 'media_type', 'MediaType']) || fileTypeOf(file);
+    if (fileIsFolder(file) || String(raw).toLowerCase().includes('folder')) return 'Folder';
+    const name = String(fileNameOf(file) || '').toLowerCase();
+    if (/\.(gcode|gco|gc)$/i.test(name)) return 'G-code';
+    if (/\.(3mf|stl|obj)$/i.test(name)) return 'Model file';
+    if (/\.(png|jpg|jpeg|webp|gif)$/i.test(name)) return 'Image';
+    if (/\.(mp4|mov|avi|mkv)$/i.test(name)) return 'Video';
+    return raw || 'File';
+  }
+
+  function fileInfoThumbnailCandidate(file, storage, directory = '/') {
+    if (!file || fileIsFolder(file)) return '';
     const name = storage === 'u-disk' ? fullFilePath(file, storage, directory) : fileNameOf(file);
+    const lower = String(name || '').toLowerCase();
+    if (!/\.(gcode|gco|gc|3mf)$/i.test(lower)) return '';
+    return `/api/printers/${encodeURIComponent(activePrinterId())}/files/thumbnail-image?storage_media=${encodeURIComponent(storage)}&filename=${encodeURIComponent(name)}&v=${Date.now()}`;
+  }
+
+  function renderFileInfoRows(rows = []) {
+    return rows
+      .filter(row => row && row[1] !== undefined && row[1] !== null && String(row[1]) !== '')
+      .map(([label, value]) => `<div class="file-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`)
+      .join('') || '<div class="file-info-empty">No details returned for this file.</div>';
+  }
+
+  function setFileInfoThumbnail(url = '', name = '') {
+    const { thumb, thumbPlaceholder, previewHint } = fileInfoModalElements();
+    if (!thumb || !thumbPlaceholder) return;
+    thumb.onload = () => {
+      thumb.classList.remove('hidden');
+      thumbPlaceholder.classList.add('hidden');
+      if (previewHint) previewHint.textContent = 'Thumbnail loaded from the printer.';
+    };
+    thumb.onerror = () => {
+      thumb.removeAttribute('src');
+      thumb.classList.add('hidden');
+      thumbPlaceholder.classList.remove('hidden');
+      thumbPlaceholder.textContent = 'No thumbnail available';
+      if (previewHint) previewHint.textContent = 'The printer did not provide a thumbnail for this file.';
+    };
+    if (!url) {
+      thumb.removeAttribute('src');
+      thumb.classList.add('hidden');
+      thumbPlaceholder.classList.remove('hidden');
+      thumbPlaceholder.textContent = 'No thumbnail available';
+      if (previewHint) previewHint.textContent = 'G-code thumbnails appear here when the printer provides one.';
+      return;
+    }
+    thumb.alt = `Thumbnail preview for ${name || 'file'}`;
+    thumbPlaceholder.classList.remove('hidden');
+    thumbPlaceholder.textContent = 'Loading thumbnail…';
+    thumb.classList.add('hidden');
+    thumb.src = url;
+  }
+
+  function renderFileInfoModal({ title = 'File info', subtitle = '', rows = [], raw = null, thumbnailUrl = '', thumbnailName = '', status = '', tone = '' } = {}) {
+    const els = fileInfoModalElements();
+    if (!els.modal) return false;
+    if (els.title) els.title.textContent = title;
+    if (els.subtitle) els.subtitle.textContent = subtitle || 'Details returned by the printer.';
+    if (els.grid) els.grid.innerHTML = renderFileInfoRows(rows);
+    if (els.raw) els.raw.textContent = raw === null || raw === undefined ? 'Waiting for printer response...' : JSON.stringify(raw, null, 2);
+    setFileInfoThumbnail(thumbnailUrl, thumbnailName || title);
+    setFileInfoStatus(status, tone);
+    return openFileInfoModal();
+  }
+
+  function fileInfoBaseRows(file, storage, directory = '/', detail = null) {
+    const name = storage === 'u-disk' ? fullFilePath(file, storage, directory) : fileNameOf(file);
+    const detailRoot = detail && typeof detail === 'object' ? detail : {};
+    const size = fileInfoValueFromAny(detailRoot, ['file_size', 'FileSize', 'size', 'Size']) || fileSizeOf(file);
+    const modified = fileInfoValueFromAny(detailRoot, ['mtime', 'modified_time', 'ModifyTime', 'update_time', 'UpdateTime', 'create_time', 'CreateTime', 'time']) || fileTimeOf(file);
+    const layerHeight = fileInfoValueFromAny(detailRoot, ['layer_height', 'LayerHeight', 'layerHeight']);
+    const printTime = fileInfoValueFromAny(detailRoot, ['estimated_time', 'EstimateTime', 'print_time', 'PrintTime', 'estimated_print_time']);
+    const filament = fileInfoValueFromAny(detailRoot, ['filament_used', 'FilamentUsed', 'material_length', 'MaterialLength', 'filament_length']);
+    const slicer = fileInfoValueFromAny(detailRoot, ['slicer', 'Slicer', 'slicer_version', 'SlicerVersion']);
+    return [
+      ['Name', basename(name) || name],
+      ['Path', name],
+      ['Storage', fileInfoStorageLabel(storage)],
+      ['Type', fileInfoTypeLabel(file, detailRoot)],
+      ['Size', bytesHuman(size)],
+      ['Modified', fmtDate(modified) || modified],
+      ['Directory', storage === 'u-disk' ? directory : '/'],
+      ['Layer height', layerHeight],
+      ['Estimated print time', fileInfoDuration(printTime)],
+      ['Filament', filament],
+      ['Slicer', slicer],
+    ];
+  }
+
+  async function showFileDetail(file, storage, directory = '/') {
+    if (!file || fileIsFolder(file)) return;
+    const name = storage === 'u-disk' ? fullFilePath(file, storage, directory) : fileNameOf(file);
+    const thumbUrl = fileInfoThumbnailCandidate(file, storage, directory);
+    const opened = renderFileInfoModal({
+      title: basename(name) || 'File info',
+      subtitle: `${fileInfoStorageLabel(storage)} · loading printer detail…`,
+      rows: fileInfoBaseRows(file, storage, directory),
+      raw: { list_row: file },
+      thumbnailUrl: thumbUrl,
+      thumbnailName: name,
+      status: 'Loading detailed file info from the printer…',
+    });
+    if (!opened) return toast('File info modal is not available on this page.', 'warn');
     try {
       const url = `/files/detail?storage_media=${encodeURIComponent(storage)}&filename=${encodeURIComponent(name)}&directory=${encodeURIComponent(directory)}`;
       const data = await printerApi(url);
-      const pretty = JSON.stringify(unwrapCommand(data), null, 2);
-      toast('File info loaded. Details printed to browser console.', 'success');
+      const detail = unwrapCommand(data);
+      const pretty = JSON.stringify(detail, null, 2);
       console.log('[cc2-dash] file detail', name, pretty);
-      alert(`File details for ${name}:\n\n${pretty.slice(0, 1800)}${pretty.length > 1800 ? '\n\n…truncated; see browser console for full detail.' : ''}`);
+      renderFileInfoModal({
+        title: basename(name) || 'File info',
+        subtitle: `${fileInfoStorageLabel(storage)} · ${fileInfoTypeLabel(file, detail)}`,
+        rows: fileInfoBaseRows(file, storage, directory, detail),
+        raw: detail,
+        thumbnailUrl: thumbUrl,
+        thumbnailName: name,
+      });
+      toast('File info loaded.', 'success');
     } catch (err) {
+      setFileInfoStatus('File detail failed: ' + err.message, 'bad');
       toast('File detail failed: ' + err.message, 'error');
     }
   }
@@ -3099,6 +3935,47 @@
       toast(err.message, 'error', 7000);
     } finally {
       setButtonBusy(button, false);
+    }
+  }
+
+  async function deleteSelectedFiles(kind) {
+    const records = Array.from(selectionMap(kind).values());
+    if (!records.length) return toast('Select at least one file first.', 'warn');
+    const storage = kind === 'usb' ? 'u-disk' : 'local';
+    const names = records.slice(0, 8).map(r => r.name || r.path).join('\n');
+    const extra = records.length > 8 ? `\n…plus ${records.length - 8} more` : '';
+    if (!confirm(`Delete ${records.length} selected ${kind === 'usb' ? 'USB' : 'printer'} file(s)? This cannot be undone.\n\n${names}${extra}`)) return;
+    const button = $(kind === 'usb' ? '#deleteSelectedUsbFilesButton' : '#deleteSelectedPrinterFilesButton');
+    setButtonBusy(button, true, 'Deleting...');
+    const status = kind === 'usb' ? $('#usbFileLoadStatus') : $('#printerFileLoadStatus');
+    const failures = [];
+    try {
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        if (status) {
+          status.classList.remove('hidden', 'good', 'bad');
+          status.classList.add('warn');
+          status.innerHTML = `<span class="spinner"></span><span>Deleting ${i + 1}/${records.length}: ${esc(record.name || record.path || 'file')}</span>`;
+        }
+        try {
+          await printerApi('/files/delete', { method: 'POST', body: JSON.stringify({ file_path: record.path, storage_media: record.storage || storage }) });
+        } catch (err) {
+          failures.push(`${record.name || record.path}: ${err.message}`);
+        }
+      }
+      if (failures.length) {
+        toast(`${records.length - failures.length}/${records.length} file delete command(s) sent. Some failed.`, 'warn', 9000);
+        console.warn('[cc2-dash] bulk file delete failures', failures);
+        alert(`Some deletes failed:\n\n${failures.slice(0, 12).join('\n')}${failures.length > 12 ? '\n…see browser console for full list.' : ''}`);
+      } else {
+        toast(`${records.length} file delete command(s) sent.`, 'success');
+      }
+      clearSelection(kind);
+      if (kind === 'usb') await loadUsbFiles();
+      else await loadPrinterFiles();
+    } finally {
+      setButtonBusy(button, false);
+      if (status) status.classList.add('hidden');
     }
   }
 
@@ -3394,6 +4271,55 @@
   }
 
 
+  function renderHistoryRows(rows = null) {
+    const box = $('#historyList');
+    if (!box) return;
+    if (Array.isArray(rows)) fileManagerState.historyItems = rows;
+    const sourceRows = Array.isArray(fileManagerState.historyItems) ? fileManagerState.historyItems : [];
+    if (!sourceRows.length) {
+      updateFileFilterSummary('history', 0, 0);
+      setVisibleSelectionRecords('history', []);
+      renderEmpty(box, 'No print history returned.', 'The printer did not return any saved history rows. The stock portal uses method 1036 for this section.');
+      return;
+    }
+    const filtered = applyHistoryDisplayFilter(sourceRows);
+    const displayRows = filtered.items || [];
+    if (!displayRows.length) {
+      setVisibleSelectionRecords('history', []);
+      renderEmpty(box, 'No matching history rows.', 'Try a different search, filter, or sort option.');
+      return;
+    }
+    const records = [];
+    box.className = 'file-list';
+    box.innerHTML = displayRows.map((item, i) => {
+      const name = historyNameOf(item);
+      const id = historyIdOf(item);
+      const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime;
+      const end = item?.end_time || item?.EndTime;
+      const size = bytesHuman(item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size);
+      const status = item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '';
+      const video = item?.has_timelapse || item?.time_lapse_video_status ? 'timelapse' : '';
+      const meta = [size, fmtDate(start), end ? `ended ${fmtDate(end)}` : '', status ? `status ${status}` : '', video, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
+      const record = { key: historySelectionKey(item), name, task_id: id, item };
+      records.push(record);
+      const selected = selectionMap('history').has(record.key);
+      return `<div class="file-item selectable-file-item ${selected ? 'is-selected' : ''}" data-history-index="${i}">
+        ${fileSelectionControl('history', record)}
+        <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
+        <div class="file-actions">
+          <button class="button info tiny file-info-button" type="button" data-history-info="${i}">Info</button>
+          <button class="button primary tiny" type="button" data-history-reprint="${i}">Reprint</button>
+          <button class="button danger tiny" type="button" data-history-delete="${i}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+    setVisibleSelectionRecords('history', records);
+    bindSelectionInputs(box, 'history');
+    $$('[data-history-info]', box).forEach(el => el.addEventListener('click', () => showHistoryInfo(displayRows[Number(el.dataset.historyInfo)])));
+    $$('[data-history-reprint]', box).forEach(el => el.addEventListener('click', () => reprintHistory(displayRows[Number(el.dataset.historyReprint)])));
+    $$('[data-history-delete]', box).forEach(el => el.addEventListener('click', () => deleteHistory(displayRows[Number(el.dataset.historyDelete)])));
+  }
+
   async function loadHistoryList() {
     const box = $('#historyList');
     const loading = $('#historyLoadStatus');
@@ -3404,39 +4330,16 @@
       const data = await printerApi('/history/list?page_size=150');
       const printerErr = printerResultError(data);
       if (printerErr) {
+        setVisibleSelectionRecords('history', []);
         renderEmpty(box, 'Print history returned a printer error.', printerErr);
         toast(printerErr, 'warn', 7000);
         return;
       }
       const rows = data?.history || arrayFromAny(data, ['history_task_list', 'HistoryTaskList', 'task_list', 'items', 'list']);
-      if (!rows.length) {
-        renderEmpty(box, 'No print history returned.', 'The printer did not return any saved history rows. The stock portal uses method 1036 for this section.');
-        return;
-      }
-      box.className = 'file-list';
-      box.innerHTML = rows.map((item, i) => {
-        const name = historyNameOf(item);
-        const id = historyIdOf(item);
-        const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime;
-        const end = item?.end_time || item?.EndTime;
-        const size = bytesHuman(item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size);
-        const status = item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '';
-        const video = item?.has_timelapse || item?.time_lapse_video_status ? 'timelapse' : '';
-        const meta = [size, fmtDate(start), end ? `ended ${fmtDate(end)}` : '', status ? `status ${status}` : '', video, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
-        return `<div class="file-item" data-history-index="${i}">
-          <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
-          <div class="file-actions">
-            <button class="button secondary tiny" type="button" data-history-info="${i}">Info</button>
-            <button class="button primary tiny" type="button" data-history-reprint="${i}">Reprint</button>
-            <button class="button danger tiny" type="button" data-history-delete="${i}">Delete</button>
-          </div>
-        </div>`;
-      }).join('');
-      $$('[data-history-info]', box).forEach(el => el.addEventListener('click', () => showHistoryInfo(rows[Number(el.dataset.historyInfo)])));
-      $$('[data-history-reprint]', box).forEach(el => el.addEventListener('click', () => reprintHistory(rows[Number(el.dataset.historyReprint)])));
-      $$('[data-history-delete]', box).forEach(el => el.addEventListener('click', () => deleteHistory(rows[Number(el.dataset.historyDelete)])));
-      toast(`Loaded ${rows.length} history row(s)`, 'success');
+      renderHistoryRows(rows || []);
+      if (rows?.length) toast(`Loaded ${rows.length} history row(s)`, 'success');
     } catch (err) {
+      setVisibleSelectionRecords('history', []);
       renderEmpty(box, 'Print history load failed.', err.message);
       toast(err.message, 'error', 7000);
     } finally {
@@ -3447,9 +4350,34 @@
 
   function showHistoryInfo(item) {
     const name = historyNameOf(item);
-    const pretty = JSON.stringify(item?.raw || item, null, 2);
-    console.log('[cc2-dash] history detail', name, pretty);
-    alert(`Print history details for ${name}:\n\n${pretty.slice(0, 1800)}${pretty.length > 1800 ? '\n\n…truncated; see browser console for full detail.' : ''}`);
+    const raw = item?.raw || item;
+    const id = historyIdOf(item);
+    const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime;
+    const end = item?.end_time || item?.EndTime;
+    const status = item?.task_status ?? item?.TaskStatus ?? item?.status ?? item?.Status ?? '';
+    const size = item?.file_size ?? item?.FileSize ?? item?.size ?? item?.Size;
+    const hasTimelapse = item?.has_timelapse || item?.time_lapse_video_status || item?.TimeLapseVideoStatus;
+    const rows = [
+      ['Task name', name],
+      ['Task ID', id],
+      ['Status', status],
+      ['Size', bytesHuman(size)],
+      ['Started', fmtDate(start) || start],
+      ['Ended', fmtDate(end) || end],
+      ['Timelapse', hasTimelapse ? 'Yes' : 'No'],
+    ];
+    console.log('[cc2-dash] history detail', name, JSON.stringify(raw, null, 2));
+    const thumbUrl = /\.(gcode|gco|gc|3mf)$/i.test(String(name || ''))
+      ? `/api/printers/${encodeURIComponent(activePrinterId())}/files/thumbnail-image?storage_media=local&filename=${encodeURIComponent(name)}&v=${Date.now()}`
+      : '';
+    renderFileInfoModal({
+      title: name || 'Print history row',
+      subtitle: 'Print history details',
+      rows,
+      raw,
+      thumbnailUrl: thumbUrl,
+      thumbnailName: name,
+    });
   }
 
   async function reprintHistory(item) {
@@ -3485,6 +4413,27 @@
     }
   }
 
+  async function deleteSelectedHistoryRows(kind = 'history') {
+    const records = Array.from(selectionMap(kind).values()).filter(r => r?.task_id !== undefined && r.task_id !== null && r.task_id !== '');
+    if (!records.length) return toast('Select at least one row with a task ID first.', 'warn');
+    const names = records.slice(0, 8).map(r => `${r.name || 'Task'} · ID ${r.task_id}`).join('\n');
+    const extra = records.length > 8 ? `\n…plus ${records.length - 8} more` : '';
+    if (!confirm(`Delete ${records.length} selected ${kind === 'videos' ? 'timelapse/video' : 'history'} row(s)?\n\n${names}${extra}`)) return;
+    const button = $(kind === 'videos' ? '#deleteSelectedVideosButton' : '#deleteSelectedHistoryButton');
+    setButtonBusy(button, true, 'Deleting...');
+    try {
+      await printerApi('/history/delete', { method: 'POST', body: JSON.stringify({ task_ids: records.map(r => r.task_id) }) });
+      toast(`${records.length} delete command(s) sent.`, 'success');
+      clearSelection(kind);
+      if (kind === 'videos') await loadTimelapseList();
+      else await loadHistoryList();
+    } catch (err) {
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
   function timelapseNameOf(item, i) {
     return item?.task_name || item?.TaskName || item?.filename || item?.FileName || item?.name || `Timelapse ${i + 1}`;
   }
@@ -3494,11 +4443,11 @@
   }
 
   function timelapseUrlOf(item) {
-    return item?.download_url || item?.DownloadUrl || item?.time_lapse_video_url || item?.TimeLapseVideoUrl || item?.video_url || item?.VideoUrl || item?.url || item?.Url || '';
+    return item?.download_url || item?.DownloadUrl || '';
   }
 
   function timelapseRawUrlOf(item) {
-    return item?.time_lapse_video_url || item?.TimeLapseVideoUrl || item?.video_url || item?.VideoUrl || item?.url || item?.Url || '';
+    return item?.time_lapse_video_url || item?.TimeLapseVideoUrl || item?.video_url || item?.VideoUrl || item?.url || item?.Url || item?.download_file_name || item?.DownloadFileName || '';
   }
 
   function timelapseStatusOf(item) {
@@ -3520,6 +4469,93 @@
     return status ? `status ${status}` : '';
   }
 
+  function timelapseExportKey(item) {
+    const id = timelapseIdOf(item);
+    if (id !== undefined && id !== null && id !== '') return `id:${id}`;
+    const token = timelapseRawUrlOf(item) || timelapseUrlOf(item) || timelapseNameOf(item, 0);
+    return `token:${String(token || '').trim()}`;
+  }
+
+  function timelapseDownloadReady(item) {
+    if (item?.export_ready === true || item?.ExportReady === true) return !!timelapseUrlOf(item);
+    const status = timelapseStatusOf(item);
+    const url = timelapseUrlOf(item);
+    if (!url) return false;
+    if (status === 1 || status === 3) return false;
+    if (status === 2) return true;
+    return true;
+  }
+
+  function setTimelapseStatus(message = '', tone = '', busy = false) {
+    const el = $('#timelapseLoadStatus');
+    if (!el) return;
+    if (!message) {
+      el.classList.add('hidden');
+      el.classList.remove('good', 'bad', 'warn');
+      return;
+    }
+    el.classList.remove('hidden', 'good', 'bad', 'warn');
+    if (tone) el.classList.add(tone);
+    el.innerHTML = `${busy ? '<span class="spinner"></span>' : ''}<span>${esc(message)}</span>`;
+  }
+
+  function renderTimelapseRows(items = null) {
+    const box = $('#timelapseList');
+    if (!box) return;
+    if (Array.isArray(items)) fileManagerState.timelapseItems = items;
+    const sourceItems = Array.isArray(fileManagerState.timelapseItems) ? fileManagerState.timelapseItems : [];
+    if (!sourceItems.length) {
+      updateFileFilterSummary('videos', 0, 0);
+      setVisibleSelectionRecords('videos', []);
+      renderEmpty(box, 'No timelapse videos returned.', 'The printer did not return any video records. The stock portal only shows history rows with timelapse status 1 or 2.');
+      return;
+    }
+    const filtered = applyTimelapseDisplayFilter(sourceItems);
+    const displayItems = filtered.items || [];
+    if (!displayItems.length) {
+      setVisibleSelectionRecords('videos', []);
+      renderEmpty(box, 'No matching video rows.', 'Try a different search, filter, or sort option.');
+      return;
+    }
+    const records = [];
+    box.className = 'file-list';
+    box.innerHTML = displayItems.map((item, i) => {
+      const name = timelapseNameOf(item, i);
+      const id = timelapseIdOf(item);
+      const key = timelapseExportKey(item);
+      const job = fileManagerState.timelapseJobs.get(key);
+      const rawUrl = timelapseRawUrlOf(item);
+      const ready = timelapseDownloadReady(item) || !!job?.download_url;
+      const generating = job?.status === 'generating';
+      const failed = job?.status === 'error';
+      const status = timelapseStatusOf(item);
+      const statusLabel = generating ? 'generating' : (failed ? 'export failed' : timelapseStatusText(status));
+      const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime || item?.start_time || item?.StartTime;
+      const size = bytesHuman(timelapseSizeOf(item));
+      const duration = timelapseDurationOf(item);
+      const readyText = ready ? 'download ready' : (generating ? 'exporting' : 'export needed');
+      const jobText = job?.message && (generating || failed) ? job.message : '';
+      const meta = [size, fmtDate(start), duration !== '' && duration !== undefined && duration !== null ? `${duration}s` : '', statusLabel, readyText, `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
+      const record = (id === undefined || id === null || id === '') ? null : { key: historySelectionKey(item), name, task_id: id, item };
+      if (record && !generating) records.push(record);
+      const selected = record && selectionMap('videos').has(record.key);
+      return `<div class="file-item selectable-file-item timelapse-item ${generating ? 'is-generating' : ''} ${ready ? 'is-ready' : ''} ${selected ? 'is-selected' : ''}" data-timelapse-index="${i}" data-timelapse-key="${esc(key)}">
+        ${record && !generating ? fileSelectionControl('videos', record) : '<span class="file-select-spacer" aria-hidden="true"></span>'}
+        <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span>${jobText ? `<em class="timelapse-job-line">${generating ? '<span class="spinner"></span> ' : ''}${esc(jobText)}</em>` : ''}</div>
+        <div class="file-actions">
+          <button class="button primary tiny" type="button" data-tl-download="${i}" ${ready ? '' : 'disabled'}>${ready ? 'Download' : 'Export first'}</button>
+          <button class="button primary tiny timelapse-export-button" type="button" data-tl-export="${i}" ${generating ? 'disabled' : ''}>${generating ? 'Generating...' : 'Export'}</button>
+          <button class="button danger tiny" type="button" data-tl-delete="${i}" ${generating ? 'disabled' : ''}>Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+    setVisibleSelectionRecords('videos', records);
+    bindSelectionInputs(box, 'videos');
+    $$('[data-tl-download]', box).forEach(el => el.addEventListener('click', () => downloadTimelapse(displayItems[Number(el.dataset.tlDownload)])));
+    $$('[data-tl-export]', box).forEach(el => el.addEventListener('click', e => exportTimelapse(displayItems[Number(el.dataset.tlExport)], e.currentTarget)));
+    $$('[data-tl-delete]', box).forEach(el => el.addEventListener('click', () => deleteTimelapse(displayItems[Number(el.dataset.tlDelete)])));
+  }
+
   async function loadTimelapseList() {
     const box = $('#timelapseList');
     const loading = $('#timelapseLoadStatus');
@@ -3530,6 +4566,7 @@
       const data = await printerApi('/timelapse');
       const printerErr = printerResultError(data);
       if (printerErr) {
+        setVisibleSelectionRecords('videos', []);
         renderEmpty(box, 'Timelapse/history load returned a printer error.', printerErr);
         toast(printerErr, 'warn', 7000);
         return;
@@ -3537,37 +4574,16 @@
       let items = arrayFromAny(data, ['videos', 'time_lapse_video_list', 'TimeLapseVideoList', 'items', 'list']);
       if (!items.length && Array.isArray(data?.videos)) items = data.videos;
       if (!items.length) {
+        setVisibleSelectionRecords('videos', []);
         const root = unwrapCommand(data);
         const rawCount = root?.raw_history_total ?? data?.result?.raw_history_total ?? 0;
         renderEmpty(box, 'No timelapse videos returned.', rawCount ? `History loaded (${rawCount} task(s)), but none were marked as timelapse video rows by the printer.` : 'The printer did not return any video records. The stock portal only shows history rows with timelapse status 1 or 2.');
         return;
       }
-      box.className = 'file-list';
-      box.innerHTML = items.map((item, i) => {
-        const name = timelapseNameOf(item, i);
-        const id = timelapseIdOf(item);
-        const url = timelapseUrlOf(item);
-        const rawUrl = timelapseRawUrlOf(item);
-        const status = timelapseStatusOf(item);
-        const statusLabel = timelapseStatusText(status);
-        const start = item?.begin_time || item?.BeginTime || item?.create_time || item?.CreateTime || item?.start_time || item?.StartTime;
-        const size = bytesHuman(timelapseSizeOf(item));
-        const duration = timelapseDurationOf(item);
-        const meta = [size, fmtDate(start), duration !== '' && duration !== undefined && duration !== null ? `${duration}s` : '', statusLabel, url || rawUrl ? 'download ready' : 'export needed', `ID ${id ?? '-'}`].filter(Boolean).join(' · ');
-        return `<div class="file-item" data-timelapse-index="${i}">
-          <div class="file-main"><strong>${esc(name)}</strong><span>${esc(meta)}</span></div>
-          <div class="file-actions">
-            <button class="button primary tiny" type="button" data-tl-download="${i}">${url ? 'Download' : 'Open'}</button>
-            <button class="button secondary tiny" type="button" data-tl-export="${i}">Export</button>
-            <button class="button danger tiny" type="button" data-tl-delete="${i}">Delete</button>
-          </div>
-        </div>`;
-      }).join('');
-      $$('[data-tl-download]', box).forEach(el => el.addEventListener('click', () => downloadTimelapse(items[Number(el.dataset.tlDownload)])));
-      $$('[data-tl-export]', box).forEach(el => el.addEventListener('click', () => exportTimelapse(items[Number(el.dataset.tlExport)])));
-      $$('[data-tl-delete]', box).forEach(el => el.addEventListener('click', () => deleteTimelapse(items[Number(el.dataset.tlDelete)])));
+      renderTimelapseRows(items);
       toast(`Loaded ${items.length} timelapse/history item(s)`, 'success');
     } catch (err) {
+      setVisibleSelectionRecords('videos', []);
       renderEmpty(box, 'Timelapse load failed.', err.message);
       toast(err.message, 'error', 7000);
     } finally {
@@ -3577,30 +4593,87 @@
   }
 
   function downloadTimelapse(item) {
-    const url = timelapseUrlOf(item);
-    if (!url) {
-      toast('No video URL returned yet. Try Export first.', 'warn');
+    const key = timelapseExportKey(item);
+    const job = fileManagerState.timelapseJobs.get(key);
+    const url = job?.download_url || timelapseUrlOf(item);
+    if (!url || !timelapseDownloadReady(item) && !job?.download_url) {
+      toast('Export the timelapse first, then download once generation finishes.', 'warn');
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
-  async function exportTimelapse(item) {
-    const token = timelapseRawUrlOf(item) || timelapseUrlOf(item) || item?.task_name || item?.TaskName || String(timelapseIdOf(item) ?? '');
+  async function pollTimelapseExport(jobId, key, button) {
+    const started = Date.now();
+    const maxMs = 35 * 60 * 1000;
+    while (Date.now() - started < maxMs) {
+      await new Promise(resolve => setTimeout(resolve, 2200));
+      let data;
+      try {
+        data = await printerApi(`/timelapse/export/${encodeURIComponent(jobId)}`);
+      } catch (err) {
+        const prev = fileManagerState.timelapseJobs.get(key) || {};
+        fileManagerState.timelapseJobs.set(key, { ...prev, status: 'error', message: err.message });
+        renderTimelapseRows(fileManagerState.timelapseItems);
+        setTimelapseStatus(err.message, 'bad', false);
+        setButtonBusy(button, false);
+        toast(err.message, 'error', 9000);
+        return;
+      }
+      const job = data?.job || data;
+      fileManagerState.timelapseJobs.set(key, job);
+      renderTimelapseRows(fileManagerState.timelapseItems);
+      if (job.status === 'ready' || (job.status === 'complete' && job.download_url)) {
+        setButtonBusy(button, false);
+        setTimelapseStatus('Time-lapse video ready. Tap Download.', 'good', false);
+        toast('Time-lapse video ready to download.', 'success', 7000);
+        await loadTimelapseList();
+        return;
+      }
+      if (job.status === 'complete' && !job.download_url) {
+        setTimelapseStatus(job.message || 'Export finished, waiting for Download to appear in Video List…', 'warn', true);
+        await loadTimelapseList();
+      }
+      if (job.status === 'error') {
+        setButtonBusy(button, false);
+        setTimelapseStatus(job.message || 'Time-lapse export failed.', 'bad', false);
+        toast(job.error || job.message || 'Time-lapse export failed.', 'error', 10000);
+        return;
+      }
+      setTimelapseStatus(job.message || 'Time-lapse video generating…', 'warn', true);
+    }
+    const prev = fileManagerState.timelapseJobs.get(key) || {};
+    fileManagerState.timelapseJobs.set(key, { ...prev, status: 'error', message: 'Export polling timed out after 35 minutes. Refresh Video List; the printer may still finish the video.' });
+    renderTimelapseRows(fileManagerState.timelapseItems);
+    setButtonBusy(button, false);
+    setTimelapseStatus('Export polling timed out after 35 minutes. Refresh Video List; the printer may still finish the video.', 'warn', false);
+  }
+
+  async function exportTimelapse(item, button = null) {
+    const token = timelapseRawUrlOf(item) || item?.task_name || item?.TaskName || String(timelapseIdOf(item) ?? '');
     if (!token) return toast('No task/video identifier found for export.', 'warn');
-    const button = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
-    setButtonBusy(button, true, 'Exporting...');
+    const key = timelapseExportKey(item);
+    setButtonBusy(button, true, 'Generating...');
+    setTimelapseStatus('Time-lapse video generating…', 'warn', true);
+    fileManagerState.timelapseJobs.set(key, { status: 'generating', message: 'Time-lapse video generating…' });
+    renderTimelapseRows(fileManagerState.timelapseItems);
     try {
-      const data = await printerApi('/timelapse/export', { method: 'POST', body: JSON.stringify({ url: token }) });
-      const result = unwrapCommand(data);
-      const url = result?.download_url || result?.DownloadUrl || result?.url || result?.Url || result?.time_lapse_video_url || result?.TimeLapseVideoUrl;
-      toast('Timelapse export command sent', 'success');
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-      else await loadTimelapseList();
+      const data = await printerApi('/timelapse/export', {
+        method: 'POST',
+        body: JSON.stringify({ url: token, task_id: timelapseIdOf(item), task_name: timelapseNameOf(item, 0) }),
+      });
+      const job = data?.job || data;
+      const jobId = data?.job_id || job?.id;
+      fileManagerState.timelapseJobs.set(key, job);
+      renderTimelapseRows(fileManagerState.timelapseItems);
+      if (!jobId) throw new Error('Export started but no job id was returned.');
+      pollTimelapseExport(jobId, key, button);
     } catch (err) {
-      toast(err.message, 'error', 9000);
-    } finally {
+      fileManagerState.timelapseJobs.set(key, { status: 'error', message: err.message });
+      renderTimelapseRows(fileManagerState.timelapseItems);
       setButtonBusy(button, false);
+      setTimelapseStatus(err.message, 'bad', false);
+      toast(err.message, 'error', 9000);
     }
   }
 
@@ -3736,8 +4809,8 @@
     box.className = 'ai-training-selected';
     box.innerHTML = `
       <div class="ai-feedback-sample-head"><div><strong>${esc(labelText(sample.feedback_label))}</strong><small>${esc(fmtFeedbackTime(sample.created_at))} · ${esc(sample.printer_id || 'unknown printer')}</small></div><span class="ai-feedback-sample-outcome ${esc(outcomeTone(sample.outcome))}">${esc(outcomeText(sample.outcome))}</span></div>
-      ${sample.frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>` : ''}
-      <div class="ai-feedback-sample-meta"><span><b>ID</b> ${esc(sample.id)}</span>${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span><b>stage</b> ${esc(sampleStageText(sample))}</span>` : ''}</div>
+      ${sample.roi_frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.roi_frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.roi_frame_url)}" alt="ROI crop ${esc(sample.id)}" loading="lazy"></a>` : (sample.frame_url ? `<a class="ai-feedback-sample-thumb" href="${esc(sample.frame_url)}" target="_blank" rel="noopener" style="width:100%;height:auto;margin:.55rem 0;"><img src="${esc(sample.frame_url)}" alt="Feedback frame ${esc(sample.id)}" loading="lazy"></a>` : '')}
+      <div class="ai-feedback-sample-meta"><span><b>ID</b> ${esc(sample.id)}</span>${sample.has_annotation ? '<span><b>ROI</b> annotated</span>' : ''}${sample.file_name ? `<span><b>file</b> ${esc(sample.file_name)}</span>` : ''}${sampleStageText(sample) ? `<span><b>stage</b> ${esc(sampleStageText(sample))}</span>` : ''}</div>
     `;
     $('#aiTrainingReviewLabel').value = sample.feedback_label || 'looks_good';
     $('#aiTrainingReviewOutcome').value = sample.outcome || '';
@@ -4241,7 +5314,15 @@
 
 
   function initFiles() {
+    $('#fileInfoModalClose')?.addEventListener('click', closeFileInfoModal);
+    $('#fileInfoModalCloseBottom')?.addEventListener('click', closeFileInfoModal);
+    $('#fileInfoModal')?.addEventListener('click', e => { if (e.target?.id === 'fileInfoModal') closeFileInfoModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#fileInfoModal')?.classList.contains('hidden')) closeFileInfoModal(); });
     $$('[data-file-tab]').forEach(btn => btn.addEventListener('click', () => activateFileTab(btn.dataset.fileTab)));
+    $$('[data-file-search]').forEach(input => input.addEventListener('input', () => scheduleFileFilterRender(input.dataset.fileSearch)));
+    $$('[data-file-type-filter]').forEach(select => select.addEventListener('change', () => renderFilteredFileKind(select.dataset.fileTypeFilter)));
+    $$('[data-file-sort]').forEach(select => select.addEventListener('change', () => renderFilteredFileKind(select.dataset.fileSort)));
+    $$('[data-file-filter-clear]').forEach(btn => btn.addEventListener('click', () => resetFileFilter(btn.dataset.fileFilterClear)));
     $('#printerUploadForm')?.addEventListener('submit', uploadPrinterFile);
     $('#refreshPrinterFilesButton')?.addEventListener('click', loadPrinterFiles);
     $('#refreshUsbFilesButton')?.addEventListener('click', loadUsbFiles);
@@ -4254,6 +5335,19 @@
       fileManagerState.loadedTabs.add('videos');
       loadTimelapseList();
     });
+    $('#selectAllPrinterFilesButton')?.addEventListener('click', () => selectAllVisible('printer'));
+    $('#clearPrinterSelectionButton')?.addEventListener('click', () => clearSelection('printer'));
+    $('#deleteSelectedPrinterFilesButton')?.addEventListener('click', () => deleteSelectedFiles('printer'));
+    $('#selectAllUsbFilesButton')?.addEventListener('click', () => selectAllVisible('usb'));
+    $('#clearUsbSelectionButton')?.addEventListener('click', () => clearSelection('usb'));
+    $('#deleteSelectedUsbFilesButton')?.addEventListener('click', () => deleteSelectedFiles('usb'));
+    $('#selectAllHistoryButton')?.addEventListener('click', () => selectAllVisible('history'));
+    $('#clearHistorySelectionButton')?.addEventListener('click', () => clearSelection('history'));
+    $('#deleteSelectedHistoryButton')?.addEventListener('click', () => deleteSelectedHistoryRows('history'));
+    $('#selectAllVideosButton')?.addEventListener('click', () => selectAllVisible('videos'));
+    $('#clearVideosSelectionButton')?.addEventListener('click', () => clearSelection('videos'));
+    $('#deleteSelectedVideosButton')?.addEventListener('click', () => deleteSelectedHistoryRows('videos'));
+    updateSelectionToolbars();
     activateFileTab('printer');
   }
 
