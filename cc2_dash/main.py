@@ -80,6 +80,7 @@ from .cc2.commands import (
     START_VIDEO_STREAM,
     STOP_PRINT,
     delete_file_params,
+    delete_file_params_legacy,
     history_delete_params,
     history_detail_params,
     file_detail_params,
@@ -5030,10 +5031,38 @@ async def api_file_thumbnail_image(printer_id: str, filename: str, storage_media
     raise HTTPException(404, "No G-code thumbnail returned for this file")
 
 
+def _delete_file_command(printer_id: str, file_path: str, storage_media: str) -> dict[str, Any]:
+    """Delete a printer/USB file using the stock portal payload shape.
+
+    The stock Elegoo UI sends method 1047 with ``file_path`` as an array,
+    even for a single selected file.  Firmware may reject the older string
+    shape with 1003, most visibly for local Printer Files.  Try the stock
+    array payload first and keep the old string payload as a cautious fallback
+    for any firmware build that still expects it.
+    """
+    media = normalize_storage_media(storage_media)
+    primary_params = delete_file_params(file_path, media)
+    try:
+        return _send_command(printer_id, DELETE_FILE, primary_params, True, 15.0)
+    except HTTPException as exc:
+        detail = str(exc.detail or exc)
+        if "1003" not in detail and "Invalid parameter" not in detail:
+            raise
+        legacy_params = delete_file_params_legacy(file_path, media)
+        log(
+            "warning",
+            f"Delete file array payload was rejected; retrying legacy string payload for {file_path}",
+            "files",
+            printer=printer_id,
+            raw={"primary_params": primary_params, "legacy_params": legacy_params, "error": detail},
+        )
+        return _send_command(printer_id, DELETE_FILE, legacy_params, True, 15.0)
+
+
 @app.post("/api/printers/{printer_id}/files/delete")
 async def api_file_delete(printer_id: str, body: DeleteFileRequest):
     _raise_if_feature_locked("file_manager_enabled")
-    return await asyncio.to_thread(_send_command, printer_id, DELETE_FILE, delete_file_params(body.file_path, body.storage_media), True, 15.0)
+    return await asyncio.to_thread(_delete_file_command, printer_id, body.file_path, body.storage_media)
 
 
 @app.post("/api/printers/{printer_id}/files/start")

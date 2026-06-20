@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 # Read-ish methods
 GET_ATTRIBUTES = 1001
@@ -124,6 +124,26 @@ def _prefix_udisk_file(filename: str, storage_media: str) -> str:
     return name
 
 
+def normalize_delete_file_path(file_path: str, storage_media: str = "local") -> str:
+    """Normalize a file path for method 1047 delete-file calls.
+
+    Local printer files are selected by filename in the stock portal.  Some
+    firmware/list responses may include friendly/full-ish paths such as
+    ``/local/foo.gcode`` or ``local/foo.gcode``; passing those back can trip
+    1003 Invalid parameter.  USB/u-disk paths keep their slash-rooted path.
+    """
+    media = normalize_storage_media(storage_media)
+    value = str(file_path or "").replace("\\", "/").strip()
+    if media == "u-disk":
+        return _prefix_udisk_file(value, media)
+    lowered = value.lower()
+    for prefix in ("/local/", "local/", "/sdcard/", "sdcard/", "/sd-card/", "sd-card/"):
+        if lowered.startswith(prefix):
+            value = value[len(prefix):]
+            break
+    return value.lstrip("/")
+
+
 def file_list_params(path: str = "/", storage_media: str = "local", page: int = 1, page_size: int = 50, offset: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, Any]:
     # Stock portal shape: {storage_media, optional dir, offset, limit}.
     # Do not send path/page/page_size aliases here; strict firmware builds can
@@ -157,9 +177,29 @@ def file_thumbnail_params(filename: str, storage_media: str = "local") -> Dict[s
     return {"storage_media": media, "file_name": _prefix_udisk_file(filename, media)}
 
 
-def delete_file_params(file_path: str, storage_media: str = "local") -> Dict[str, Any]:
+def delete_file_params(file_path: str | Sequence[str], storage_media: str = "local") -> Dict[str, Any]:
+    """Return the stock Elegoo delete-file payload.
+
+    The stock portal wraps selected file paths in an array before sending
+    method 1047, even when only one file is being deleted.  Some firmware
+    builds reject a plain string with 1003 (Invalid parameter), especially
+    for local printer files.  Keep the command shape stock-compatible here
+    so single-delete and cc2-dash's one-at-a-time bulk delete use the same
+    reliable payload.
+    """
     media = normalize_storage_media(storage_media)
-    return {"storage_media": media, "file_path": _prefix_udisk_file(file_path, media)}
+    if isinstance(file_path, (list, tuple)):
+        paths = [normalize_delete_file_path(str(item or ""), media) for item in file_path if str(item or "")]
+    else:
+        value = normalize_delete_file_path(str(file_path or ""), media)
+        paths = [value] if value else []
+    return {"storage_media": media, "file_path": paths}
+
+
+def delete_file_params_legacy(file_path: str, storage_media: str = "local") -> Dict[str, Any]:
+    """Old string-shaped delete payload, kept only as a firmware fallback."""
+    media = normalize_storage_media(storage_media)
+    return {"storage_media": media, "file_path": normalize_delete_file_path(file_path, media)}
 
 
 def start_print_params(

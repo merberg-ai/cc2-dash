@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.64-blue)
+![Version](https://img.shields.io/badge/version-1.2.65-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,7 +63,9 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.65 printer-file-delete-fix
 1.2.64 file-manager-multiselect
+1.2.63 timelapse-export-confirmation
 1.2.62 async-timelapse-export
 1.2.61 roi-feedback-mobile-cache-fix
 1.2.60 roi-missed-failure-feedback
@@ -84,7 +86,7 @@ Major current capabilities:
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
-| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, and mobile-friendly multi-select deletion |
+| File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, and stock-shaped local printer-file delete payloads |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
 | Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
 | Themes | Built-in theme library with preview cards |
@@ -750,7 +752,7 @@ Sections:
 | **Print History** | Print history records where firmware reports them. |
 | **Video List** | Timelapse/video records derived from stock history/video metadata. Videos with status `1` must be exported/generated first; Download is enabled after export completes/status becomes ready. |
 
-Bulk deletion is available from the selection toolbar in each File Manager section. On mobile, tap the large **Select** control on each row, then use **Delete selected**. Printer and USB file deletes are sent one at a time with visible progress, so cleaning up a pile of files no longer requires one confirmation per file. Print History and Video List rows can also be selected and deleted together through the stock history delete command.
+Bulk deletion is available from the selection toolbar in each File Manager section. On mobile, tap the large **Select** control on each row, then use **Delete selected**. Printer and USB file deletes are sent one at a time with visible progress, so cleaning up a pile of files no longer requires one confirmation per file. Local Printer Files deletion uses the stock portal shape for method `1047`: `file_path` is sent as a selected-file array even for one file, and cc2-dash normalizes accidental `/local/...` paths back to plain filenames before sending. Print History and Video List rows can also be selected and deleted together through the stock history delete command.
 
 Stock command IDs used include:
 
@@ -1250,6 +1252,10 @@ The CC2 stock portal shows fans as percentages, but the command payload uses 0�
 
 The Control page prefers the firmware-reported target/set temperature. If target temperature is missing from telemetry, it may fall back to blank or current values depending on what the printer reports. Compare against the stock portal and check **Logs → command** after sending a new target.
 
+### Printer Files delete fails with error 1003
+
+Error `1003` means the printer rejected the delete command parameters. For local Printer Files, cc2-dash now matches the stock Elegoo portal by sending method `1047` with `file_path` as an array, even for a single selected file. It also strips accidental local path prefixes before sending. If this still fails, compare the same file delete in the stock portal and check **Logs → files/command** for the raw payload/response.
+
 ### File Manager video download/export fails
 
 For timelapse rows, use **Export** first. cc2-dash starts the export in the backend and shows **Time-lapse video generating…** while the printer creates the MP4. Download stays disabled until the printer Video List reports the video as generated/download-ready. The initial export command can return before the MP4 is done, so cc2-dash keeps showing generation status until the list confirms readiness.
@@ -1350,6 +1356,14 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.65 Printer Files delete payload fix
+
+- Fixed Printer Files deletion returning `1003 — Invalid parameter` on firmware builds that require the stock portal's array-shaped delete payload.
+- Method `1047` now sends `file_path` as a selected-file array even when deleting one local printer file, matching the stock Elegoo portal behavior.
+- Local printer-file delete paths are normalized before sending so `/local/foo.gcode`, `local/foo.gcode`, and `foo.gcode` all become the stock-style `foo.gcode`.
+- Kept a legacy string-payload retry only as a fallback for firmware variants that reject the stock array shape.
+- README troubleshooting/docs updated for Printer Files deletion behavior.
 
 ### v1.2.64 File Manager multi-select polish
 
