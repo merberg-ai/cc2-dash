@@ -28,6 +28,38 @@
         </div>
         <button class="button secondary tiny" id="refreshPrinterFilesButton" type="button"><span class="button-label">Refresh</span></button>
       </div>
+      <div class="file-filter-toolbar" data-file-filter-toolbar="printer">
+        <label class="file-search-box">
+          <span>Search</span>
+          <input id="printerFileSearch" type="search" inputmode="search" autocomplete="off" placeholder="Search printer files..." data-file-search="printer">
+        </label>
+        <label class="file-filter-box">
+          <span>Filter</span>
+          <select id="printerFileTypeFilter" data-file-type-filter="printer">
+            <option value="all">All files</option>
+            <option value="folder">Folders</option>
+            <option value="gcode">G-code</option>
+            <option value="image">Images</option>
+            <option value="video">Videos</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label class="file-filter-box">
+          <span>Sort</span>
+          <select id="printerFileSort" data-file-sort="printer">
+            <option value="default">Printer order</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="largest">Largest first</option>
+            <option value="smallest">Smallest first</option>
+            <option value="type">Type</option>
+          </select>
+        </label>
+        <button class="button secondary tiny" type="button" data-file-filter-clear="printer">Clear</button>
+        <div class="file-filter-summary" data-file-filter-summary="printer">Load files to search and sort.</div>
+      </div>
       <div class="file-selection-toolbar" id="printerFileSelectionToolbar" data-selection-toolbar="printer">
         <div class="file-selection-copy">
           <strong id="printerSelectedCount">0 selected</strong>
@@ -55,6 +87,38 @@
         </div>
       </div>
       <div class="path-pill">Path: <strong id="usbPathLabel">/</strong></div>
+      <div class="file-filter-toolbar" data-file-filter-toolbar="usb">
+        <label class="file-search-box">
+          <span>Search</span>
+          <input id="usbFileSearch" type="search" inputmode="search" autocomplete="off" placeholder="Search this USB folder..." data-file-search="usb">
+        </label>
+        <label class="file-filter-box">
+          <span>Filter</span>
+          <select id="usbFileTypeFilter" data-file-type-filter="usb">
+            <option value="all">All files</option>
+            <option value="folder">Folders</option>
+            <option value="gcode">G-code</option>
+            <option value="image">Images</option>
+            <option value="video">Videos</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label class="file-filter-box">
+          <span>Sort</span>
+          <select id="usbFileSort" data-file-sort="usb">
+            <option value="default">USB order</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="largest">Largest first</option>
+            <option value="smallest">Smallest first</option>
+            <option value="type">Type</option>
+          </select>
+        </label>
+        <button class="button secondary tiny" type="button" data-file-filter-clear="usb">Clear</button>
+        <div class="file-filter-summary" data-file-filter-summary="usb">Load files to search and sort.</div>
+      </div>
       <div class="file-selection-toolbar" id="usbFileSelectionToolbar" data-selection-toolbar="usb">
         <div class="file-selection-copy">
           <strong id="usbSelectedCount">0 selected</strong>
@@ -78,6 +142,36 @@
         </div>
         <button class="button secondary tiny" id="refreshHistoryButton" type="button"><span class="button-label">Refresh</span></button>
       </div>
+      <div class="file-filter-toolbar" data-file-filter-toolbar="history">
+        <label class="file-search-box">
+          <span>Search</span>
+          <input id="historySearch" type="search" inputmode="search" autocomplete="off" placeholder="Search history..." data-file-search="history">
+        </label>
+        <label class="file-filter-box">
+          <span>Filter</span>
+          <select id="historyTypeFilter" data-file-type-filter="history">
+            <option value="all">All history</option>
+            <option value="timelapse">Has timelapse</option>
+            <option value="no_timelapse">No timelapse</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed/cancelled</option>
+          </select>
+        </label>
+        <label class="file-filter-box">
+          <span>Sort</span>
+          <select id="historySort" data-file-sort="history">
+            <option value="default">Printer order</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="largest">Largest first</option>
+            <option value="smallest">Smallest first</option>
+          </select>
+        </label>
+        <button class="button secondary tiny" type="button" data-file-filter-clear="history">Clear</button>
+        <div class="file-filter-summary" data-file-filter-summary="history">Load history to search and sort.</div>
+      </div>
       <div class="file-selection-toolbar" id="historySelectionToolbar" data-selection-toolbar="history">
         <div class="file-selection-copy">
           <strong id="historySelectedCount">0 selected</strong>
@@ -100,6 +194,37 @@
           <p>Stock-style timelapse list derived from print history rows. Pick <strong>Export</strong> first to let the printer generate the MP4, then Download appears when it is ready.</p>
         </div>
         <button class="button secondary tiny" id="refreshTimelapseButton" type="button"><span class="button-label">Refresh</span></button>
+      </div>
+      <div class="file-filter-toolbar" data-file-filter-toolbar="videos">
+        <label class="file-search-box">
+          <span>Search</span>
+          <input id="timelapseSearch" type="search" inputmode="search" autocomplete="off" placeholder="Search videos..." data-file-search="videos">
+        </label>
+        <label class="file-filter-box">
+          <span>Filter</span>
+          <select id="timelapseTypeFilter" data-file-type-filter="videos">
+            <option value="all">All videos</option>
+            <option value="ready">Ready to download</option>
+            <option value="needs_export">Needs export</option>
+            <option value="generating">Generating</option>
+            <option value="failed">Failed</option>
+          </select>
+        </label>
+        <label class="file-filter-box">
+          <span>Sort</span>
+          <select id="timelapseSort" data-file-sort="videos">
+            <option value="default">Printer order</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="largest">Largest first</option>
+            <option value="smallest">Smallest first</option>
+            <option value="status">Status</option>
+          </select>
+        </label>
+        <button class="button secondary tiny" type="button" data-file-filter-clear="videos">Clear</button>
+        <div class="file-filter-summary" data-file-filter-summary="videos">Load videos to search and sort.</div>
       </div>
       <div class="file-selection-toolbar" id="videosSelectionToolbar" data-selection-toolbar="videos">
         <div class="file-selection-copy">
