@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.67-blue)
+![Version](https://img.shields.io/badge/version-1.2.68-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.68 ai-training-backup-restore
 1.2.67 file-manager-info-modal
 1.2.66 file-manager-search-sort
 1.2.64 file-manager-multiselect
@@ -83,7 +84,7 @@ Major current capabilities:
 | Kiosk mode | Working, camera-first fullscreen view |
 | Failure Detection telemetry checks | Working, with optional guarded auto-pause off by default |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, missed-failure ROI annotation/crops, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
+| AI feedback dataset | Working, includes fresh-frame capture, missed-failure ROI annotation/crops, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review tools, lightweight dataset export, and full backup/restore ZIP import/export |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
@@ -704,9 +705,27 @@ Current AI Training tools include:
 - Review captured feedback frame thumbnails when available.
 - Edit/relabel a sample's feedback label, interpreted outcome, and reason note.
 - Delete bad SQLite training samples while keeping the JSONL audit log and captured frame files intact.
-- Export a ZIP dataset containing public sample metadata, raw JSONL rows, and optionally captured frame files.
+- Export a lightweight ZIP dataset containing public sample metadata, raw JSONL rows, and optionally captured frame files.
+- Export a full restore-ready learning backup ZIP containing the SQLite learner database, JSONL audit log, profiles/events metadata, and feedback frame/ROI crop files.
+- Preview an uploaded learning backup before importing it.
+- Merge a backup into the current learner, skipping obvious duplicate SQLite samples.
+- Replace the current learning library from a backup after explicit confirmation. Replace mode creates a local pre-import backup ZIP under `data/ai_import_backups/` before overwriting the current learner.
 
-The page does **not** train an Ollama model, upload data, or send commands to the printer. It only reviews and cleans local feedback/training records used by cc2-dash's lightweight heuristic learner.
+Import modes:
+
+| Mode | Behavior | Best use |
+|---|---|---|
+| Merge | Adds imported samples/frames to the current learner and rebuilds profiles. Existing matching samples are skipped where possible. | Combining old and current learning data |
+| Replace | Restores the uploaded backup as the active learning library. This overwrites the current SQLite learner, JSONL audit log, and feedback frame library after creating a local pre-import backup. | Fresh install restore or full rollback |
+
+The full backup export endpoint is:
+
+```text
+GET  /api/ai/learning/backup/export
+POST /api/ai/learning/backup/import
+```
+
+The page does **not** train an Ollama model, upload data, or send commands to the printer. It only reviews, imports, exports, and cleans local feedback/training records used by cc2-dash's lightweight heuristic learner.
 
 
 ## Upload page
@@ -1361,6 +1380,16 @@ cc2-dash/
 
 ## Release notes
 
+
+### v1.2.68 AI Training backup and restore
+
+- Added a full AI Training backup export separate from the existing lightweight dataset export.
+- Backup ZIPs include a manifest, SQLite learner database, JSONL audit log, public/raw sample exports, learning profiles/events metadata, and feedback frame/ROI crop files when selected.
+- Added AI Training import UI with mobile-friendly backup file picker, Preview Import, Merge, and Replace flows.
+- Import preview shows backup schema, sample/profile/event counts, frame count, included data types, and warnings before anything is changed.
+- Merge mode imports JSONL sample rows and frame files into the existing learner while skipping obvious duplicates.
+- Replace mode requires explicit confirmation, creates a local pre-import backup under `data/ai_import_backups/`, then restores the uploaded backup as the active learning library.
+- Profiles are rebuilt after import so restored samples can immediately contribute to the lightweight heuristic learner.
 
 ### v1.2.67 File Manager themed info modal
 

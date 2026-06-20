@@ -2093,6 +2093,28 @@ body.kiosk-page .camera-placeholder span:last-child {
 .ai-training-hero-actions { display:flex; flex-wrap:wrap; gap:.55rem; justify-content:flex-end; }
 .ai-training-toolbar { display:flex; flex-wrap:wrap; gap:.65rem; align-items:flex-end; }
 .ai-training-toolbar label { color:var(--cc2-muted); font-size:.78rem; font-weight:800; display:flex; flex-direction:column; gap:.25rem; }
+
+.ai-training-backup-card { display:flex; flex-direction:column; gap:.85rem; }
+.ai-training-backup-card h2 { margin:0 0 .25rem; }
+.ai-training-backup-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(11rem, 1fr)); gap:.65rem; align-items:center; }
+.ai-training-backup-grid .button { width:100%; }
+.ai-training-import-box { display:grid; grid-template-columns:minmax(14rem, 1.1fr) minmax(11rem, .65fr) auto; gap:.65rem; align-items:end; }
+.ai-training-import-box label { color:var(--cc2-muted); font-size:.78rem; font-weight:850; display:flex; flex-direction:column; gap:.25rem; }
+.ai-training-file-input { min-height:2.9rem; padding:.62rem; }
+.ai-training-import-actions { display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-end; }
+.ai-training-import-actions .button { min-height:2.9rem; }
+.ai-training-import-preview { border:1px solid var(--cc2-border); border-radius:1rem; padding:.75rem; background:color-mix(in srgb, var(--cc2-card-soft) 74%, transparent); color:var(--cc2-text); box-shadow:inset 0 1px 0 rgba(255,255,255,.04); }
+.ai-training-import-preview.empty { color:var(--cc2-muted); }
+.ai-training-import-preview.good { border-color:color-mix(in srgb, var(--cc2-success) 42%, var(--cc2-border)); }
+.ai-training-import-preview.warn { border-color:color-mix(in srgb, var(--cc2-warning) 44%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-warning) 8%, var(--cc2-card-soft)); }
+.ai-training-import-preview.bad { border-color:color-mix(in srgb, var(--cc2-danger) 50%, var(--cc2-border)); background:color-mix(in srgb, var(--cc2-danger) 9%, var(--cc2-card-soft)); }
+.ai-training-import-head { display:flex; flex-wrap:wrap; gap:.45rem .7rem; align-items:center; justify-content:space-between; margin-bottom:.45rem; }
+.ai-training-import-head span { color:var(--cc2-muted); font-family:var(--font-number); font-size:.75rem; }
+.ai-training-import-stats { display:flex; flex-wrap:wrap; gap:.35rem; margin:.45rem 0; }
+.ai-training-import-stats span { border:1px solid var(--cc2-border); border-radius:999px; padding:.2rem .48rem; background:color-mix(in srgb, var(--cc2-card) 80%, transparent); color:var(--cc2-muted); font-family:var(--font-number); font-size:.72rem; }
+.ai-training-import-warning { color:var(--cc2-warning); }
+.ai-training-import-preview code { display:inline-block; max-width:100%; overflow:auto; vertical-align:bottom; color:var(--cc2-primary); }
+.ai-training-import-preview ul { margin:.45rem 0 0; padding-left:1.05rem; color:var(--cc2-muted); }
 .ai-training-layout { display:grid; grid-template-columns:minmax(0, 1.45fr) minmax(18rem, .75fr); gap:1rem; align-items:start; }
 .card-header-row { display:flex; justify-content:space-between; align-items:flex-start; gap:.85rem; margin-bottom:.75rem; }
 .card-header-row h2, .ai-training-review-card h2 { margin:0 0 .2rem; }
@@ -2124,7 +2146,7 @@ body.kiosk-page .camera-placeholder span:last-child {
 .ai-training-review-form label { display:flex; flex-direction:column; gap:.32rem; color:var(--cc2-muted); font-weight:850; font-size:.8rem; }
 .ai-training-review-form textarea { resize:vertical; min-height:5.5rem; }
 .ai-training-review-actions { display:grid; grid-template-columns:1fr 1fr; gap:.55rem; }
-@media (max-width: 920px) { .ai-training-layout { grid-template-columns:1fr; } .ai-training-review-card { position:static; } .ai-training-hero { flex-direction:column; } .ai-training-hero-actions, .ai-training-hero-actions .button { width:100%; } }
+@media (max-width: 920px) { .ai-training-layout { grid-template-columns:1fr; } .ai-training-review-card { position:static; } .ai-training-hero { flex-direction:column; } .ai-training-hero-actions, .ai-training-hero-actions .button { width:100%; } .ai-training-import-box { grid-template-columns:1fr; } .ai-training-import-actions, .ai-training-import-actions .button { width:100%; } }
 @media (max-width: 560px) { .ai-training-grid { grid-template-columns:1fr; } .ai-training-sample-card { grid-template-columns:4.7rem minmax(0, 1fr); } .ai-training-thumb { width:4.7rem; } .ai-training-review-actions { grid-template-columns:1fr; } }
 
 @media (max-width: 520px) {

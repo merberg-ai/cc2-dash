@@ -4711,7 +4711,7 @@
 
 
 
-  const aiTrainingState = { samples: [], selectedId: null, lastData: null };
+  const aiTrainingState = { samples: [], selectedId: null, lastData: null, importPreview: null };
 
   function syncAiTrainingPrinterOptions(printerIds = []) {
     const select = $('#aiTrainingPrinter');
@@ -4889,9 +4889,149 @@
     window.location.href = `/api/ai/learning/export?${params.toString()}`;
   }
 
+  function exportAiTrainingBackup() {
+    const params = new URLSearchParams();
+    params.set('include_frames', $('#aiTrainingBackupFrames')?.checked ? 'true' : 'false');
+    params.set('include_sqlite', $('#aiTrainingBackupSqlite')?.checked ? 'true' : 'false');
+    params.set('include_jsonl', $('#aiTrainingBackupJsonl')?.checked ? 'true' : 'false');
+    window.location.href = `/api/ai/learning/backup/export?${params.toString()}`;
+  }
+
+  function aiTrainingImportFile() {
+    const input = $('#aiTrainingImportFile');
+    return input && input.files && input.files.length ? input.files[0] : null;
+  }
+
+  function buildAiTrainingImportForm({ previewOnly = true, confirmOverwrite = false } = {}) {
+    const file = aiTrainingImportFile();
+    if (!file) throw new Error('Choose a backup ZIP first.');
+    const fd = new FormData();
+    fd.append('file', file, file.name || 'cc2-dash-ai-learning-backup.zip');
+    fd.append('mode', $('#aiTrainingImportMode')?.value || 'merge');
+    fd.append('preview_only', previewOnly ? 'true' : 'false');
+    fd.append('confirm_overwrite', confirmOverwrite ? 'true' : 'false');
+    fd.append('rebuild_profiles', 'true');
+    return fd;
+  }
+
+  async function postAiTrainingImportForm(formData) {
+    const resp = await fetch('/api/ai/learning/backup/import', { method: 'POST', body: formData });
+    const text = await resp.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!resp.ok) {
+      const msg = data.detail || data.error || data.message || `HTTP ${resp.status}`;
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    return data;
+  }
+
+  function renderAiTrainingImportPreview(data, applied = false) {
+    const box = $('#aiTrainingImportPreview');
+    const apply = $('#aiTrainingImportApplyButton');
+    if (!box) return;
+    const backup = data?.backup || data?.preview || data || {};
+    if (!backup.ok && backup.error) {
+      box.className = 'ai-training-import-preview bad';
+      box.innerHTML = `<strong>Import preview failed</strong><p>${esc(backup.error)}</p>`;
+      if (apply) apply.disabled = true;
+      return;
+    }
+    const mode = data?.mode || $('#aiTrainingImportMode')?.value || 'merge';
+    const warnings = Array.isArray(backup.warnings) ? backup.warnings : [];
+    const preBackup = data?.preimport_backup;
+    const sampleLine = `${backup.sample_count ?? 0} samples · ${backup.profile_count ?? 0} profiles · ${backup.event_count ?? 0} events · ${backup.frame_file_count ?? 0} frame files`;
+    const capability = [backup.has_sqlite ? 'SQLite DB' : '', backup.has_jsonl_audit ? 'JSONL audit' : '', backup.has_sqlite ? 'replace-ready' : (backup.supports_merge ? 'merge-only' : '')].filter(Boolean).join(' · ');
+    box.className = `ai-training-import-preview ${applied ? 'good' : (mode === 'replace' ? 'warn' : '')}`.trim();
+    box.innerHTML = `
+      <div class="ai-training-import-head">
+        <strong>${applied ? 'Import complete' : 'Backup preview'}</strong>
+        <span>${esc(String(backup.schema || 'unknown schema'))}</span>
+      </div>
+      <div class="ai-training-import-stats">
+        <span>${esc(sampleLine)}</span>
+        <span>${esc(capability || 'metadata only')}</span>
+        <span>${esc(bytesHuman(backup.zip_bytes || 0))}</span>
+      </div>
+      ${mode === 'replace' && !applied ? '<p class="ai-training-import-warning"><b>Replace mode:</b> this will overwrite the current AI learning DB, audit log, and feedback frame library. A local pre-import backup will be created first.</p>' : ''}
+      ${applied && data?.mode ? `<p><b>Mode:</b> ${esc(data.mode)}${preBackup?.path ? ` · pre-import backup saved at <code>${esc(preBackup.path)}</code>` : ''}</p>` : ''}
+      ${data?.samples ? `<p><b>Samples:</b> ${esc(data.samples.inserted || 0)} inserted, ${esc(data.samples.duplicates || 0)} duplicates skipped, ${esc(data.samples.errors || 0)} errors.</p>` : ''}
+      ${data?.frames ? `<p><b>Frames:</b> ${esc(data.frames.restored || 0)} restored, ${esc(data.frames.skipped || 0)} skipped.</p>` : ''}
+      ${warnings.length && !applied ? `<ul>${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    `;
+    if (apply) apply.disabled = applied ? true : !(backup.supports_replace || backup.supports_merge || backup.has_sqlite);
+  }
+
+  async function previewAiTrainingImport(button = null) {
+    setButtonBusy(button, true, 'Previewing...');
+    try {
+      const data = await postAiTrainingImportForm(buildAiTrainingImportForm({ previewOnly: true }));
+      aiTrainingState.importPreview = data;
+      renderAiTrainingImportPreview(data, false);
+      toast('Backup preview loaded. Review before importing.', 'success');
+    } catch (err) {
+      aiTrainingState.importPreview = null;
+      renderAiTrainingImportPreview({ backup: { ok: false, error: err.message } }, false);
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function applyAiTrainingImport(button = null) {
+    const mode = $('#aiTrainingImportMode')?.value || 'merge';
+    if (!aiTrainingImportFile()) return toast('Choose a backup ZIP first.', 'warn');
+    if (!aiTrainingState.importPreview) return toast('Preview the backup before importing.', 'warn');
+    let confirmOverwrite = false;
+    if (mode === 'replace') {
+      const ok = confirm('Replace the current AI learning library? This overwrites the SQLite learner, JSONL audit log, and feedback frame library. cc2-dash will create a local pre-import backup first.');
+      if (!ok) return;
+      confirmOverwrite = true;
+    } else if (!confirm('Merge this backup into the current AI learning library? Existing matching samples should be skipped.')) {
+      return;
+    }
+    setButtonBusy(button, true, 'Importing...');
+    try {
+      const data = await postAiTrainingImportForm(buildAiTrainingImportForm({ previewOnly: false, confirmOverwrite }));
+      aiTrainingState.importPreview = null;
+      renderAiTrainingImportPreview(data, true);
+      toast('AI learning backup imported.', 'success', 7000);
+      await refreshAiTrainingSamples();
+    } catch (err) {
+      renderAiTrainingImportPreview({ backup: { ok: false, error: err.message } }, false);
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
   function initAiTraining() {
     $('#aiTrainingRefreshButton')?.addEventListener('click', e => refreshAiTrainingSamples(e.currentTarget));
     $('#aiTrainingExportButton')?.addEventListener('click', exportAiTrainingDataset);
+    $('#aiTrainingBackupExportButton')?.addEventListener('click', exportAiTrainingBackup);
+    $('#aiTrainingBackupExportButtonInline')?.addEventListener('click', exportAiTrainingBackup);
+    $('#aiTrainingImportPreviewButton')?.addEventListener('click', e => previewAiTrainingImport(e.currentTarget));
+    $('#aiTrainingImportApplyButton')?.addEventListener('click', e => applyAiTrainingImport(e.currentTarget));
+    $('#aiTrainingImportFile')?.addEventListener('change', () => {
+      aiTrainingState.importPreview = null;
+      const apply = $('#aiTrainingImportApplyButton');
+      if (apply) apply.disabled = true;
+      const box = $('#aiTrainingImportPreview');
+      if (box) {
+        box.className = 'ai-training-import-preview empty';
+        box.textContent = 'Preview the selected backup before importing.';
+      }
+    });
+    $('#aiTrainingImportMode')?.addEventListener('change', () => {
+      aiTrainingState.importPreview = null;
+      const apply = $('#aiTrainingImportApplyButton');
+      if (apply) apply.disabled = true;
+      const box = $('#aiTrainingImportPreview');
+      if (box) {
+        box.className = 'ai-training-import-preview empty';
+        box.textContent = 'Preview again after changing import mode.';
+      }
+    });
     $('#aiTrainingSaveReviewButton')?.addEventListener('click', e => saveAiTrainingReview(e.currentTarget));
     $('#aiTrainingDeleteSampleButton')?.addEventListener('click', e => deleteAiTrainingSample(e.currentTarget));
     ['aiTrainingPrinter','aiTrainingOutcome','aiTrainingLabel','aiTrainingLimit'].forEach(id => $('#' + id)?.addEventListener('change', () => refreshAiTrainingSamples().catch(()=>{})));

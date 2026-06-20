@@ -9,6 +9,8 @@ import ipaddress
 import json
 import re
 import shutil
+import sqlite3
+import tempfile
 import time
 import threading
 import uuid
@@ -3393,6 +3395,419 @@ def _training_export_zip(rows: list[dict[str, Any]], include_frames: bool = True
     return buf.getvalue()
 
 
+
+def _sqlite_table_rows(table: str, db_path: Path | None = None) -> list[dict[str, Any]]:
+    """Return rows from a trusted AI-learning SQLite table."""
+    if table not in {"feedback_samples", "learning_profiles", "learning_events", "schema_meta"}:
+        return []
+    path = Path(db_path or ai_learning_db.DB_PATH)
+    if not path.exists():
+        return []
+    try:
+        with sqlite3.connect(str(path), timeout=3.0) as conn:
+            conn.row_factory = sqlite3.Row
+            if table == "feedback_samples":
+                rows = conn.execute("SELECT * FROM feedback_samples ORDER BY created_at DESC, id DESC").fetchall()
+            elif table == "learning_events":
+                rows = conn.execute("SELECT * FROM learning_events ORDER BY id ASC").fetchall()
+            elif table == "learning_profiles":
+                rows = conn.execute("SELECT * FROM learning_profiles ORDER BY updated_at DESC").fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM schema_meta ORDER BY key ASC").fetchall()
+            return [ai_learning_db.row_to_dict(r) or {} for r in rows]
+    except Exception as exc:
+        log("warning", f"AI learning backup could not read table {table}: {exc}", "portal_ai")
+        return []
+
+
+def _iter_feedback_frame_paths_from_rows(rows: list[dict[str, Any]]) -> list[Path]:
+    seen: set[str] = set()
+    out: list[Path] = []
+    for row in rows or []:
+        candidates: list[Any] = [row.get("frame_path")]
+        raw_obj = _json_maybe(row.get("raw_json"), {})
+        snapshot = raw_obj.get("snapshot") if isinstance(raw_obj, dict) and isinstance(raw_obj.get("snapshot"), dict) else {}
+        ann = snapshot.get("annotation") if isinstance(snapshot.get("annotation"), dict) else {}
+        crops = ann.get("crops") if isinstance(ann.get("crops"), dict) else {}
+        candidates.extend([crops.get("roi_relative_path"), crops.get("context_relative_path")])
+        for candidate in candidates:
+            path = _feedback_frame_path(candidate)
+            if not path:
+                continue
+            resolved = str(path.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            out.append(path)
+    return out
+
+
+def _write_sqlite_backup_to_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
+    """Write a consistent SQLite backup into the ZIP using sqlite3 backup()."""
+    ai_learning_db.ensure_database()
+    tmp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="cc2_ai_learning_", suffix=".sqlite3", delete=False) as tmp:
+            tmp_name = tmp.name
+        with sqlite3.connect(str(ai_learning_db.DB_PATH), timeout=5.0) as src, sqlite3.connect(tmp_name) as dst:
+            src.backup(dst)
+        zf.write(tmp_name, "data/ai_learning.sqlite3")
+        size = Path(tmp_name).stat().st_size
+        return {"included": True, "bytes": size}
+    except Exception as exc:
+        log("warning", f"AI learning SQLite backup failed: {exc}", "portal_ai")
+        return {"included": False, "error": str(exc)}
+    finally:
+        if tmp_name:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _training_backup_zip(include_frames: bool = True, include_sqlite: bool = True, include_jsonl: bool = True) -> tuple[bytes, dict[str, Any]]:
+    """Create a restore-capable AI learning backup ZIP."""
+    ai_learning_db.ensure_database()
+    rows = _sqlite_table_rows("feedback_samples")
+    profiles = _sqlite_table_rows("learning_profiles")
+    events = _sqlite_table_rows("learning_events")
+    schema_rows = _sqlite_table_rows("schema_meta")
+    health = ai_learning_db.health()
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    manifest: dict[str, Any] = {
+        "schema": "cc2-ai-learning-backup-v1",
+        "created_at": stamp,
+        "app": "cc2-dash",
+        "app_version": __version__,
+        "db_schema_version": health.get("schema_version"),
+        "sample_count": len(rows),
+        "profile_count": len(profiles),
+        "event_count": len(events),
+        "frames_included": bool(include_frames),
+        "sqlite_included": bool(include_sqlite),
+        "jsonl_included": bool(include_jsonl),
+        "restore_modes": ["merge", "replace"],
+        "note": "Full AI learning backup. Import in replace mode overwrites the current SQLite learner, JSONL audit log, and feedback frame library after creating a local pre-import backup.",
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if include_sqlite:
+            manifest["sqlite_backup"] = _write_sqlite_backup_to_zip(zf)
+        zf.writestr("data/samples_raw.jsonl", "\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows) + ("\n" if rows else ""))
+        zf.writestr("data/samples_public.json", json.dumps([_public_learning_sample(r) for r in rows], indent=2, ensure_ascii=False, default=str))
+        zf.writestr("data/learning_profiles.json", json.dumps(profiles, indent=2, ensure_ascii=False, default=str))
+        zf.writestr("data/learning_events.json", json.dumps(events, indent=2, ensure_ascii=False, default=str))
+        zf.writestr("data/schema_meta.json", json.dumps(schema_rows, indent=2, ensure_ascii=False, default=str))
+        if include_jsonl:
+            audit_path = DATA_DIR / "ai_feedback.jsonl"
+            if audit_path.exists() and audit_path.is_file():
+                zf.write(audit_path, "data/ai_feedback.jsonl")
+                manifest["jsonl_bytes"] = audit_path.stat().st_size
+            else:
+                zf.writestr("data/ai_feedback.jsonl", "")
+                manifest["jsonl_bytes"] = 0
+        frame_count = 0
+        if include_frames:
+            for path in _iter_feedback_frame_paths_from_rows(rows):
+                try:
+                    rel = path.relative_to(DATA_DIR / "ai_feedback_frames")
+                    arcname = "data/ai_feedback_frames/" + str(rel).replace("\\", "/")
+                except Exception:
+                    arcname = "data/ai_feedback_frames/imported/" + _export_safe_name(path.name, "frame.jpg")
+                zf.write(path, arcname)
+                frame_count += 1
+        manifest["frame_file_count"] = frame_count
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
+    return buf.getvalue(), manifest
+
+
+def _zip_read_json(zf: zipfile.ZipFile, name: str, fallback: Any = None) -> Any:
+    try:
+        with zf.open(name) as fh:
+            return json.loads(fh.read().decode("utf-8"))
+    except Exception:
+        return fallback
+
+
+def _read_zip_text_lines(zf: zipfile.ZipFile, names: list[str]) -> list[str]:
+    for name in names:
+        try:
+            with zf.open(name) as fh:
+                text = fh.read().decode("utf-8", errors="replace")
+                return [line for line in text.splitlines() if line.strip()]
+        except KeyError:
+            continue
+        except Exception:
+            return []
+    return []
+
+
+def _preview_learning_backup_bytes(blob: bytes) -> dict[str, Any]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob), "r") as zf:
+            names = zf.namelist()
+            manifest = _zip_read_json(zf, "manifest.json", {})
+            schema = str((manifest or {}).get("schema") or "unknown")
+            sqlite_names = [n for n in names if n in {"data/ai_learning.sqlite3", "ai_learning.sqlite3", "learning/ai_learning.sqlite3"}]
+            jsonl_lines = _read_zip_text_lines(zf, ["data/samples_raw.jsonl", "samples_raw.jsonl", "learning/samples_raw.jsonl"])
+            audit_present = any(n in names for n in ("data/ai_feedback.jsonl", "ai_feedback.jsonl"))
+            frame_names = [n for n in names if n.startswith("data/ai_feedback_frames/") or n.startswith("frames/") or n.startswith("roi_frames/")]
+            db_counts: dict[str, Any] = {}
+            if sqlite_names:
+                tmp_name: str | None = None
+                try:
+                    with tempfile.NamedTemporaryFile(prefix="cc2_ai_import_preview_", suffix=".sqlite3", delete=False) as tmp:
+                        tmp.write(zf.read(sqlite_names[0]))
+                        tmp_name = tmp.name
+                    db_counts = ai_learning_db.health(Path(tmp_name))
+                except Exception as exc:
+                    db_counts = {"ok": False, "error": str(exc)}
+                finally:
+                    if tmp_name:
+                        try:
+                            Path(tmp_name).unlink(missing_ok=True)
+                        except Exception:
+                            pass
+            sample_count = int((manifest or {}).get("sample_count") or db_counts.get("feedback_samples") or len(jsonl_lines) or 0)
+            profile_count = int((manifest or {}).get("profile_count") or db_counts.get("profiles") or 0)
+            event_count = int((manifest or {}).get("event_count") or db_counts.get("events") or 0)
+            warnings = [
+                "Replace mode overwrites the current AI learning SQLite database, JSONL audit log, and feedback frame library.",
+                "A local pre-import backup ZIP is created before replace mode changes anything.",
+            ]
+            if not sqlite_names:
+                warnings.append("This ZIP does not include a SQLite database; import will rebuild samples from JSONL where possible.")
+            if not frame_names:
+                warnings.append("No frame files were found in this ZIP, so restored samples may not have thumbnails/ROI crops.")
+            return {
+                "ok": True,
+                "schema": schema,
+                "manifest": manifest or {},
+                "zip_bytes": len(blob),
+                "file_count": len(names),
+                "has_sqlite": bool(sqlite_names),
+                "has_jsonl_audit": audit_present,
+                "sample_count": sample_count,
+                "profile_count": profile_count,
+                "event_count": event_count,
+                "frame_file_count": len(frame_names),
+                "warnings": warnings,
+                "supports_replace": bool(sqlite_names or jsonl_lines),
+                "supports_merge": bool(jsonl_lines),
+            }
+    except zipfile.BadZipFile:
+        return {"ok": False, "error": "uploaded_file_is_not_a_zip"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _safe_backup_member_suffix(name: str, prefix: str) -> Path | None:
+    if not name.startswith(prefix):
+        return None
+    suffix = name[len(prefix):].lstrip("/")
+    if not suffix or suffix.endswith("/"):
+        return None
+    parts = Path(suffix).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    return Path(*parts)
+
+
+def _restore_frame_members(zf: zipfile.ZipFile, replace_existing: bool = False) -> dict[str, Any]:
+    frame_root = DATA_DIR / "ai_feedback_frames"
+    frame_root.mkdir(parents=True, exist_ok=True)
+    restored = 0
+    skipped = 0
+    errors: list[str] = []
+    if replace_existing:
+        try:
+            shutil.rmtree(frame_root, ignore_errors=True)
+            frame_root.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            errors.append(f"could_not_clear_frame_library: {exc}")
+    for info in zf.infolist():
+        name = info.filename.replace("\\", "/")
+        suffix = _safe_backup_member_suffix(name, "data/ai_feedback_frames/")
+        # Legacy dataset export had anonymized frame filenames. Keep them for human review,
+        # but those files cannot always relink to SQLite rows because the original relative
+        # path was intentionally not preserved in that older export format.
+        legacy_prefix = None
+        if suffix is None and name.startswith("frames/"):
+            suffix = _safe_backup_member_suffix(name, "frames/")
+            legacy_prefix = "legacy_frames"
+        if suffix is None and name.startswith("roi_frames/"):
+            suffix = _safe_backup_member_suffix(name, "roi_frames/")
+            legacy_prefix = "legacy_roi_frames"
+        if suffix is None:
+            continue
+        target = (frame_root / legacy_prefix / suffix if legacy_prefix else frame_root / suffix).resolve()
+        root_resolved = frame_root.resolve()
+        if target != root_resolved and root_resolved not in target.parents:
+            skipped += 1
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, target.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+            restored += 1
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+    return {"restored": restored, "skipped": skipped, "errors": errors[:10]}
+
+
+def _clear_learning_sqlite() -> None:
+    ai_learning_db.ensure_database()
+    with ai_learning_db.connect() as conn:
+        conn.execute("DELETE FROM feedback_samples")
+        conn.execute("DELETE FROM learning_profiles")
+        conn.execute("DELETE FROM learning_events")
+        ai_learning_db.log_event(
+            "learning_import_replace_clear",
+            printer_id=None,
+            level="warning",
+            message="AI learning database cleared for backup restore.",
+            conn=conn,
+            raw={"source": "backup_import"},
+        )
+
+
+def _replace_sqlite_from_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
+    sqlite_name = next((n for n in ("data/ai_learning.sqlite3", "learning/ai_learning.sqlite3", "ai_learning.sqlite3") if n in zf.namelist()), None)
+    if not sqlite_name:
+        return {"replaced": False, "reason": "sqlite_not_in_zip"}
+    tmp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="cc2_ai_import_db_", suffix=".sqlite3", delete=False) as tmp:
+            tmp.write(zf.read(sqlite_name))
+            tmp_name = tmp.name
+        imported_health = ai_learning_db.health(Path(tmp_name))
+        if not imported_health.get("ok"):
+            raise RuntimeError(imported_health.get("error") or "imported SQLite health check failed")
+        db_path = ai_learning_db.DB_PATH
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                Path(str(db_path) + suffix).unlink(missing_ok=True)
+            except Exception:
+                pass
+        shutil.copy2(tmp_name, db_path)
+        ai_learning_db.ensure_database(db_path)
+        return {"replaced": True, "source": sqlite_name, "health": ai_learning_db.health(db_path), "imported_health": imported_health}
+    finally:
+        if tmp_name:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _import_samples_from_zip_jsonl(zf: zipfile.ZipFile) -> dict[str, Any]:
+    lines = _read_zip_text_lines(zf, ["data/samples_raw.jsonl", "samples_raw.jsonl", "learning/samples_raw.jsonl"])
+    inserted = 0
+    duplicates = 0
+    errors = 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                errors += 1
+                continue
+            res = ai_learning_db.insert_feedback_sample(row)
+            if res.get("inserted"):
+                inserted += 1
+            elif res.get("duplicate"):
+                duplicates += 1
+        except Exception:
+            errors += 1
+    return {"rows": len(lines), "inserted": inserted, "duplicates": duplicates, "errors": errors}
+
+
+def _restore_audit_jsonl(zf: zipfile.ZipFile, mode: str = "merge") -> dict[str, Any]:
+    name = next((n for n in ("data/ai_feedback.jsonl", "ai_feedback.jsonl") if n in zf.namelist()), None)
+    if not name:
+        return {"present": False, "written": False}
+    target = DATA_DIR / "ai_feedback.jsonl"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = zf.read(name)
+    if mode == "replace":
+        target.write_bytes(data)
+        return {"present": True, "written": True, "mode": "replace", "bytes": len(data)}
+    # Merge mode appends the imported audit log with a separator comment-like JSON event.
+    with target.open("ab") as fh:
+        if target.exists() and target.stat().st_size > 0 and not target.read_bytes().endswith(b"\n"):
+            fh.write(b"\n")
+        marker = {"schema": "cc2-ai-feedback-import-marker-v1", "kind": "backup_import_merge", "timestamp": time.time(), "source": name}
+        fh.write(json.dumps(marker, ensure_ascii=False).encode("utf-8") + b"\n")
+        fh.write(data)
+        if data and not data.endswith(b"\n"):
+            fh.write(b"\n")
+    return {"present": True, "written": True, "mode": "merge", "bytes": len(data)}
+
+
+def _restore_learning_backup_bytes(blob: bytes, mode: str = "merge", rebuild_profiles: bool = True) -> dict[str, Any]:
+    mode = str(mode or "merge").strip().lower()
+    if mode not in {"merge", "replace"}:
+        mode = "merge"
+    preview = _preview_learning_backup_bytes(blob)
+    if not preview.get("ok"):
+        return {"ok": False, "error": preview.get("error") or "invalid_backup_zip", "preview": preview}
+    preimport_backup = None
+    if mode == "replace":
+        try:
+            backup_bytes, backup_manifest = _training_backup_zip(include_frames=True, include_sqlite=True, include_jsonl=True)
+            backup_root = DATA_DIR / "ai_import_backups"
+            backup_root.mkdir(parents=True, exist_ok=True)
+            name = f"cc2-dash-ai-preimport-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}.zip"
+            backup_path = backup_root / name
+            backup_path.write_bytes(backup_bytes)
+            preimport_backup = {"path": str(backup_path), "bytes": backup_path.stat().st_size, "manifest": backup_manifest}
+        except Exception as exc:
+            return {"ok": False, "error": f"preimport_backup_failed: {exc}", "preview": preview}
+    with zipfile.ZipFile(io.BytesIO(blob), "r") as zf:
+        frame_result = _restore_frame_members(zf, replace_existing=(mode == "replace"))
+        audit_result = _restore_audit_jsonl(zf, mode=mode)
+        sqlite_result: dict[str, Any] = {"replaced": False}
+        samples_result: dict[str, Any] = {"rows": 0, "inserted": 0, "duplicates": 0, "errors": 0}
+        if mode == "replace":
+            sqlite_result = _replace_sqlite_from_zip(zf)
+            if not sqlite_result.get("replaced"):
+                _clear_learning_sqlite()
+                samples_result = _import_samples_from_zip_jsonl(zf)
+        else:
+            samples_result = _import_samples_from_zip_jsonl(zf)
+    cfg = load_config()
+    rebuild_results: list[dict[str, Any]] = []
+    if rebuild_profiles:
+        for pid in ai_learning.known_printer_ids(cfg):
+            try:
+                rebuild_results.append(ai_learning.rebuild_profile(pid, cfg))
+            except Exception as exc:
+                rebuild_results.append({"printer_id": pid, "ok": False, "error": str(exc)})
+    status = ai_learning.global_status(cfg)
+    try:
+        ai_learning_db.log_event(
+            "learning_backup_imported",
+            printer_id=None,
+            level="warning" if mode == "replace" else "info",
+            message=f"AI learning backup imported in {mode} mode.",
+            raw={"mode": mode, "preview": preview, "frames": frame_result, "sqlite": sqlite_result, "samples": samples_result, "preimport_backup": preimport_backup},
+        )
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "mode": mode,
+        "preview": preview,
+        "frames": frame_result,
+        "audit_log": audit_result,
+        "sqlite": sqlite_result,
+        "samples": samples_result,
+        "rebuild_profiles": rebuild_results,
+        "preimport_backup": preimport_backup,
+        "status": status,
+    }
+
+
 @app.get("/api/ai/learning/status")
 async def api_ai_learning_status():
     cfg = load_config()
@@ -3580,6 +3995,55 @@ async def api_ai_learning_export(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/ai/learning/backup/export")
+async def api_ai_learning_backup_export(
+    include_frames: bool = Query(True),
+    include_sqlite: bool = Query(True),
+    include_jsonl: bool = Query(True),
+):
+    payload, manifest = await asyncio.to_thread(_training_backup_zip, include_frames, include_sqlite, include_jsonl)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    filename = f"cc2-dash-ai-learning-backup-{stamp}.zip"
+    log("info", f"AI learning backup exported: {manifest.get('sample_count')} samples, frames={manifest.get('frame_file_count')}", "portal_ai")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/ai/learning/backup/import")
+async def api_ai_learning_backup_import(
+    file: UploadFile = File(...),
+    mode: str = Form("merge"),
+    preview_only: bool = Form(True),
+    confirm_overwrite: bool = Form(False),
+    rebuild_profiles: bool = Form(True),
+):
+    filename = str(file.filename or "learning-backup.zip")
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Upload a cc2-dash AI learning backup ZIP.")
+    blob = await file.read()
+    max_bytes = 750 * 1024 * 1024
+    if len(blob) > max_bytes:
+        raise HTTPException(status_code=413, detail="Backup ZIP is too large for web import.")
+    preview = await asyncio.to_thread(_preview_learning_backup_bytes, blob)
+    if not preview.get("ok"):
+        raise HTTPException(status_code=400, detail=preview.get("error") or "Invalid backup ZIP")
+    mode = str(mode or "merge").strip().lower()
+    if mode not in {"merge", "replace"}:
+        mode = "merge"
+    if preview_only:
+        return {"ok": True, "preview_only": True, "mode": mode, "backup": preview}
+    if mode == "replace" and not confirm_overwrite:
+        raise HTTPException(status_code=400, detail="Replace mode requires confirm_overwrite=true after previewing the backup.")
+    result = await asyncio.to_thread(_restore_learning_backup_bytes, blob, mode, rebuild_profiles)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "Import failed")
+    log("warning" if mode == "replace" else "info", f"AI learning backup imported in {mode} mode: {preview.get('sample_count')} samples", "portal_ai")
+    return result
 
 
 @app.get("/api/printers/{printer_id}/ai/learning/samples")
