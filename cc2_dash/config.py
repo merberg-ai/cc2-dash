@@ -24,7 +24,7 @@ COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = False
 # Development/test-only dummy printers. Set this to False before public builds
 # if you want simulator printers hidden/blocked without deleting existing saved
 # config entries. Real printers continue to work normally.
-DUMMY_PRINTERS_ENABLED = True
+DUMMY_PRINTERS_ENABLED = False
 DUMMY_PRINTER_TYPES = {"dummy", "sim", "simulator", "demo"}
 
 EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
