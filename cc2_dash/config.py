@@ -87,18 +87,20 @@ def safe_printer_id(name_or_serial: str) -> str:
 
 
 def printer_dict_to_config(printer_id: str, data: dict[str, Any]) -> PrinterConfig:
-    host = data.get("host") or data.get("ip") or ""
-    serial = data.get("serial") or data.get("sn") or data.get("printer_id") or printer_id or host
+    ptype = str(data.get("type") or data.get("printer_type") or "cc2").strip().lower() or "cc2"
+    is_dummy = ptype in {"dummy", "sim", "simulator", "demo"}
+    host = data.get("host") or data.get("ip") or ("dummy.local" if is_dummy else "")
+    serial = data.get("serial") or data.get("sn") or data.get("printer_id") or (f"DUMMY-{printer_id}" if is_dummy else printer_id or host)
     return PrinterConfig(
         id=str(printer_id or safe_printer_id(serial or host)),
-        name=str(data.get("name") or data.get("host_name") or "Centauri Carbon 2"),
+        name=str(data.get("name") or data.get("host_name") or ("Dummy Printer" if is_dummy else "Centauri Carbon 2")),
         host=str(host),
         serial=str(serial),
         access_code=str(data.get("access_code") or data.get("pin") or ""),
         port=int(data.get("port") or 1883),
-        type=str(data.get("type") or data.get("printer_type") or "cc2"),
+        type="dummy" if is_dummy else str(data.get("type") or data.get("printer_type") or "cc2"),
         enabled=bool(data.get("enabled", True)),
-        allow_commands=bool(data.get("allow_commands", True)),
+        allow_commands=bool(data.get("allow_commands", False if is_dummy else True)),
         allow_dangerous_commands=bool(data.get("allow_dangerous_commands", False)),
     )
 
@@ -109,16 +111,23 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     data["portal_url"] = f"/portal-fullscreen?printer={cfg.id}"
     data["portal_chrome_url"] = f"/portal?printer={cfg.id}"
     data["kiosk_url"] = f"/kiosk?printer={cfg.id}"
-    data["direct_portal_url"] = f"http://{cfg.host}/"
     data["camera_url"] = f"/api/printers/{cfg.id}/camera/stream"
-    data["direct_camera_url"] = f"http://{cfg.host}:8080/"
+    if cfg.type == "dummy":
+        data["dummy"] = True
+        data["portal_url"] = f"/?printer={cfg.id}"
+        data["portal_chrome_url"] = f"/?printer={cfg.id}"
+        data["direct_portal_url"] = ""
+        data["direct_camera_url"] = ""
+    else:
+        data["direct_portal_url"] = f"http://{cfg.host}/"
+        data["direct_camera_url"] = f"http://{cfg.host}:8080/"
     if not include_secret:
         data.pop("access_code", None)
     data["access_code_set"] = bool(cfg.access_code)
     return data
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "config_version": 9,
+    "config_version": 10,
     "app": {
         "name": "cc2-dash",
         "bind_host": "0.0.0.0",
@@ -377,7 +386,10 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
             features["control_page_enabled"] = True
         dashboard = cfg.setdefault("dashboard", {})
         dashboard.setdefault("show_gcode_thumbnail", True)
-        cfg["config_version"] = 9
+        for _pid, _pdata in (cfg.get("printers") or {}).items():
+            if isinstance(_pdata, dict):
+                _pdata.setdefault("type", "cc2")
+        cfg["config_version"] = 10
     except Exception:
         pass
     try:

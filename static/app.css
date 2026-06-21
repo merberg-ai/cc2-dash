@@ -2639,3 +2639,33 @@ body.modal-open { overflow:hidden; }
 
 .control-temp-readonly { justify-content:space-between; }
 .control-temp-note { margin:.45rem 0 0; color:var(--cc2-muted); font-size:.78rem; line-height:1.35; }
+
+/* v1.2.72: dummy/simulator printer settings */
+.dummy-printer-add-box {
+  margin-top:1rem;
+  padding-top:1rem;
+  border-top:1px solid var(--cc2-border);
+}
+.dummy-printer-add-box .grid-2 { margin:.45rem 0; }
+.dummy-printer-card {
+  border-color:color-mix(in srgb, var(--cc2-primary) 36%, var(--cc2-border));
+  background:linear-gradient(135deg, color-mix(in srgb, var(--cc2-card-soft) 88%, var(--cc2-primary)), var(--cc2-card-soft));
+}
+.dummy-pill {
+  background:color-mix(in srgb, var(--cc2-primary) 22%, var(--cc2-card-soft));
+  border-color:color-mix(in srgb, var(--cc2-primary) 46%, var(--cc2-border));
+  color:var(--cc2-text);
+}
+.dummy-printer-card .mini-note {
+  display:inline-flex;
+  align-items:center;
+  min-height:1.7rem;
+  padding:.24rem .55rem;
+  border-radius:999px;
+  background:color-mix(in srgb, var(--cc2-warning) 16%, var(--cc2-card-soft));
+  border:1px solid color-mix(in srgb, var(--cc2-warning) 28%, var(--cc2-border));
+  color:var(--cc2-muted);
+}
+@media (max-width: 720px) {
+  .dummy-printer-add-box .grid-2 { grid-template-columns:1fr; }
+}

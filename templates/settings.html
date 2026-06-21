@@ -521,6 +521,33 @@
         <label class="field-label" for="managerManualPin">Printer PIN / access code</label>
         <input id="managerManualPin" class="input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Printer PIN / access code" />
         <button id="managerManualAddButton" class="button primary full"><span class="button-label">Add / Save Printer</span></button>
+
+        <div class="dummy-printer-add-box">
+          <h3>Dummy / simulator printer</h3>
+          <p class="muted">Add a safe fake printer for testing multi-printer UI, status cards, camera previews, and AI badges. No real printer commands are sent.</p>
+          <label class="field-label" for="managerDummyName">Dummy display name</label>
+          <input id="managerDummyName" class="input" value="Dummy Printer" />
+          <div class="grid-2 gap">
+            <label class="inline-field"><span class="field-label">Scenario</span><select id="managerDummyMode" class="input">
+              <option value="printing">Printing</option>
+              <option value="idle">Idle</option>
+              <option value="paused">Paused</option>
+              <option value="timelapse_generating">Time-lapse generating</option>
+              <option value="error">Error</option>
+              <option value="offline">Offline</option>
+            </select></label>
+            <label class="inline-field"><span class="field-label">Progress %</span><input id="managerDummyProgress" class="input" type="number" min="0" max="100" step="1" value="42" /></label>
+          </div>
+          <label class="field-label" for="managerDummyAiState">AI badge scenario</label>
+          <select id="managerDummyAiState" class="input">
+            <option value="looks_good">Looks good</option>
+            <option value="watch">Watch</option>
+            <option value="warning">Something looks fishy</option>
+            <option value="failure">Possible failure detected</option>
+            <option value="disabled">AI disabled</option>
+          </select>
+          <button id="managerDummyAddButton" class="button secondary full"><span class="button-label">Add Dummy Printer</span></button>
+        </div>
       </section>
     </div>
 

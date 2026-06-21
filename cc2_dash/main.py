@@ -123,6 +123,7 @@ from .feedback_learning import (
     record_feedback_suppression,
 )
 from .vision import vision_monitor
+from .dummy import dummy_ai_result, dummy_camera_frame, dummy_command_response, dummy_snapshot, dummy_vision_result, is_dummy_printer, mjpeg_frames
 from .print_state import (
     IDLE_MACHINE_STATUS_CODES,
     IDLE_SUB_STATUS_CODES,
@@ -1260,6 +1261,21 @@ class AddPrinterRequest(BaseModel):
     set_default: bool = True
 
 
+class DummyPrinterRequest(BaseModel):
+    id: str | None = None
+    name: str = "Dummy Printer"
+    dummy_mode: str = "printing"
+    dummy_progress: float = 42
+    dummy_ai_state: str = "looks_good"
+    dummy_hotend_current: float = 215
+    dummy_hotend_target: float = 220
+    dummy_bed_current: float = 59
+    dummy_bed_target: float = 60
+    dummy_chamber_current: float = 34
+    enabled: bool = True
+    set_default: bool = False
+
+
 class PrinterSettingsRequest(BaseModel):
     name: Optional[str] = None
     host: Optional[str] = None
@@ -1269,6 +1285,16 @@ class PrinterSettingsRequest(BaseModel):
     enabled: Optional[bool] = None
     allow_commands: Optional[bool] = None
     allow_dangerous_commands: Optional[bool] = None
+    type: Optional[str] = None
+    printer_type: Optional[str] = None
+    dummy_mode: Optional[str] = None
+    dummy_progress: Optional[float] = None
+    dummy_ai_state: Optional[str] = None
+    dummy_hotend_current: Optional[float] = None
+    dummy_hotend_target: Optional[float] = None
+    dummy_bed_current: Optional[float] = None
+    dummy_bed_target: Optional[float] = None
+    dummy_chamber_current: Optional[float] = None
 
 
 class ActionRequest(BaseModel):
@@ -2519,6 +2545,51 @@ async def api_add_printer(req: AddPrinterRequest):
     return {"ok": True, "printer_id": safe_id, "config": cfg, "printer": public_printer_dict(printer_dict_to_config(safe_id, cfg["printers"][safe_id]))}
 
 
+
+
+@app.post("/api/printers/dummy")
+async def api_add_dummy_printer(req: DummyPrinterRequest):
+    cfg = load_config()
+    safe_id = req.id or safe_printer_id(req.name or "dummy-printer")
+    base_id = safe_id
+    n = 2
+    while safe_id in cfg.get("printers", {}) and not req.id:
+        safe_id = f"{base_id}-{n}"
+        n += 1
+    cfg.setdefault("printers", {})[safe_id] = {
+        "name": req.name or "Dummy Printer",
+        "host": "dummy.local",
+        "serial": f"DUMMY-{safe_id}",
+        "access_code": "",
+        "port": 0,
+        "type": "dummy",
+        "printer_type": "dummy",
+        "model": "cc2-dash Dummy Printer",
+        "enabled": bool(req.enabled),
+        "paired": True,
+        "allow_commands": False,
+        "allow_dangerous_commands": False,
+        "portal_enabled": False,
+        "camera_enabled": True,
+        "dummy_mode": req.dummy_mode,
+        "dummy_progress": float(req.dummy_progress),
+        "dummy_ai_state": req.dummy_ai_state,
+        "dummy_hotend_current": float(req.dummy_hotend_current),
+        "dummy_hotend_target": float(req.dummy_hotend_target),
+        "dummy_bed_current": float(req.dummy_bed_current),
+        "dummy_bed_target": float(req.dummy_bed_target),
+        "dummy_chamber_current": float(req.dummy_chamber_current),
+        "camera_url": f"/api/printers/{safe_id}/camera/stream",
+        "direct_camera_url": "",
+    }
+    if req.set_default or not cfg.get("app", {}).get("default_printer"):
+        cfg.setdefault("app", {})["default_printer"] = safe_id
+    cfg.setdefault("app", {})["setup_complete"] = True
+    cfg = save_config(cfg)
+    log("info", f"Dummy printer saved: {req.name} mode={req.dummy_mode} ai={req.dummy_ai_state}", "settings", printer=safe_id)
+    return {"ok": True, "printer_id": safe_id, "config": cfg, "printer": public_printer_dict(printer_dict_to_config(safe_id, cfg["printers"][safe_id]))}
+
+
 @app.patch("/api/printers/{printer_id}")
 async def api_update_printer(printer_id: str, patch: PrinterSettingsRequest):
     cfg = load_config()
@@ -2532,7 +2603,10 @@ async def api_update_printer(printer_id: str, patch: PrinterSettingsRequest):
             continue
         data[key] = value
     cfg = save_config(cfg)
-    runtime.restart(printer_id, printer_dict_to_config(printer_id, cfg["printers"][printer_id]))
+    if is_dummy_printer(cfg["printers"][printer_id]):
+        runtime.stop(printer_id)
+    else:
+        runtime.restart(printer_id, printer_dict_to_config(printer_id, cfg["printers"][printer_id]))
     return {"ok": True, "config": cfg, "printer": public_printer_dict(printer_dict_to_config(printer_id, cfg["printers"][printer_id]))}
 
 
@@ -2621,6 +2695,12 @@ def _maybe_attach_vision(printer_id: str, printer: dict[str, Any] | None, status
 
 def _attach_ai_status(printer_id: str, status: dict[str, Any], snap: Optional[dict[str, Any]], cfg: dict[str, Any], ai_source: str = "request", force_ai_evaluate: bool = False, printer: dict[str, Any] | None = None) -> dict[str, Any]:
     ai_cfg = cfg.get("portal_ai", {}) or {}
+    if is_dummy_printer(printer):
+        status["dummy"] = True
+        status["dummy_mode"] = str((printer or {}).get("dummy_mode") or (snap or {}).get("dummy_mode") or "printing")
+        status["vision_ai"] = dummy_vision_result(printer_id, printer, ai_source)
+        status["portal_ai"] = dummy_ai_result(printer_id, status, printer, ai_source)
+        return status
     schedule_auto_pause = ai_source == "background" or (ai_source == "request" and not bool(ai_cfg.get("background_monitor_enabled", True)))
     connection_state = str(status.get("connection_state") or "online").lower()
     if status.get("offline") or status.get("stale") or connection_state not in {"", "online"}:
@@ -2672,6 +2752,8 @@ def _attach_ai_status(printer_id: str, status: dict[str, Any], snap: Optional[di
 
 def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Optional[dict[str, Any]], ai_source: str = "request", force_ai_evaluate: bool = False, attach_ai: bool = True) -> dict[str, Any]:
     pcfg = printer_dict_to_config(printer_id, printer)
+    if is_dummy_printer(printer) and not snap:
+        snap = dummy_snapshot(printer_id, printer)
     if not snap:
         cfg = load_config()
         health = _connection_health_from_snapshot(None)
@@ -2724,6 +2806,9 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "name": pcfg.name,
         "host": pcfg.host,
         "serial": pcfg.serial,
+        "printer_type": pcfg.type,
+        "dummy": bool(is_dummy_printer(printer)),
+        "dummy_mode": snap.get("dummy_mode") if isinstance(snap, dict) else None,
         "reachable": reachable,
         "connected": bool(snap.get("connected")),
         "registered": bool(snap.get("registered")),
@@ -4279,6 +4364,10 @@ def _send_command(printer_id: str, method: int, params: dict[str, Any] | None = 
     if not pdata:
         raise HTTPException(404, "Printer not configured")
     pcfg = printer_dict_to_config(printer_id, pdata)
+    if is_dummy_printer(pdata):
+        result = dummy_command_response(printer_id, pdata, method, params or {})
+        log("info", f"Dummy printer accepted method {method} for UI testing only", "command", printer=printer_id)
+        return {"ok": True, "dummy": True, "result": result}
     if not method_allowed(method, pcfg.allow_commands, pcfg.allow_dangerous_commands):
         raise HTTPException(403, "Command blocked by safety settings. Enable allow_commands / allow_dangerous_commands for this printer if you really mean it.")
     client = runtime.get_client(printer_id)
@@ -5369,6 +5458,8 @@ async def api_send_staged_upload(printer_id: str, upload_id: str, body: StagedUp
     if not pdata:
         raise HTTPException(404, "Printer not configured")
     pcfg = printer_dict_to_config(printer_id, pdata)
+    if is_dummy_printer(pdata):
+        raise HTTPException(409, "Dummy printer does not accept real file uploads. Use it for UI/status testing only.")
     if not pcfg.allow_commands:
         raise HTTPException(403, "Uploads are blocked by safety settings. Enable allow_commands for this printer first.")
     media = normalize_storage_media(body.storage_media)
@@ -6471,6 +6562,10 @@ async def api_vision_check_now(printer_id: str):
     printer = (cfg.get("printers") or {}).get(printer_id)
     if not printer:
         raise HTTPException(404, "Printer not configured")
+    if is_dummy_printer(printer):
+        snap = runtime.snapshot(printer_id)
+        status = _status_from_snapshot(printer_id, printer, snap, ai_source="manual", force_ai_evaluate=False)
+        return {"ok": True, "dummy": True, "vision": status.get("vision_ai"), "portal_ai": status.get("portal_ai"), "status": status}
     if not runtime.get_client(printer_id):
         runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
     snap = runtime.snapshot(printer_id)
@@ -6533,6 +6628,16 @@ async def api_camera_url(printer_id: str):
     pcfg = _portal_target(printer_id)
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
+    if is_dummy_printer(pcfg):
+        return {
+            "url": f"/api/printers/{printer_id}/camera/stream",
+            "snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
+            "status_url": f"/api/printers/{printer_id}/camera/status",
+            "direct_url": "",
+            "alt_direct_url": "",
+            "relay": {"ok": True, "enabled": True, "running": True, "dummy": True, "frames_received": 1},
+            "dummy": True,
+        }
     relay = camera_relays.get(printer_id, pcfg)
     return {
         "url": f"/api/printers/{printer_id}/camera/stream",
@@ -6549,6 +6654,8 @@ async def api_camera_status(printer_id: str):
     pcfg = _portal_target(printer_id)
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
+    if is_dummy_printer(pcfg):
+        return {"ok": True, "dummy": True, "printer": public_printer_dict(pcfg), "relay": {"ok": True, "enabled": True, "running": True, "dummy": True, "frames_received": 1}, "config": _camera_cfg()}
     relay = camera_relays.get(printer_id, pcfg)
     return {"ok": True, "printer": public_printer_dict(pcfg), "relay": relay.status(), "config": _camera_cfg()}
 
@@ -6565,6 +6672,8 @@ async def api_camera_restart(printer_id: str):
     pcfg = _portal_target(printer_id)
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
+    if is_dummy_printer(pcfg):
+        return {"ok": True, "dummy": True, "relay": {"ok": True, "enabled": True, "running": True, "dummy": True, "message": "Dummy camera does not need restart."}}
     _ensure_camera_enabled(printer_id)
     relay = camera_relays.get(printer_id, pcfg)
     relay.restart(_camera_cfg())
@@ -6576,6 +6685,11 @@ async def api_camera_snapshot(printer_id: str):
     pcfg = _portal_target(printer_id)
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
+    if is_dummy_printer(pcfg):
+        cfg = load_config()
+        pdata = (cfg.get("printers") or {}).get(printer_id) or {}
+        frame = await asyncio.to_thread(dummy_camera_frame, printer_id, pdata)
+        return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "X-cc2-dash-dummy": "1"})
     _ensure_camera_enabled(printer_id)
     relay = camera_relays.get(printer_id, pcfg)
     c = _camera_cfg()
@@ -6596,6 +6710,14 @@ async def api_camera_stream(printer_id: str):
     pcfg = _portal_target(printer_id)
     if not pcfg:
         raise HTTPException(404, "Printer not configured")
+    if is_dummy_printer(pcfg):
+        cfg = load_config()
+        pdata = (cfg.get("printers") or {}).get(printer_id) or {}
+        return StreamingResponse(
+            mjpeg_frames(printer_id, pdata, 1.0),
+            media_type="multipart/x-mixed-replace; boundary=cc2dashframe",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "X-cc2-dash-dummy": "1"},
+        )
     _ensure_camera_enabled(printer_id)
     relay = camera_relays.get(printer_id, pcfg)
     c = _camera_cfg()
@@ -6616,6 +6738,8 @@ async def api_portal_url(printer: Optional[str] = None):
     pcfg = _portal_target(printer)
     if not pcfg:
         raise HTTPException(404, "No printer configured")
+    if is_dummy_printer(pcfg):
+        return {"printer": public_printer_dict(pcfg), "url": f"/?printer={pcfg.id}", "index_url": f"/?printer={pcfg.id}", "proxy_url": f"/?printer={pcfg.id}", "stock_url": f"/?printer={pcfg.id}", "dummy": True}
     return {"printer": public_printer_dict(pcfg), "url": f"http://{pcfg.host}/", "index_url": f"http://{pcfg.host}/index", "proxy_url": f"/portal-proxy/{pcfg.id}/", "stock_url": f"/portal-fullscreen?printer={pcfg.id}"}
 
 
@@ -6624,6 +6748,8 @@ async def api_portal_probe(printer: Optional[str] = None):
     pcfg = _portal_target(printer)
     if not pcfg:
         raise HTTPException(404, "No printer configured")
+    if is_dummy_printer(pcfg):
+        return {"ok": True, "dummy": True, "target": public_printer_dict(pcfg), "results": [{"url": f"/?printer={pcfg.id}", "status": 200, "content_type": "text/html", "server": "cc2-dash dummy", "sample": "Dummy printer uses the cc2-dash generated dashboard/camera, not a stock portal."}]}
     candidates = ["/", "/index", "/index.html", "/home", "/home.html", "/web", "/ui", "/dashboard", "/api", "/camera", "/stream", "/webcam", ":8080/", ":8080/?action=stream"]
     out = []
     async with httpx.AsyncClient(timeout=2.5, follow_redirects=False) as client:

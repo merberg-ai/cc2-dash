@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.71-blue)
+![Version](https://img.shields.io/badge/version-1.2.72-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.72 dummy-printer-simulator
 1.2.71 multi-printer-view-context
 1.2.70 chamber-readout-only
 1.2.69 chamber-temperature-status
@@ -80,7 +81,7 @@ Major current capabilities:
 
 | Area | Status |
 |---|---|
-| Printer discovery / pairing | Working, verified Centauri discovery filtering |
+| Printer discovery / pairing | Working, verified Centauri discovery filtering, with dummy/simulator printer entries for multi-printer UI testing |
 | Dashboard status | Working, mobile-first, active/idle aware |
 | Stock portal bridge | Working as fallback/reference portal |
 | Camera relay | Working, reduces direct camera connection pileups |
@@ -141,7 +142,8 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Manual printer add when discovery is blocked.
 - Alphanumeric printer PIN/access-code fields.
 - No prefilled default PIN.
-- Printer serial/SN, access code, MQTT host/port, and command permissions stored per printer.
+- Printer serial/SN, access code, MQTT host/port, type, and command permissions stored per printer.
+- Dummy/simulator printers can be added from Settings for testing multi-printer switching, camera/status rendering, and AI badge behavior without owning a second printer.
 
 ### Dashboard controls
 
@@ -479,10 +481,26 @@ Available actions:
 - Enable/disable normal commands.
 - Enable/disable dangerous commands.
 - Remove old printer entries.
+- Add a **Dummy / simulator printer** for safe UI testing. Dummy printers provide fake status, temperatures, progress, a generated camera stream, sample files/history/timelapse rows, and selectable AI badge states. They never connect to MQTT and never send real printer commands.
 
 Command permissions are intentionally separate from pairing. You can monitor a printer while keeping control buttons locked down.
 
 The default printer is now treated as a startup/fallback printer only. Opening a page with `?printer=<printer_id>` or choosing a printer from the header switcher changes the currently viewed printer without rewriting the default printer setting. This is the first phase of the multi-printer UI foundation.
+
+### Dummy / simulator printers
+
+Settings → Printer Manager includes an **Add Dummy Printer** tool. This creates a safe fake printer entry with configurable scenarios:
+
+```text
+Printing
+Idle
+Paused
+Time-lapse generating
+Error
+Offline
+```
+
+Dummy printers are useful when testing multi-printer UI behavior with only one real CC2. They show up in the header printer switcher, dashboard, control/kiosk camera views, File Manager reads, and AI status badges. The generated camera stream is local to cc2-dash, and command/file operations return no-op dummy responses for UI testing only. No MQTT client is started and no real printer command is sent.
 
 ---
 
@@ -1399,7 +1417,13 @@ cc2-dash/
 
 ## Release notes
 
+### v1.2.72 Dummy printer simulator
 
+- Added a safe **Dummy / simulator printer** type for testing multi-printer UI flows without needing a second physical CC2.
+- Settings → Printer Manager can now add dummy printers and edit scenario, progress, temperature, and AI badge states.
+- Dummy printers appear in the global header printer switcher and render through the normal Dashboard/Kiosk/Control status paths.
+- Added generated local dummy camera snapshot/MJPEG stream, fake telemetry, sample File Manager rows, sample history/timelapse rows, and no-op command responses for UI testing.
+- Dummy printers never start an MQTT client and never send real printer commands.
 
 ### v1.2.71 Multi-printer view context foundation
 

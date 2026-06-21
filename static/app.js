@@ -1509,6 +1509,24 @@
     return data;
   }
 
+  async function saveDummyPrinter(options = {}) {
+    const name = $('#managerDummyName')?.value?.trim() || 'Dummy Printer';
+    const body = {
+      name,
+      dummy_mode: $('#managerDummyMode')?.value || 'printing',
+      dummy_progress: Number($('#managerDummyProgress')?.value || 42),
+      dummy_ai_state: $('#managerDummyAiState')?.value || 'looks_good',
+      enabled: true,
+      set_default: !!options.setDefault,
+    };
+    const data = await api('/api/printers/dummy', { method:'POST', body:JSON.stringify(body) });
+    cfg = data.config || cfg;
+    refreshConfigEditor();
+    renderSettings();
+    toast(`Dummy printer "${name}" added.`, 'success');
+    return data;
+  }
+
   function renderScanResults(candidates, targetId = 'scanResults', options = {}) {
     const box = $('#' + targetId);
     if (!box) return;
@@ -1835,31 +1853,50 @@
     const printerBox = $('#printerSettings');
     if (printerBox) {
       const entries = Object.entries(cfg.printers || {});
-      printerBox.innerHTML = entries.length ? entries.map(([id,p]) => `
-        <div class="printer-config-card" data-printer-id="${esc(id)}">
+      printerBox.innerHTML = entries.length ? entries.map(([id,p]) => {
+        const isDummy = String(p.type || p.printer_type || '').toLowerCase() === 'dummy';
+        const mode = p.dummy_mode || 'printing';
+        const aiState = p.dummy_ai_state || 'looks_good';
+        const meta = isDummy ? `Dummy simulator • ${esc(mode.replaceAll('_', ' '))}` : `${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}`;
+        return `
+        <div class="printer-config-card ${isDummy ? 'dummy-printer-card' : ''}" data-printer-id="${esc(id)}" data-printer-type="${isDummy ? 'dummy' : 'cc2'}">
           <div class="printer-config-head">
-            <div><strong>${esc(p.name || id)}</strong><small>${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}</small></div>
-            <span class="pill">${cfg.app.default_printer === id ? 'Default' : esc(id)}</span>
+            <div><strong>${esc(p.name || id)}</strong><small>${meta}</small></div>
+            <span class="pill ${isDummy ? 'dummy-pill' : ''}">${isDummy ? 'Dummy' : (cfg.app.default_printer === id ? 'Default' : esc(id))}</span>
           </div>
           <div class="grid-2 gap printer-edit-grid">
             <label class="inline-field"><span class="field-label">Display name</span><input class="input printer-name" value="${esc(p.name || '')}" /></label>
-            <label class="inline-field"><span class="field-label">Host / IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
-            <label class="inline-field"><span class="field-label">Serial / SN</span><input class="input printer-serial" value="${esc(p.serial || '')}" /></label>
-            <label class="inline-field"><span class="field-label">PIN / access code</span><input class="input printer-pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
-            <label class="inline-field"><span class="field-label">MQTT port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.port || 1883)}" /></label>
+            ${isDummy ? `
+              <label class="inline-field"><span class="field-label">Scenario</span><select class="input printer-dummy-mode">
+                ${['printing','idle','paused','timelapse_generating','error','offline'].map(v => `<option value="${v}" ${mode === v ? 'selected' : ''}>${esc(v.replaceAll('_', ' '))}</option>`).join('')}
+              </select></label>
+              <label class="inline-field"><span class="field-label">Progress %</span><input class="input printer-dummy-progress" type="number" min="0" max="100" step="1" value="${esc(p.dummy_progress ?? 42)}" /></label>
+              <label class="inline-field"><span class="field-label">AI scenario</span><select class="input printer-dummy-ai">
+                ${[['looks_good','Looks good'],['watch','Watch'],['warning','Something looks fishy'],['failure','Possible failure detected'],['disabled','AI disabled']].map(([v,l]) => `<option value="${v}" ${aiState === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+              </select></label>
+              <label class="inline-field"><span class="field-label">Hotend current</span><input class="input printer-dummy-hotend-current" type="number" step="1" value="${esc(p.dummy_hotend_current ?? 215)}" /></label>
+              <label class="inline-field"><span class="field-label">Hotend target</span><input class="input printer-dummy-hotend-target" type="number" step="1" value="${esc(p.dummy_hotend_target ?? 220)}" /></label>
+              <label class="inline-field"><span class="field-label">Bed current</span><input class="input printer-dummy-bed-current" type="number" step="1" value="${esc(p.dummy_bed_current ?? 59)}" /></label>
+              <label class="inline-field"><span class="field-label">Bed target</span><input class="input printer-dummy-bed-target" type="number" step="1" value="${esc(p.dummy_bed_target ?? 60)}" /></label>
+              <label class="inline-field"><span class="field-label">Chamber</span><input class="input printer-dummy-chamber-current" type="number" step="1" value="${esc(p.dummy_chamber_current ?? 34)}" /></label>
+            ` : `
+              <label class="inline-field"><span class="field-label">Host / IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
+              <label class="inline-field"><span class="field-label">Serial / SN</span><input class="input printer-serial" value="${esc(p.serial || '')}" /></label>
+              <label class="inline-field"><span class="field-label">PIN / access code</span><input class="input printer-pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
+              <label class="inline-field"><span class="field-label">MQTT port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.port || 1883)}" /></label>
+            `}
           </div>
           <div class="printer-toggle-row">
             <label><input class="toggle printer-enabled" type="checkbox" ${p.enabled !== false ? 'checked' : ''}> enabled</label>
-            <label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label>
-            <label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>
+            ${isDummy ? '<span class="mini-note">Simulator only. No real commands are sent.</span>' : `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label><label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>`}
           </div>
           <div class="printer-action-row">
             <button class="button primary tiny printer-save"><span class="button-label">Save</span></button>
             <button class="button secondary tiny printer-default" ${cfg.app.default_printer === id ? 'disabled' : ''}><span class="button-label">Make Default</span></button>
             <button class="button danger tiny printer-delete"><span class="button-label">Remove</span></button>
           </div>
-        </div>
-      `).join('') : '<div class="result-item"><strong>No printers configured</strong><span>Scan or manually add one above.</span></div>';
+        </div>`;
+      }).join('') : '<div class="result-item"><strong>No printers configured</strong><span>Scan, manually add one, or add a dummy simulator above.</span></div>';
       bindPrinterManagerRows();
     }
   }
@@ -1867,8 +1904,27 @@
   function bindPrinterManagerRows() {
     $$('#printerSettings [data-printer-id]').forEach(row => {
       const id = row.dataset.printerId;
+      const isDummy = row.dataset.printerType === 'dummy';
       $('.printer-save', row)?.addEventListener('click', async e => {
-        const body = {
+        const body = isDummy ? {
+          name: $('.printer-name', row)?.value?.trim() || 'Dummy Printer',
+          type: 'dummy',
+          printer_type: 'dummy',
+          host: 'dummy.local',
+          serial: `DUMMY-${id}`,
+          port: 0,
+          enabled: !!$('.printer-enabled', row)?.checked,
+          allow_commands: false,
+          allow_dangerous_commands: false,
+          dummy_mode: $('.printer-dummy-mode', row)?.value || 'printing',
+          dummy_progress: Number($('.printer-dummy-progress', row)?.value || 42),
+          dummy_ai_state: $('.printer-dummy-ai', row)?.value || 'looks_good',
+          dummy_hotend_current: Number($('.printer-dummy-hotend-current', row)?.value || 215),
+          dummy_hotend_target: Number($('.printer-dummy-hotend-target', row)?.value || 220),
+          dummy_bed_current: Number($('.printer-dummy-bed-current', row)?.value || 59),
+          dummy_bed_target: Number($('.printer-dummy-bed-target', row)?.value || 60),
+          dummy_chamber_current: Number($('.printer-dummy-chamber-current', row)?.value || 34),
+        } : {
           name: $('.printer-name', row)?.value?.trim() || 'Centauri Carbon 2',
           host: $('.printer-host', row)?.value?.trim() || '',
           serial: $('.printer-serial', row)?.value?.trim() || '',
@@ -1879,7 +1935,7 @@
         };
         const pin = $('.printer-pin', row)?.value?.trim();
         if (pin) body.access_code = pin;
-        if (!body.host) return toast('Printer host/IP is required.', 'warn');
+        if (!isDummy && !body.host) return toast('Printer host/IP is required.', 'warn');
         setButtonBusy(e.currentTarget, true, 'Saving...');
         try {
           const data = await api(`/api/printers/${encodeURIComponent(id)}`, { method:'PATCH', body:JSON.stringify(body) });
@@ -2312,6 +2368,14 @@
         $('#managerManualSerial').value = '';
       } catch (err) { toast(err.message, 'error'); }
       finally { setButtonBusy(managerManual, false); }
+    });
+
+    const managerDummy = $('#managerDummyAddButton');
+    if (managerDummy) managerDummy.addEventListener('click', async () => {
+      setButtonBusy(managerDummy, true, 'Adding dummy...');
+      try { await saveDummyPrinter({ setDefault:false }); }
+      catch (err) { toast(err.message, 'error'); }
+      finally { setButtonBusy(managerDummy, false); }
     });
 
     const saveTheme = $('#saveThemeButton');
