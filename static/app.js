@@ -15,6 +15,7 @@
   let roiFeedbackModalInitialized = false;
   const SELECTED_PRINTER_STORAGE_KEY = 'cc2dash.selectedPrinterId';
   const multiViewState = { timer: null, lastLoadedAt: null };
+  const globalAiAlertState = { timer: null, dismissedSignature: '', lastSignature: '' };
   const dummyPrintersEnabled = document.body.dataset.dummyPrintersEnabled !== 'false';
 
   function printerIsDummy(data) {
@@ -125,6 +126,69 @@
       el.style.transform = 'translateY(8px)';
       setTimeout(() => el.remove(), 200);
     }, timeout);
+  }
+
+
+  function hideGlobalAiAlert() {
+    const banner = $('#globalAiAlertBanner');
+    if (banner) banner.classList.add('hidden');
+  }
+
+  function renderGlobalAiAlert(data) {
+    const banner = $('#globalAiAlertBanner');
+    if (!banner) return;
+    const alerts = data?.alerts || [];
+    const signature = data?.signature || '';
+    globalAiAlertState.lastSignature = signature;
+    if (!alerts.length || !data?.enabled || (signature && signature === globalAiAlertState.dismissedSignature)) {
+      hideGlobalAiAlert();
+      return;
+    }
+    const top = alerts[0] || {};
+    const count = alerts.length;
+    const name = top.name || top.printer_id || 'Printer';
+    const risk = Number(top.risk || 0);
+    const level = String(top.level || 'warning').toUpperCase();
+    const pending = !!top.pending_auto_pause;
+    const title = pending ? `Auto-pause warning on ${name}` : `AI warning on ${name}`;
+    const text = `${level} · ${risk}% · ${top.summary || 'Failure Detection needs attention.'}${count > 1 ? ` · ${count} printers reporting warnings` : ''}`;
+    const titleEl = $('#globalAiAlertTitle');
+    const textEl = $('#globalAiAlertText');
+    const openEl = $('#globalAiAlertOpen');
+    if (titleEl) titleEl.textContent = title;
+    if (textEl) textEl.textContent = text;
+    if (openEl) openEl.href = top.dashboard_url || `/?printer=${encodeURIComponent(top.printer_id || '')}`;
+    banner.classList.remove('hidden', 'warn', 'bad');
+    banner.classList.add((pending || risk >= 80 || String(top.level || '').toLowerCase() === 'high') ? 'bad' : 'warn');
+  }
+
+  async function pollGlobalAiAlerts() {
+    if (page === 'setup' || cfg?.portal_ai?.global_alerts_enabled === false) return;
+    if (configuredPrinterIds().length <= 1) {
+      hideGlobalAiAlert();
+      return;
+    }
+    try {
+      const data = await api('/api/ai/global-alerts');
+      renderGlobalAiAlert(data);
+    } catch {
+      // Keep global alert polling silent; the normal dashboard/logs surface API issues.
+    }
+  }
+
+  function initGlobalAiAlerts() {
+    const dismiss = $('#globalAiAlertDismiss');
+    dismiss?.addEventListener('click', () => {
+      globalAiAlertState.dismissedSignature = globalAiAlertState.lastSignature || '';
+      hideGlobalAiAlert();
+    });
+    if (page === 'setup' || cfg?.portal_ai?.global_alerts_enabled === false || configuredPrinterIds().length <= 1) {
+      hideGlobalAiAlert();
+      return;
+    }
+    pollGlobalAiAlerts();
+    const seconds = Math.max(8, Math.min(60, Number(cfg?.portal_ai?.global_alert_poll_seconds || 15)));
+    globalAiAlertState.timer = setInterval(pollGlobalAiAlerts, seconds * 1000);
   }
 
   async function api(path, options = {}) {
@@ -2551,6 +2615,12 @@
       cfg.portal_ai.enabled = !!$('#portalAIEnabled')?.checked;
       cfg.portal_ai.background_monitor_enabled = !!$('#aiBackgroundMonitorEnabled')?.checked;
       cfg.portal_ai.check_interval_seconds = Number($('#aiCheckIntervalSeconds')?.value || 30);
+      cfg.portal_ai.multi_printer_scheduler_enabled = !!$('#aiMultiPrinterSchedulerEnabled')?.checked;
+      cfg.portal_ai.multi_printer_max_concurrent_vision_checks = Number($('#aiMultiPrinterMaxChecks')?.value || 1);
+      cfg.portal_ai.multi_printer_stagger_seconds = Number($('#aiMultiPrinterStaggerSeconds')?.value || 10);
+      cfg.portal_ai.multi_printer_prioritize_viewed_printer = !!$('#aiMultiPrinterPrioritizeViewed')?.checked;
+      cfg.portal_ai.global_alerts_enabled = !!$('#aiGlobalAlertsEnabled')?.checked;
+      cfg.portal_ai.global_alert_min_level = $('#aiGlobalAlertMinLevel')?.value || 'high';
       cfg.portal_ai.background_log_changes = !!$('#aiBackgroundLogChanges')?.checked;
       cfg.portal_ai.background_min_log_level = $('#aiBackgroundMinLogLevel')?.value || 'watch';
       cfg.portal_ai.telemetry_rules_enabled = !!$('#aiTelemetryRules')?.checked;
@@ -2751,6 +2821,12 @@
       cfg.portal_ai.enabled = !!$('#portalAIEnabled')?.checked;
       cfg.portal_ai.background_monitor_enabled = !!$('#aiBackgroundMonitorEnabled')?.checked;
       cfg.portal_ai.check_interval_seconds = Number($('#aiCheckIntervalSeconds')?.value || 30);
+      cfg.portal_ai.multi_printer_scheduler_enabled = !!$('#aiMultiPrinterSchedulerEnabled')?.checked;
+      cfg.portal_ai.multi_printer_max_concurrent_vision_checks = Number($('#aiMultiPrinterMaxChecks')?.value || 1);
+      cfg.portal_ai.multi_printer_stagger_seconds = Number($('#aiMultiPrinterStaggerSeconds')?.value || 10);
+      cfg.portal_ai.multi_printer_prioritize_viewed_printer = !!$('#aiMultiPrinterPrioritizeViewed')?.checked;
+      cfg.portal_ai.global_alerts_enabled = !!$('#aiGlobalAlertsEnabled')?.checked;
+      cfg.portal_ai.global_alert_min_level = $('#aiGlobalAlertMinLevel')?.value || 'high';
       cfg.portal_ai.background_log_changes = !!$('#aiBackgroundLogChanges')?.checked;
       cfg.portal_ai.background_min_log_level = $('#aiBackgroundMinLogLevel')?.value || 'watch';
       cfg.portal_ai.telemetry_rules_enabled = !!$('#aiTelemetryRules')?.checked;
@@ -5768,6 +5844,7 @@
   }
 
   if (initGlobalPrinterSwitcher()) return;
+  initGlobalAiAlerts();
 
   if (page === 'dashboard') initDashboard();
   if (page === 'kiosk') initKiosk();

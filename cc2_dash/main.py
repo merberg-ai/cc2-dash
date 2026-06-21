@@ -151,6 +151,8 @@ _AI_MONITOR_STATE: dict[str, Any] = {
     "last_error": None,
 }
 _AI_MONITOR_LAST_LOGGED: dict[str, dict[str, Any]] = {}
+_AI_MONITOR_PRINTER_STATE: dict[str, dict[str, Any]] = {}
+_AI_RECENTLY_VIEWED_PRINTERS: dict[str, float] = {}
 _AI_AUTO_PAUSE_PENDING: dict[str, dict[str, Any]] = {}
 _AI_AUTO_PAUSE_CANCELLED: dict[str, float] = {}
 _AI_AUTO_PAUSE_LAST_SENT: dict[str, float] = {}
@@ -1887,12 +1889,162 @@ def _should_log_ai_change(printer_id: str, result: dict[str, Any], ai_cfg: dict[
     return old_level != result.get("level") or old_state != result.get("state") or abs(risk - old_risk) >= 10
 
 
-async def _ai_monitor_loop() -> None:
-    """Background Portal AI watchdog.
+def _mark_viewed_printer(printer_id: str | None, source: str = "ui") -> None:
+    """Remember which printer a browser is actively viewing.
 
-    This keeps the rule engine evaluating even when no browser is open. The
-    dashboard can then simply display the latest cached result, while this loop
-    handles state/risk changes and logging in the running backend service.
+    The background scheduler uses this only as a soft priority hint. It never
+    changes app.default_printer and it expires quickly, so a forgotten browser
+    tab cannot permanently starve the other printers.
+    """
+    if not printer_id:
+        return
+    _AI_RECENTLY_VIEWED_PRINTERS[str(printer_id)] = time.time()
+    row = _AI_MONITOR_PRINTER_STATE.setdefault(str(printer_id), {})
+    row["last_viewed_epoch"] = _AI_RECENTLY_VIEWED_PRINTERS[str(printer_id)]
+    row["last_viewed_source"] = source
+
+
+def _cleanup_monitor_state(visible_ids: set[str] | None = None, now: float | None = None) -> None:
+    now = now or time.time()
+    for pid, ts in list(_AI_RECENTLY_VIEWED_PRINTERS.items()):
+        if now - float(ts or 0) > 10 * 60:
+            _AI_RECENTLY_VIEWED_PRINTERS.pop(pid, None)
+    if visible_ids is not None:
+        for pid in list(_AI_MONITOR_PRINTER_STATE.keys()):
+            if pid not in visible_ids:
+                _AI_MONITOR_PRINTER_STATE.pop(pid, None)
+                _AI_MONITOR_LAST_LOGGED.pop(pid, None)
+
+
+def _monitor_setting_float(ai_cfg: dict[str, Any], key: str, default: float, lo: float, hi: float) -> float:
+    try:
+        return max(lo, min(hi, float(ai_cfg.get(key, default))))
+    except Exception:
+        return default
+
+
+def _monitor_setting_int(ai_cfg: dict[str, Any], key: str, default: int, lo: int, hi: int) -> int:
+    try:
+        return max(lo, min(hi, int(float(ai_cfg.get(key, default)))))
+    except Exception:
+        return default
+
+
+def _monitor_pending_deadline(printer_id: str) -> float | None:
+    pending = _AI_AUTO_PAUSE_PENDING.get(printer_id)
+    if not isinstance(pending, dict):
+        return None
+    try:
+        deadline = float(pending.get("deadline_epoch") or 0)
+        return deadline if deadline > 0 else None
+    except Exception:
+        return None
+
+
+def _monitor_priority_tuple(printer_id: str, row: dict[str, Any], ai_cfg: dict[str, Any], now: float) -> tuple:
+    pending_deadline = _monitor_pending_deadline(printer_id)
+    pending_due = 1 if pending_deadline and pending_deadline <= now + 2.0 else 0
+    pending_armed = 1 if pending_deadline else 0
+    prioritize_viewed = bool(ai_cfg.get("multi_printer_prioritize_viewed_printer", True))
+    viewed_recently = 0
+    if prioritize_viewed:
+        viewed_ts = float(_AI_RECENTLY_VIEWED_PRINTERS.get(printer_id) or row.get("last_viewed_epoch") or 0)
+        viewed_recently = 1 if viewed_ts and (now - viewed_ts) <= 150.0 else 0
+    cached = portal_ai.cached_result(printer_id) or {}
+    risk = int(cached.get("risk") or row.get("last_risk") or 0)
+    level_rank = _level_rank(str(cached.get("level") or row.get("last_level") or "low"))
+    last_checked = float(row.get("last_check_epoch") or 0)
+    # Sort descending for the important fields by returning negative values for
+    # risk/level; oldest last_check wins as the final tie-breaker.
+    return (-pending_due, -pending_armed, -viewed_recently, -level_rank, -risk, last_checked)
+
+
+async def _run_ai_monitor_check(printer_id: str, printer: dict[str, Any], cfg: dict[str, Any], ai_cfg: dict[str, Any]) -> dict[str, Any]:
+    start = time.time()
+    pcfg = printer_dict_to_config(printer_id, printer)
+    row = _AI_MONITOR_PRINTER_STATE.setdefault(printer_id, {})
+    row.update({
+        "printer_id": printer_id,
+        "name": pcfg.name,
+        "host": pcfg.host,
+        "printer_type": pcfg.type,
+        "dummy": bool(is_dummy_printer_data(printer)),
+        "running": True,
+        "last_start_epoch": start,
+        "last_error": None,
+    })
+    interval = _monitor_setting_float(ai_cfg, "check_interval_seconds", 30.0, 5.0, 600.0)
+    try:
+        if not is_dummy_printer_data(printer) and not runtime.get_client(printer_id):
+            runtime.start(printer_id, pcfg)
+        snap = runtime.snapshot(printer_id)
+        status = await asyncio.to_thread(
+            _status_from_snapshot,
+            printer_id,
+            printer,
+            snap,
+            "background",
+            True,
+        )
+        result = status.get("portal_ai") or {}
+        risk = int(result.get("risk") or 0)
+        level = str(result.get("level") or "low")
+        if result and _should_log_ai_change(printer_id, result, ai_cfg):
+            reason = (result.get("reasons") or ["No reason returned."])[0]
+            log_level = "warning" if risk >= 50 else "info"
+            log(log_level, f"AI watchdog {level.upper()} {risk}%: {reason}", "portal_ai", printer=printer_id)
+            _AI_MONITOR_LAST_LOGGED[printer_id] = {
+                "risk": risk,
+                "level": result.get("level"),
+                "state": result.get("state"),
+                "ts": time.time(),
+            }
+        pending = result.get("auto_pause", {}).get("pending") if isinstance(result.get("auto_pause"), dict) else None
+        next_due = start + interval
+        if isinstance(pending, dict):
+            try:
+                deadline = float(pending.get("deadline_epoch") or 0)
+                if deadline > time.time():
+                    next_due = min(next_due, deadline)
+            except Exception:
+                pass
+        row.update({
+            "running": False,
+            "last_check_epoch": time.time(),
+            "last_check": time.strftime("%H:%M:%S"),
+            "last_duration_seconds": round(time.time() - start, 3),
+            "last_risk": risk,
+            "last_level": level,
+            "last_state": result.get("state"),
+            "last_summary": result.get("summary") or result.get("message"),
+            "next_due_epoch": next_due,
+            "next_due_in_seconds": max(0.0, round(next_due - time.time(), 1)),
+            "last_error": None,
+        })
+        return {"ok": True, "printer_id": printer_id, "status": status, "result": result}
+    except Exception as exc:
+        next_due = time.time() + min(60.0, max(15.0, interval))
+        row.update({
+            "running": False,
+            "last_check_epoch": time.time(),
+            "last_check": time.strftime("%H:%M:%S"),
+            "last_duration_seconds": round(time.time() - start, 3),
+            "next_due_epoch": next_due,
+            "next_due_in_seconds": max(0.0, round(next_due - time.time(), 1)),
+            "last_error": str(exc),
+        })
+        log("error", f"AI watchdog printer check failed: {exc}", "portal_ai", printer=printer_id)
+        return {"ok": False, "printer_id": printer_id, "error": str(exc)}
+
+
+async def _ai_monitor_loop() -> None:
+    """Multi-printer background Portal AI watchdog.
+
+    The old watchdog walked every printer in one burst. That worked for one
+    printer, but it made multiple active prints compete for camera/Ollama time.
+    This scheduler keeps per-printer due times, staggers checks, and only runs a
+    small batch of due printers per tick. Per-printer auto-pause state remains
+    isolated by printer_id.
     """
     await asyncio.sleep(2)
     _AI_MONITOR_STATE["running"] = True
@@ -1900,42 +2052,85 @@ async def _ai_monitor_loop() -> None:
         try:
             cfg = load_config()
             ai_cfg = cfg.get("portal_ai", {}) or {}
-            interval = max(5.0, min(600.0, float(ai_cfg.get("check_interval_seconds") or 30)))
-            if ai_cfg.get("enabled", True) and ai_cfg.get("background_monitor_enabled", True):
-                printers = cfg.get("printers") or {}
-                for printer_id, printer in list(printers.items()):
-                    if not (printer or {}).get("enabled", True):
-                        continue
-                    if not runtime.get_client(printer_id):
-                        runtime.start(printer_id, printer_dict_to_config(printer_id, printer))
-                    snap = runtime.snapshot(printer_id)
-                    status = await asyncio.to_thread(
-                        _status_from_snapshot,
-                        printer_id,
-                        printer,
-                        snap,
-                        "background",
-                        True,
-                    )
-                    result = status.get("portal_ai") or {}
-                    if result:
-                        if _should_log_ai_change(printer_id, result, ai_cfg):
-                            risk = int(result.get("risk") or 0)
-                            level = str(result.get("level") or "low").upper()
-                            reason = (result.get("reasons") or ["No reason returned."])[0]
-                            log_level = "warning" if risk >= 50 else "info"
-                            log(log_level, f"AI watchdog {level} {risk}%: {reason}", "portal_ai", printer=printer_id)
-                            _AI_MONITOR_LAST_LOGGED[printer_id] = {
-                                "risk": risk,
-                                "level": result.get("level"),
-                                "state": result.get("state"),
-                                "ts": time.time(),
-                            }
-                _AI_MONITOR_STATE["iterations"] = int(_AI_MONITOR_STATE.get("iterations") or 0) + 1
-                _AI_MONITOR_STATE["last_loop_epoch"] = time.time()
-                _AI_MONITOR_STATE["last_loop"] = time.strftime("%H:%M:%S")
-                _AI_MONITOR_STATE["last_error"] = None
-            await asyncio.sleep(interval)
+            now = time.time()
+            all_printers = visible_printers(cfg)
+            printers = {
+                pid: pdata
+                for pid, pdata in all_printers.items()
+                if (pdata or {}).get("enabled", True)
+            }
+            visible_ids = set(all_printers.keys())
+            _cleanup_monitor_state(visible_ids, now)
+
+            interval = _monitor_setting_float(ai_cfg, "check_interval_seconds", 30.0, 5.0, 600.0)
+            stagger = _monitor_setting_float(ai_cfg, "multi_printer_stagger_seconds", 10.0, 0.0, 120.0)
+            max_batch = _monitor_setting_int(ai_cfg, "multi_printer_max_concurrent_vision_checks", 1, 1, 8)
+            scheduler_enabled = bool(ai_cfg.get("multi_printer_scheduler_enabled", True))
+            monitoring_enabled = bool(ai_cfg.get("enabled", True) and ai_cfg.get("background_monitor_enabled", True))
+
+            _AI_MONITOR_STATE.update({
+                "running": True,
+                "active_printer_count": len(printers),
+                "visible_printer_count": len(all_printers),
+                "scheduler_enabled": scheduler_enabled,
+                "check_interval_seconds": interval,
+                "multi_printer_stagger_seconds": stagger,
+                "multi_printer_max_batch": max_batch,
+                "background_monitor_enabled": monitoring_enabled,
+            })
+
+            if not monitoring_enabled or not printers:
+                await asyncio.sleep(15)
+                continue
+
+            # First sighting: spread next_due across the interval so a restart
+            # does not immediately dogpile every camera/Ollama request.
+            for idx, (pid, pdata) in enumerate(printers.items()):
+                row = _AI_MONITOR_PRINTER_STATE.setdefault(pid, {})
+                pcfg = printer_dict_to_config(pid, pdata)
+                row.setdefault("printer_id", pid)
+                row["name"] = pcfg.name
+                row["host"] = pcfg.host
+                row["printer_type"] = pcfg.type
+                row["dummy"] = bool(is_dummy_printer_data(pdata))
+                if not row.get("next_due_epoch"):
+                    initial_offset = min(interval, idx * stagger) if scheduler_enabled else 0
+                    row["next_due_epoch"] = now + initial_offset
+
+            due: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+            for pid, pdata in printers.items():
+                row = _AI_MONITOR_PRINTER_STATE.setdefault(pid, {})
+                next_due = float(row.get("next_due_epoch") or 0)
+                pending_deadline = _monitor_pending_deadline(pid)
+                if pending_deadline and pending_deadline < next_due:
+                    next_due = pending_deadline
+                    row["next_due_epoch"] = next_due
+                if now >= next_due:
+                    due.append((pid, pdata, row))
+
+            due.sort(key=lambda item: _monitor_priority_tuple(item[0], item[2], ai_cfg, now))
+            _AI_MONITOR_STATE["due_printer_count"] = len(due)
+            processed = 0
+            if due:
+                batch_size = max_batch if scheduler_enabled else len(due)
+                for pid, pdata, _row in due[: max(1, batch_size)]:
+                    await _run_ai_monitor_check(pid, pdata, cfg, ai_cfg)
+                    processed += 1
+
+            _AI_MONITOR_STATE["iterations"] = int(_AI_MONITOR_STATE.get("iterations") or 0) + 1
+            _AI_MONITOR_STATE["last_loop_epoch"] = time.time()
+            _AI_MONITOR_STATE["last_loop"] = time.strftime("%H:%M:%S")
+            _AI_MONITOR_STATE["last_processed_count"] = processed
+            _AI_MONITOR_STATE["last_error"] = None
+
+            # Sleep just long enough to avoid churn while still honoring staggered
+            # due printers and auto-pause deadlines.
+            if scheduler_enabled and processed and len(due) > processed and stagger > 0:
+                sleep_for = max(1.0, min(stagger, 30.0))
+            else:
+                next_times = [float((_AI_MONITOR_PRINTER_STATE.get(pid) or {}).get("next_due_epoch") or now + interval) for pid in printers]
+                sleep_for = max(1.0, min(15.0, min(next_times) - time.time())) if next_times else 15.0
+            await asyncio.sleep(sleep_for)
         except asyncio.CancelledError:
             _AI_MONITOR_STATE["running"] = False
             raise
@@ -2027,6 +2222,8 @@ def view_context(request: Request) -> dict[str, Any]:
     theme = get_theme(cfg.get("app", {}).get("theme"))
     requested_printer = request.query_params.get("printer") if request else None
     pid, printer = _selected_printer(cfg, requested_printer)
+    if pid:
+        _mark_viewed_printer(pid, "page")
     default_pid, _default_printer_data = default_printer(cfg)
     public_printer = None
     if pid and printer:
@@ -2965,6 +3162,7 @@ async def api_kiosk_status():
 
 @app.get("/api/kiosk/status/{printer_id}")
 async def api_kiosk_status_printer(printer_id: str):
+    _mark_viewed_printer(printer_id, "kiosk-api")
     cfg = load_config()
     printer = cfg.get("printers", {}).get(printer_id)
     if not printer:
@@ -2987,6 +3185,7 @@ async def api_status():
 
 @app.get("/api/status/{printer_id}")
 async def api_status_printer(printer_id: str):
+    _mark_viewed_printer(printer_id, "status-api")
     cfg = load_config()
     printer = visible_printers(cfg).get(printer_id)
     if not printer:
@@ -3013,6 +3212,12 @@ async def api_ai_monitor_status():
             "enabled": bool(ai_cfg.get("enabled", True)),
             "background_monitor_enabled": bool(ai_cfg.get("background_monitor_enabled", True)),
             "check_interval_seconds": ai_cfg.get("check_interval_seconds", 30),
+            "multi_printer_scheduler_enabled": bool(ai_cfg.get("multi_printer_scheduler_enabled", True)),
+            "multi_printer_max_concurrent_vision_checks": ai_cfg.get("multi_printer_max_concurrent_vision_checks", 1),
+            "multi_printer_stagger_seconds": ai_cfg.get("multi_printer_stagger_seconds", 10),
+            "multi_printer_prioritize_viewed_printer": bool(ai_cfg.get("multi_printer_prioritize_viewed_printer", True)),
+            "global_alerts_enabled": bool(ai_cfg.get("global_alerts_enabled", True)),
+            "global_alert_min_level": ai_cfg.get("global_alert_min_level", "high"),
             "background_log_changes": bool(ai_cfg.get("background_log_changes", True)),
             "background_min_log_level": ai_cfg.get("background_min_log_level", "watch"),
             "vision_ai_enabled": bool(ai_cfg.get("vision_ai_enabled", False)),
@@ -3021,8 +3226,73 @@ async def api_ai_monitor_status():
             "vision_check_interval_seconds": ai_cfg.get("vision_check_interval_seconds"),
         },
         "cached": cached,
+        "printer_state": _AI_MONITOR_PRINTER_STATE,
+        "recently_viewed": _AI_RECENTLY_VIEWED_PRINTERS,
     }
 
+
+
+@app.get("/api/ai/global-alerts")
+async def api_ai_global_alerts():
+    """Return cross-printer AI warnings for the global UI banner.
+
+    This endpoint intentionally uses cached AI/watchdog state only. It should be
+    lightweight and must never trigger camera/Ollama checks from a browser poll.
+    """
+    cfg = load_config()
+    ai_cfg = cfg.get("portal_ai", {}) or {}
+    if not bool(ai_cfg.get("global_alerts_enabled", True)):
+        return {"ok": True, "enabled": False, "alerts": [], "count": 0}
+    min_level = str(ai_cfg.get("global_alert_min_level") or "high").lower()
+    min_rank = _level_rank(min_level)
+    alerts: list[dict[str, Any]] = []
+    now = time.time()
+    for printer_id, printer in visible_printers(cfg).items():
+        pcfg = printer_dict_to_config(printer_id, printer)
+        if not pcfg.enabled:
+            continue
+        cached = portal_ai.cached_result(printer_id) or {}
+        pending_raw = _AI_AUTO_PAUSE_PENDING.get(printer_id)
+        pending = _auto_pause_public_pending(pending_raw, now) if isinstance(pending_raw, dict) else None
+        level = str(cached.get("level") or "low").lower()
+        risk = int(cached.get("risk") or 0)
+        include = bool(pending) or (_level_rank(level) >= min_rank and risk >= 50)
+        if not include:
+            continue
+        summary = str(
+            (pending or {}).get("reason")
+            or cached.get("summary")
+            or cached.get("message")
+            or ((cached.get("reasons") or [""])[0] if isinstance(cached.get("reasons"), list) else "")
+            or "Failure Detection warning."
+        )
+        alerts.append({
+            "printer_id": printer_id,
+            "name": pcfg.name,
+            "host": pcfg.host,
+            "dummy": bool(is_dummy_printer_data(printer)),
+            "level": level,
+            "risk": risk,
+            "state": cached.get("state"),
+            "summary": summary[:500],
+            "pending_auto_pause": pending,
+            "last_check_epoch": cached.get("last_check_epoch"),
+            "last_check": cached.get("last_check"),
+            "dashboard_url": f"/?printer={quote(printer_id)}",
+            "control_url": f"/control?printer={quote(printer_id)}",
+            "kiosk_url": f"/kiosk?printer={quote(printer_id)}",
+        })
+    alerts.sort(key=lambda a: (1 if a.get("pending_auto_pause") else 0, _level_rank(a.get("level")), int(a.get("risk") or 0)), reverse=True)
+    signature = hashlib.sha1(json.dumps([(a.get("printer_id"), a.get("level"), a.get("risk"), bool(a.get("pending_auto_pause"))) for a in alerts], sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    return {
+        "ok": True,
+        "enabled": True,
+        "count": len(alerts),
+        "alerts": alerts,
+        "signature": signature,
+        "min_level": min_level,
+        "monitor_state": _AI_MONITOR_STATE,
+    }
 
 @app.post("/api/ai/enabled")
 async def api_ai_set_enabled(req: AIEnabledRequest):
@@ -3138,6 +3408,7 @@ async def api_ai_auto_pause_now(printer_id: str, req: AutoPauseNowRequest | None
 
 @app.get("/api/printers/{printer_id}/ai/status")
 async def api_ai_status(printer_id: str):
+    _mark_viewed_printer(printer_id, "ai-api")
     cfg = load_config()
     printer = cfg.get("printers", {}).get(printer_id)
     if not printer:

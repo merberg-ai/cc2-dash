@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.73-blue)
+![Version](https://img.shields.io/badge/version-1.2.74-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -64,6 +64,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.74 multi-printer-ai-scheduler
 1.2.73 multi-view-dashboard
 1.2.72 dummy-printer-simulator
 1.2.71 multi-printer-view-context
@@ -84,7 +85,7 @@ Major current capabilities:
 | Area | Status |
 |---|---|
 | Printer discovery / pairing | Working, verified Centauri discovery filtering, with optional dummy/simulator printer entries for multi-printer UI testing |
-| Dashboard status | Working, mobile-first, active/idle aware, with active-printer context and Multi-View overview |
+| Dashboard status | Working, mobile-first, active/idle aware, with active-printer context, global warning banner, and Multi-View overview |
 | Stock portal bridge | Working as fallback/reference portal |
 | Camera relay | Working, reduces direct camera connection pileups |
 | Kiosk mode | Working, camera-first fullscreen view |
@@ -600,6 +601,24 @@ Current behavior:
 - Tracks stale status, printer error states, pause/error/fail states, stuck progress, temp sanity, filament status hints, and camera/vision issues.
 - Uses Ollama vision only when enabled and when an active print is detected.
 - Does not cancel jobs automatically. Optional high-risk auto-pause is available only when explicitly enabled.
+
+Multi-printer watchdog behavior:
+
+- The background watchdog keeps separate cached AI/vision state per `printer_id`.
+- Auto-pause countdowns, cancellations, cooldowns, and sent-pause timestamps are isolated per printer.
+- The scheduler staggers due printer checks so several active printers do not all hit camera/Ollama at the same instant.
+- The currently viewed printer can be softly prioritized, but the saved default printer is not changed.
+- Global AI warning banners can surface high-risk warnings from another printer while you are viewing a different printer/page.
+
+New multi-printer settings under `Settings → Portal AI`:
+
+| Control | Purpose |
+|---|---|
+| **Multi-printer AI scheduler** | Enables staggered due-time scheduling across configured printers. |
+| **Max AI checks per tick** | Number of due printers to process in one scheduler tick. Keep at `1` for Pi/Ollama stability. |
+| **Printer check stagger** | Seconds between due printer checks when more than one printer needs attention. |
+| **Prioritize viewed printer** | Softly checks the printer currently open in the browser before other equally due printers. |
+| **Global AI warning banner** | Shows high-risk/cross-printer warnings without triggering new camera/model checks. |
 
 Common checks:
 
@@ -1164,6 +1183,14 @@ Configure this during setup or later in Settings. Keep it restricted to trusted 
 
 ## Useful API endpoints
 
+Multi-printer / AI monitoring:
+
+```text
+GET  /api/multi-view/status
+GET  /api/ai/monitor
+GET  /api/ai/global-alerts
+```
+
 General:
 
 ```text
@@ -1442,6 +1469,17 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.74 Multi-printer AI scheduler
+
+- Reworked the background Failure Detection watchdog into a multi-printer scheduler with per-printer due times.
+- Added staggered background checks so multiple printers do not all hit camera/Ollama on the same tick.
+- Added Settings → Portal AI controls for multi-printer scheduler enablement, max checks per tick, stagger seconds, viewed-printer priority, and the global AI warning banner.
+- Kept auto-pause state isolated by `printer_id`, including countdowns, cancellations, cooldowns, and sent-pause tracking.
+- Auto-pause countdowns can now pull a printer forward in the scheduler so due warnings are rechecked near their deadline.
+- Added `/api/ai/global-alerts` for lightweight cached cross-printer warning polling.
+- Added a themed global warning banner that can point you to another printer with a high-risk AI/auto-pause warning.
+- Expanded `/api/ai/monitor` with per-printer scheduler state and recently viewed-printer hints for diagnostics.
 
 ### v1.2.73 Multi-View dashboard
 

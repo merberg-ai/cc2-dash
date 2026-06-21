@@ -297,8 +297,28 @@
         <div class="setting-controls"><label><input id="aiBackgroundMonitorEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.background_monitor_enabled|default(true) %}checked{% endif %}> enabled</label></div>
       </div>
       <div class="setting-row">
-        <div><strong>Background check interval</strong><small>Seconds between watchdog checks. Lower is more responsive; higher is quieter.</small></div>
+        <div><strong>Background check interval</strong><small>Seconds between watchdog checks per printer. Lower is more responsive; higher is quieter.</small></div>
         <div class="setting-controls"><input id="aiCheckIntervalSeconds" class="input" type="number" min="5" max="600" step="5" value="{{ cfg.portal_ai.check_interval_seconds|default(30) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Multi-printer AI scheduler</strong><small>Staggers background checks across configured printers so cameras/Ollama are not hit all at once.</small></div>
+        <div class="setting-controls"><label><input id="aiMultiPrinterSchedulerEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.multi_printer_scheduler_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Max AI checks per tick</strong><small>Keep this at 1 for Pi/Ollama stability. Higher values may check more printers at once.</small></div>
+        <div class="setting-controls"><input id="aiMultiPrinterMaxChecks" class="input" type="number" min="1" max="8" step="1" value="{{ cfg.portal_ai.multi_printer_max_concurrent_vision_checks|default(1) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Printer check stagger</strong><small>Seconds to wait between due printer checks when more than one printer needs AI attention.</small></div>
+        <div class="setting-controls"><input id="aiMultiPrinterStaggerSeconds" class="input" type="number" min="0" max="120" step="1" value="{{ cfg.portal_ai.multi_printer_stagger_seconds|default(10) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Prioritize viewed printer</strong><small>Lets the printer currently open in the browser get checked first when several printers are due.</small></div>
+        <div class="setting-controls"><label><input id="aiMultiPrinterPrioritizeViewed" class="toggle" type="checkbox" {% if cfg.portal_ai.multi_printer_prioritize_viewed_printer|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Global AI warning banner</strong><small>Shows warnings from another printer even when you are viewing a different page/printer.</small></div>
+        <div class="setting-controls compact-inline"><label><input id="aiGlobalAlertsEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.global_alerts_enabled|default(true) %}checked{% endif %}> enabled</label><select id="aiGlobalAlertMinLevel" class="input"><option value="watch" {% if (cfg.portal_ai.global_alert_min_level|default('high')) == 'watch' %}selected{% endif %}>watch+</option><option value="medium" {% if (cfg.portal_ai.global_alert_min_level|default('high')) == 'medium' %}selected{% endif %}>medium+</option><option value="high" {% if (cfg.portal_ai.global_alert_min_level|default('high')) == 'high' %}selected{% endif %}>high only</option></select></div>
       </div>
       <div class="setting-row">
         <div><strong>Log state/risk changes only</strong><small>Prevents the watchdog from spamming the log every check.</small></div>

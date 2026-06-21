@@ -66,6 +66,17 @@
       </nav>
     </header>
 
+    <div id="globalAiAlertBanner" class="global-ai-alert hidden" role="status" aria-live="polite">
+      <div class="global-ai-alert-main">
+        <strong id="globalAiAlertTitle">Failure Detection warning</strong>
+        <span id="globalAiAlertText">Another printer needs attention.</span>
+      </div>
+      <div class="global-ai-alert-actions">
+        <a id="globalAiAlertOpen" class="button danger tiny" href="#">View</a>
+        <button id="globalAiAlertDismiss" class="button secondary tiny" type="button">Dismiss</button>
+      </div>
+    </div>
+
     <main class="main-content">
       {% block content %}{% endblock %}
     </main>

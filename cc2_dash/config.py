@@ -223,6 +223,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,
         "background_monitor_enabled": True,
         "check_interval_seconds": 30,
+        "multi_printer_scheduler_enabled": True,
+        "multi_printer_max_concurrent_vision_checks": 1,
+        "multi_printer_stagger_seconds": 10,
+        "multi_printer_prioritize_viewed_printer": True,
+        "global_alerts_enabled": True,
+        "global_alert_min_level": "high",
         "background_log_changes": True,
         "background_min_log_level": "watch",
         "monitor_active_prints_only": True,
@@ -475,6 +481,12 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     try:
         ai = cfg.setdefault("portal_ai", {})
         ai.setdefault("monitor_active_prints_only", True)
+        ai.setdefault("multi_printer_scheduler_enabled", True)
+        ai.setdefault("multi_printer_max_concurrent_vision_checks", 1)
+        ai.setdefault("multi_printer_stagger_seconds", 10)
+        ai.setdefault("multi_printer_prioritize_viewed_printer", True)
+        ai.setdefault("global_alerts_enabled", True)
+        ai.setdefault("global_alert_min_level", "high")
         ai.setdefault("vision_treat_benign_uncertain_as_ok", True)
         ai.setdefault("vision_benign_uncertain_max_severity", 25)
         ai.setdefault("vision_uncertain_risk_severity_threshold", 35)
