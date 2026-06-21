@@ -28,6 +28,41 @@ button, input, select, textarea { font: inherit; }
 .brand-printer { color:var(--cc2-muted); font-size:.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; max-width:10rem; }
 .brand-meta { display:flex; align-items:center; gap:.28rem; min-width:0; overflow:hidden; color:var(--cc2-muted); font-family:var(--font-number); font-size:.62rem; line-height:1.15; letter-spacing:.02em; opacity:.95; }
 .brand-meta span { min-width:0; max-width:7.8rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid color-mix(in srgb, var(--cc2-border) 84%, transparent); background:color-mix(in srgb, var(--cc2-card-soft) 80%, transparent); border-radius:999px; padding:.11rem .38rem; }
+.global-printer-switcher {
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  gap:.38rem;
+  min-height:2.25rem;
+  padding:.24rem .32rem .24rem .55rem;
+  border:1px solid color-mix(in srgb, var(--cc2-border) 86%, transparent);
+  border-radius:.78rem;
+  background:color-mix(in srgb, var(--cc2-card-soft) 84%, transparent);
+  color:var(--cc2-muted);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.02);
+}
+.global-printer-switcher span {
+  font-family:var(--font-button);
+  font-size:.64rem;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.global-printer-switcher select {
+  max-width:12rem;
+  min-width:7.4rem;
+  min-height:1.75rem;
+  border:0;
+  border-radius:.58rem;
+  padding:.3rem 1.9rem .3rem .55rem;
+  color:var(--cc2-text);
+  background:var(--cc2-card);
+  box-shadow:0 0 0 1px var(--cc2-border);
+  font-family:var(--font-button);
+  font-size:.78rem;
+  font-weight:800;
+}
+.global-printer-switcher select:focus { outline:2px solid color-mix(in srgb, var(--cc2-primary) 54%, transparent); outline-offset:2px; }
 .topnav { display:flex; gap:.3rem; align-items:center; flex:0 0 auto; }
 .navlink { color: var(--cc2-muted); font-size: .8rem; padding: .48rem .55rem; border-radius: .7rem; }
 .navlink:hover { color: var(--cc2-text); background: var(--cc2-card-soft); }
@@ -409,6 +444,8 @@ input.toggle[type="checkbox"]:disabled {
   .brand-printer { max-width:42vw; }
   .brand-meta { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding-bottom:.05rem; }
   .brand-meta::-webkit-scrollbar { display:none; }
+  .global-printer-switcher { width:100%; justify-content:space-between; padding:.38rem .45rem .38rem .65rem; }
+  .global-printer-switcher select { flex:1 1 auto; max-width:none; min-width:0; }
   .topnav { width:100%; overflow-x:auto; flex-wrap:nowrap; justify-content:flex-start; padding-bottom:.05rem; scrollbar-width:none; }
   .topnav::-webkit-scrollbar { display:none; }
   .navlink { flex:0 0 auto; font-size:.74rem; padding:.42rem .48rem; }

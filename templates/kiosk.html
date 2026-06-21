@@ -28,7 +28,7 @@
         </span>
       </a>
       <nav class="kiosk-nav" aria-label="Kiosk navigation">
-        <a href="/" class="navlink">Dash</a>
+        <a href="{{ nav_url('/') }}" class="navlink">Dash</a>
         {% if cfg.features.portal_menu_enabled|default(true) and printer %}<a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer">Portal</a>{% endif %}
         <a href="/settings" class="navlink">Settings</a>
         {% if cfg.features.logs_menu_enabled|default(true) %}<a href="/logs" class="navlink">Logs</a>{% endif %}

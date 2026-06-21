@@ -67,6 +67,7 @@ class PrinterConfig:
     serial: str
     access_code: str = ""
     port: int = 1883
+    type: str = "cc2"
     enabled: bool = True
     allow_commands: bool = True
     allow_dangerous_commands: bool = False
@@ -95,6 +96,7 @@ def printer_dict_to_config(printer_id: str, data: dict[str, Any]) -> PrinterConf
         serial=str(serial),
         access_code=str(data.get("access_code") or data.get("pin") or ""),
         port=int(data.get("port") or 1883),
+        type=str(data.get("type") or data.get("printer_type") or "cc2"),
         enabled=bool(data.get("enabled", True)),
         allow_commands=bool(data.get("allow_commands", True)),
         allow_dangerous_commands=bool(data.get("allow_dangerous_commands", False)),
@@ -103,6 +105,7 @@ def printer_dict_to_config(printer_id: str, data: dict[str, Any]) -> PrinterConf
 
 def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dict[str, Any]:
     data = asdict(cfg)
+    data["printer_type"] = cfg.type
     data["portal_url"] = f"/portal-fullscreen?printer={cfg.id}"
     data["portal_chrome_url"] = f"/portal?printer={cfg.id}"
     data["kiosk_url"] = f"/kiosk?printer={cfg.id}"

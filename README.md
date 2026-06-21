@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.70-blue)
+![Version](https://img.shields.io/badge/version-1.2.71-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -63,6 +63,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.71 multi-printer-view-context
 1.2.70 chamber-readout-only
 1.2.69 chamber-temperature-status
 1.2.68 ai-training-backup-restore
@@ -446,6 +447,18 @@ Settings → Menu / Features
 
 The **Files** and **Filament** rows remain visible in Settings as locked release-gated features while `COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS` is enabled.
 
+### Active printer switching
+
+The header now includes a compact **Printer** selector whenever more than one printer is configured. This changes the printer being viewed on the current page without changing the saved default printer. Page links preserve the active printer with a URL like:
+
+```text
+/?printer=<printer_id>
+/files?printer=<printer_id>
+/control?printer=<printer_id>
+```
+
+The selected/viewed printer is remembered in the browser for convenience. The saved default printer remains the fallback used when no printer is selected, when a URL has no `printer=` query string, or when a bookmarked printer no longer exists.
+
 ---
 
 ## Printer Manager
@@ -468,6 +481,8 @@ Available actions:
 - Remove old printer entries.
 
 Command permissions are intentionally separate from pairing. You can monitor a printer while keeping control buttons locked down.
+
+The default printer is now treated as a startup/fallback printer only. Opening a page with `?printer=<printer_id>` or choosing a printer from the header switcher changes the currently viewed printer without rewriting the default printer setting. This is the first phase of the multi-printer UI foundation.
 
 ---
 
@@ -1384,6 +1399,16 @@ cc2-dash/
 
 ## Release notes
 
+
+
+### v1.2.71 Multi-printer view context foundation
+
+- Added a global header **Printer** selector that appears when configured printers exist.
+- Split the idea of the saved default printer from the currently viewed printer. The default printer remains a fallback, while pages can view a specific printer using `?printer=<printer_id>`.
+- Updated main navigation and footer links to preserve the selected printer across Dash, Upload, Files, Filament, Control, Settings, AI Training, and Logs.
+- Dashboard refresh and quick actions now target the selected/viewed printer instead of silently falling back to the saved default.
+- Remembered the last viewed printer in browser localStorage so mobile browsers return to the same printer unless a URL explicitly chooses another one.
+- Added a light printer `type`/`printer_type` config field for future dummy/simulator printer work without changing existing CC2 behavior.
 
 
 ### v1.2.70 Chamber readout-only polish

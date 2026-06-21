@@ -13,6 +13,65 @@
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
   let roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
   let roiFeedbackModalInitialized = false;
+  const SELECTED_PRINTER_STORAGE_KEY = 'cc2dash.selectedPrinterId';
+
+  function configuredPrinterIds() {
+    return Object.keys(cfg?.printers || {});
+  }
+
+  function isConfiguredPrinter(id) {
+    return !!id && Object.prototype.hasOwnProperty.call(cfg?.printers || {}, id);
+  }
+
+  function urlPrinterId() {
+    try { return new URL(window.location.href).searchParams.get('printer') || ''; } catch { return ''; }
+  }
+
+  function bodyPrinterId() {
+    return document.body.dataset.printerId || '';
+  }
+
+  function rememberSelectedPrinter(id) {
+    if (!isConfiguredPrinter(id)) return;
+    try { window.localStorage.setItem(SELECTED_PRINTER_STORAGE_KEY, id); } catch {}
+  }
+
+  function rememberedSelectedPrinter() {
+    try {
+      const value = window.localStorage.getItem(SELECTED_PRINTER_STORAGE_KEY) || '';
+      return isConfiguredPrinter(value) ? value : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function setUrlPrinterAndNavigate(id) {
+    if (!isConfiguredPrinter(id)) return;
+    rememberSelectedPrinter(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set('printer', id);
+    window.location.assign(url.toString());
+  }
+
+  function initGlobalPrinterSwitcher() {
+    const select = $('#globalPrinterSelect');
+    const current = bodyPrinterId();
+    if (select && current && select.value !== current) select.value = current;
+
+    const explicit = urlPrinterId();
+    const remembered = rememberedSelectedPrinter();
+    const pageCanRedirect = !['setup'].includes(page || '');
+    if (!explicit && remembered && current && remembered !== current && pageCanRedirect) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('printer', remembered);
+      window.location.replace(url.toString());
+      return true;
+    }
+
+    if (current) rememberSelectedPrinter(current);
+    select?.addEventListener('change', () => setUrlPrinterAndNavigate(select.value));
+    return false;
+  }
 
   function featureLocked(key) {
     return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
@@ -778,7 +837,8 @@
 
   async function refreshDashboard() {
     try {
-      const st = await api('/api/status');
+      const id = activePrinterId();
+      const st = await api(id ? `/api/status/${encodeURIComponent(id)}` : '/api/status');
       const progress = Math.max(0, Math.min(100, Number(st.progress || 0)));
       const progressBar = $('#progressBar');
       const progressText = $('#progressText');
@@ -1322,7 +1382,7 @@
         if (requires && !confirm(btn.dataset.confirm || 'Are you sure?')) return;
         setButtonBusy(btn, true, btn.dataset.spinnerText || 'Sending...');
         try {
-          const body = {};
+          const body = { printer_id: activePrinterId() };
           if (action === 'set_speed_preset') {
             const select = btn.closest('.speed-action-row')?.querySelector('.speed-preset-select');
             body.params = { mode: Number(select?.value ?? 1) };
@@ -2820,7 +2880,13 @@
   }
 
   function activePrinterId() {
-    return document.body.dataset.printerId || cfg?.app?.default_printer || Object.keys(cfg?.printers || {})[0] || '';
+    const bodyId = bodyPrinterId();
+    if (bodyId) return bodyId;
+    const fromUrl = urlPrinterId();
+    if (isConfiguredPrinter(fromUrl)) return fromUrl;
+    const remembered = rememberedSelectedPrinter();
+    if (remembered) return remembered;
+    return cfg?.app?.default_printer || configuredPrinterIds()[0] || '';
   }
 
   async function printerApi(path, options = {}) {
@@ -5514,6 +5580,8 @@
     $('#filamentEditModal')?.addEventListener('click', e => { if (e.target?.id === 'filamentEditModal') closeFilamentEditModal(); });
     loadFilaments(false);
   }
+
+  if (initGlobalPrinterSwitcher()) return;
 
   if (page === 'dashboard') initDashboard();
   if (page === 'kiosk') initKiosk();

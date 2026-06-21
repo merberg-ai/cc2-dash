@@ -1945,30 +1945,70 @@ def _configured_printers() -> dict[str, dict[str, Any]]:
     return load_config().get("printers", {}) or {}
 
 
+def _printer_match(printer: Optional[str], cfg: dict[str, Any] | None = None) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a printer identifier/name/host/serial without changing defaults."""
+    cfg = cfg or load_config()
+    printers = cfg.get("printers") or {}
+    wanted = str(printer or "").strip()
+    if not wanted:
+        return None, None
+    if wanted in printers:
+        return wanted, printers[wanted]
+    lowered = wanted.lower()
+    for pid, pdata in printers.items():
+        pcfg = printer_dict_to_config(pid, pdata)
+        if pcfg.host == wanted or pcfg.name.lower() == lowered or pcfg.serial.lower() == lowered:
+            return pid, pdata
+    return None, None
+
+
+def _selected_printer(cfg: dict[str, Any], printer: Optional[str] = None) -> tuple[str | None, dict[str, Any] | None]:
+    """Return the UI-selected printer, falling back to the configured default.
+
+    Multi-printer pages should use this as their view context. It deliberately
+    does not mutate app.default_printer; a selected/viewed printer is not the
+    same thing as the saved default printer.
+    """
+    pid, pdata = _printer_match(printer, cfg)
+    if pid and pdata:
+        return pid, pdata
+    return default_printer(cfg)
+
+
 def _portal_target(printer: Optional[str] = None):
     cfg = load_config()
-    printers = cfg.get("printers") or {}
-    if printer:
-        if printer in printers:
-            return printer_dict_to_config(printer, printers[printer])
-        lowered = printer.lower()
-        for pid, pdata in printers.items():
-            pcfg = printer_dict_to_config(pid, pdata)
-            if pcfg.host == printer or pcfg.name.lower() == lowered or pcfg.serial.lower() == lowered:
-                return pcfg
-    pid, pdata = default_printer(cfg)
+    pid, pdata = _selected_printer(cfg, printer)
     if pid and pdata:
-        return printer_dict_to_config(pid, pdata)
+        pcfg = printer_dict_to_config(pid, pdata)
+        pcfg.id = pid
+        return pcfg
     return None
+
+
+def _printer_query(pid: str | None) -> str:
+    return f"?printer={quote(str(pid))}" if pid else ""
+
+
+def _path_with_printer(path: str, pid: str | None) -> str:
+    return f"{path}{_printer_query(pid)}"
 
 
 def view_context(request: Request) -> dict[str, Any]:
     cfg = load_config()
     theme = get_theme(cfg.get("app", {}).get("theme"))
-    pid, printer = default_printer(cfg)
+    requested_printer = request.query_params.get("printer") if request else None
+    pid, printer = _selected_printer(cfg, requested_printer)
+    default_pid, _default_printer_data = default_printer(cfg)
     public_printer = None
     if pid and printer:
         public_printer = public_printer_dict(printer_dict_to_config(pid, printer), include_secret=False)
+    configured_printers = []
+    for configured_pid, pdata in (cfg.get("printers") or {}).items():
+        row = public_printer_dict(printer_dict_to_config(configured_pid, pdata), include_secret=False)
+        row["selected"] = configured_pid == pid
+        row["is_default"] = configured_pid == default_pid
+        configured_printers.append(row)
+    nav_printer_qs = _printer_query(pid)
     return {
         "request": request,
         "version": __version__,
@@ -1983,6 +2023,10 @@ def view_context(request: Request) -> dict[str, Any]:
         "theme_vars": theme_css_vars(cfg.get("app", {}).get("theme"), cfg.get("appearance", {})),
         "printer_id": pid,
         "printer": public_printer,
+        "configured_printers": configured_printers,
+        "default_printer_id": default_pid,
+        "nav_printer_qs": nav_printer_qs,
+        "nav_url": lambda path: _path_with_printer(path, pid),
         "default_subnet": default_subnet_guess(),
         "experimental_feature_locks": experimental_feature_locks(),
     }
@@ -2109,7 +2153,7 @@ async def portal(request: Request, printer: Optional[str] = None):
   </style>
 </head>
 <body>
-  <div class="bar"><strong>Elegoo portal</strong><span>{pcfg.name} · {pcfg.host}</span><a href="/">Back</a><a href="{fullscreen_url}" target="_blank">Fullscreen</a><a href="{root_url}" target="_blank">Printer root</a><a href="{diag_url}" target="_blank">Probe</a></div>
+  <div class="bar"><strong>Elegoo portal</strong><span>{pcfg.name} · {pcfg.host}</span><a href="/?printer={pcfg.id}">Back</a><a href="{fullscreen_url}" target="_blank">Fullscreen</a><a href="{root_url}" target="_blank">Printer root</a><a href="{diag_url}" target="_blank">Probe</a></div>
   <iframe src="{octo_url}" title="Elegoo live portal"></iframe>
 </body>
 </html>"""
@@ -2131,7 +2175,7 @@ async def portal_octo(printer: Optional[str] = None):
 <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Elegoo Live Portal - cc2-dash</title>
 <style>html,body{{margin:0;height:100%;background:#111827;color:#e5e7eb;font-family:system-ui,sans-serif;}}.bar{{min-height:46px;display:flex;gap:12px;align-items:center;padding:0 14px;background:rgba(17,24,39,.92);border-bottom:1px solid rgba(148,163,184,.18);backdrop-filter:blur(12px);flex-wrap:wrap}}.bar strong{{font-size:14px;white-space:nowrap}}.bar span{{color:#94a3b8;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.bar a{{color:#93c5fd;text-decoration:none;font-size:13px;white-space:nowrap}}iframe{{display:block;width:100%;height:calc(100vh - 47px);border:0;background:#202124;}}</style>
-</head><body><div class="bar"><strong>Elegoo live portal</strong><span>{pcfg.name} · MQTT WS bridge · {pcfg.host}:{pcfg.port}</span><a href="/">Back</a><a href="{app_url}" target="_blank">Open raw app</a><a href="/api/portal-probe?printer={pcfg.id}" target="_blank">Probe</a></div><iframe src="{app_url}" title="Elegoo live portal"></iframe></body></html>"""
+</head><body><div class="bar"><strong>Elegoo live portal</strong><span>{pcfg.name} · MQTT WS bridge · {pcfg.host}:{pcfg.port}</span><a href="/?printer={pcfg.id}">Back</a><a href="{app_url}" target="_blank">Open raw app</a><a href="/api/portal-probe?printer={pcfg.id}" target="_blank">Probe</a></div><iframe src="{app_url}" title="Elegoo live portal"></iframe></body></html>"""
     return HTMLResponse(html)
 
 
