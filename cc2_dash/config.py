@@ -24,8 +24,9 @@ COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = False
 # Development/test-only dummy printers. Set this to False before public builds
 # if you want simulator printers hidden/blocked without deleting existing saved
 # config entries. Real printers continue to work normally.
-DUMMY_PRINTERS_ENABLED = False
+DUMMY_PRINTERS_ENABLED = True
 DUMMY_PRINTER_TYPES = {"dummy", "sim", "simulator", "demo"}
+KLIPPER_PRINTER_TYPES = {"klipper", "moonraker"}
 
 EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
     "file_manager_enabled": {
@@ -53,6 +54,13 @@ def is_feature_locked(feature_key: str) -> bool:
 
 def dummy_printers_enabled() -> bool:
     return bool(DUMMY_PRINTERS_ENABLED)
+
+
+def is_klipper_printer_data(data: dict[str, Any] | None) -> bool:
+    if not isinstance(data, dict):
+        return False
+    ptype = str(data.get("type") or data.get("printer_type") or "").strip().lower()
+    return ptype in KLIPPER_PRINTER_TYPES
 
 
 def is_dummy_printer_data(data: dict[str, Any] | None) -> bool:
@@ -100,6 +108,10 @@ class PrinterConfig:
     enabled: bool = True
     allow_commands: bool = True
     allow_dangerous_commands: bool = False
+    moonraker_url: str = ""
+    camera_url: str = ""
+    snapshot_url: str = ""
+    camera_base_url: str = ""
 
 
 def safe_printer_id(name_or_serial: str) -> str:
@@ -118,19 +130,24 @@ def safe_printer_id(name_or_serial: str) -> str:
 def printer_dict_to_config(printer_id: str, data: dict[str, Any]) -> PrinterConfig:
     ptype = str(data.get("type") or data.get("printer_type") or "cc2").strip().lower() or "cc2"
     is_dummy = ptype in {"dummy", "sim", "simulator", "demo"}
+    is_klipper = ptype in KLIPPER_PRINTER_TYPES
     host = data.get("host") or data.get("ip") or ("dummy.local" if is_dummy else "")
-    serial = data.get("serial") or data.get("sn") or data.get("printer_id") or (f"DUMMY-{printer_id}" if is_dummy else printer_id or host)
+    serial = data.get("serial") or data.get("sn") or data.get("printer_id") or (f"DUMMY-{printer_id}" if is_dummy else (f"KLIPPER-{printer_id}" if is_klipper else printer_id or host))
     return PrinterConfig(
         id=str(printer_id or safe_printer_id(serial or host)),
         name=str(data.get("name") or data.get("host_name") or ("Dummy Printer" if is_dummy else "Centauri Carbon 2")),
         host=str(host),
         serial=str(serial),
         access_code=str(data.get("access_code") or data.get("pin") or ""),
-        port=int(data.get("port") or 1883),
-        type="dummy" if is_dummy else str(data.get("type") or data.get("printer_type") or "cc2"),
+        port=int(data.get("port") or data.get("moonraker_port") or (0 if is_dummy else (7125 if is_klipper else 1883))),
+        type="dummy" if is_dummy else ("klipper" if is_klipper else str(data.get("type") or data.get("printer_type") or "cc2")),
         enabled=bool(data.get("enabled", True)),
         allow_commands=bool(data.get("allow_commands", False if is_dummy else True)),
         allow_dangerous_commands=bool(data.get("allow_dangerous_commands", False)),
+        moonraker_url=str(data.get("moonraker_url") or ""),
+        camera_url=str(data.get("camera_url") or data.get("direct_camera_url") or data.get("stream_url") or ""),
+        snapshot_url=str(data.get("snapshot_url") or data.get("camera_snapshot_url") or data.get("direct_snapshot_url") or ""),
+        camera_base_url=str(data.get("camera_base_url") or ""),
     )
 
 
@@ -141,7 +158,13 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     data["portal_chrome_url"] = f"/portal?printer={cfg.id}"
     data["kiosk_url"] = f"/kiosk?printer={cfg.id}"
     data["camera_url"] = f"/api/printers/{cfg.id}/camera/stream"
-    if cfg.type == "dummy":
+    if cfg.type == "klipper":
+        data["klipper"] = True
+        data["portal_url"] = f"/?printer={cfg.id}"
+        data["portal_chrome_url"] = f"/?printer={cfg.id}"
+        data["direct_portal_url"] = str(data.get("moonraker_url") or f"http://{cfg.host}:{cfg.port or 7125}")
+        data["direct_camera_url"] = str(getattr(cfg, "camera_url", "") or "")
+    elif cfg.type == "dummy":
         data["dummy"] = True
         data["portal_url"] = f"/?printer={cfg.id}"
         data["portal_chrome_url"] = f"/?printer={cfg.id}"
@@ -570,6 +593,8 @@ def needs_setup(cfg: dict[str, Any] | None = None) -> bool:
     # needs both serial number and PIN/access code, so route back through setup
     # until at least one configured printer has pairing details.
     for p in printers.values():
+        if is_klipper_printer_data(p) and p.get("host"):
+            return False
         if p.get("host") and p.get("serial") and p.get("access_code"):
             return False
     return True

@@ -23,6 +23,11 @@
     return ['dummy', 'sim', 'simulator', 'demo'].includes(ptype);
   }
 
+  function printerIsKlipper(data) {
+    const ptype = String(data?.type || data?.printer_type || '').toLowerCase();
+    return ['klipper', 'moonraker'].includes(ptype);
+  }
+
   function visibleCfgPrinters() {
     const printers = cfg?.printers || {};
     if (dummyPrintersEnabled) return printers;
@@ -1604,6 +1609,44 @@
     return data;
   }
 
+
+  function collectKlipperManagerBody() {
+    const host = $('#managerKlipperHost')?.value?.trim() || '';
+    const port = Number($('#managerKlipperPort')?.value || 7125);
+    return {
+      name: $('#managerKlipperName')?.value?.trim() || 'Klipper Printer',
+      host,
+      moonraker_port: port,
+      moonraker_https: false,
+      api_key: $('#managerKlipperApiKey')?.value?.trim() || '',
+      camera_url: $('#managerKlipperCameraUrl')?.value?.trim() || '',
+      snapshot_url: $('#managerKlipperSnapshotUrl')?.value?.trim() || '',
+      enabled: true,
+      allow_commands: !!$('#managerKlipperCommands')?.checked,
+      allow_pause: !!$('#managerKlipperPause')?.checked,
+      allow_resume: !!$('#managerKlipperResume')?.checked,
+      allow_cancel: !!$('#managerKlipperCancel')?.checked,
+      set_default: false,
+    };
+  }
+
+  async function saveKlipperPrinter() {
+    const body = collectKlipperManagerBody();
+    if (!body.host) throw new Error('Moonraker host/IP is required.');
+    const data = await api('/api/printers/klipper', { method:'POST', body:JSON.stringify(body) });
+    cfg = data.config || cfg;
+    refreshConfigEditor();
+    renderSettings();
+    toast(`Klipper printer "${body.name}" added.`, 'success');
+    return data;
+  }
+
+  async function testKlipperPrinter() {
+    const body = collectKlipperManagerBody();
+    if (!body.host) throw new Error('Moonraker host/IP is required.');
+    return await api('/api/printers/klipper/test', { method:'POST', body:JSON.stringify(body) });
+  }
+
   function renderScanResults(candidates, targetId = 'scanResults', options = {}) {
     const box = $('#' + targetId);
     if (!box) return;
@@ -1931,15 +1974,17 @@
     if (printerBox) {
       const entries = Object.entries(visibleCfgPrinters());
       printerBox.innerHTML = entries.length ? entries.map(([id,p]) => {
-        const isDummy = String(p.type || p.printer_type || '').toLowerCase() === 'dummy';
+        const isDummy = printerIsDummy(p);
+        const isKlipper = printerIsKlipper(p);
         const mode = p.dummy_mode || 'printing';
         const aiState = p.dummy_ai_state || 'looks_good';
-        const meta = isDummy ? `Dummy simulator • ${esc(mode.replaceAll('_', ' '))}` : `${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}`;
+        const typeLabel = isDummy ? 'Dummy' : (isKlipper ? 'Klipper' : (cfg.app.default_printer === id ? 'Default' : esc(id)));
+        const meta = isDummy ? `Dummy simulator • ${esc(mode.replaceAll('_', ' '))}` : (isKlipper ? `${esc(p.moonraker_url || `${p.host || ''}:${p.moonraker_port || p.port || 7125}`)} • Moonraker` : `${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}`);
         return `
-        <div class="printer-config-card ${isDummy ? 'dummy-printer-card' : ''}" data-printer-id="${esc(id)}" data-printer-type="${isDummy ? 'dummy' : 'cc2'}">
+        <div class="printer-config-card ${isDummy ? 'dummy-printer-card' : (isKlipper ? 'klipper-printer-card' : '')}" data-printer-id="${esc(id)}" data-printer-type="${isDummy ? 'dummy' : (isKlipper ? 'klipper' : 'cc2')}">
           <div class="printer-config-head">
             <div><strong>${esc(p.name || id)}</strong><small>${meta}</small></div>
-            <span class="pill ${isDummy ? 'dummy-pill' : ''}">${isDummy ? 'Dummy' : (cfg.app.default_printer === id ? 'Default' : esc(id))}</span>
+            <span class="pill ${isDummy ? 'dummy-pill' : (isKlipper ? 'klipper-pill' : '')}">${typeLabel}</span>
           </div>
           <div class="grid-2 gap printer-edit-grid">
             <label class="inline-field"><span class="field-label">Display name</span><input class="input printer-name" value="${esc(p.name || '')}" /></label>
@@ -1956,16 +2001,22 @@
               <label class="inline-field"><span class="field-label">Bed current</span><input class="input printer-dummy-bed-current" type="number" step="1" value="${esc(p.dummy_bed_current ?? 59)}" /></label>
               <label class="inline-field"><span class="field-label">Bed target</span><input class="input printer-dummy-bed-target" type="number" step="1" value="${esc(p.dummy_bed_target ?? 60)}" /></label>
               <label class="inline-field"><span class="field-label">Chamber</span><input class="input printer-dummy-chamber-current" type="number" step="1" value="${esc(p.dummy_chamber_current ?? 34)}" /></label>
+            ` : (isKlipper ? `
+              <label class="inline-field"><span class="field-label">Moonraker host/IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
+              <label class="inline-field"><span class="field-label">Moonraker port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.moonraker_port || p.port || 7125)}" /></label>
+              <label class="inline-field"><span class="field-label">API key/token</span><input class="input printer-api-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
+              <label class="inline-field"><span class="field-label">Camera stream URL</span><input class="input printer-camera-url" value="${esc(p.camera_url || '')}" /></label>
+              <label class="inline-field"><span class="field-label">Snapshot URL</span><input class="input printer-snapshot-url" value="${esc(p.snapshot_url || '')}" /></label>
             ` : `
               <label class="inline-field"><span class="field-label">Host / IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
               <label class="inline-field"><span class="field-label">Serial / SN</span><input class="input printer-serial" value="${esc(p.serial || '')}" /></label>
               <label class="inline-field"><span class="field-label">PIN / access code</span><input class="input printer-pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
               <label class="inline-field"><span class="field-label">MQTT port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.port || 1883)}" /></label>
-            `}
+            `)}
           </div>
           <div class="printer-toggle-row">
             <label><input class="toggle printer-enabled" type="checkbox" ${p.enabled !== false ? 'checked' : ''}> enabled</label>
-            ${isDummy ? '<span class="mini-note">Simulator only. No real commands are sent.</span>' : `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label><label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>`}
+            ${isDummy ? '<span class="mini-note">Simulator only. No real commands are sent.</span>' : (isKlipper ? `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands ? 'checked' : ''}> commands</label><label><input class="toggle printer-pause" type="checkbox" ${p.allow_pause !== false ? 'checked' : ''}> pause</label><label><input class="toggle printer-resume" type="checkbox" ${p.allow_resume !== false ? 'checked' : ''}> resume</label><label><input class="toggle printer-cancel" type="checkbox" ${p.allow_cancel ? 'checked' : ''}> cancel</label>` : `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label><label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>`)}
           </div>
           <div class="printer-action-row">
             <button class="button primary tiny printer-save"><span class="button-label">Save</span></button>
@@ -1982,6 +2033,7 @@
     $$('#printerSettings [data-printer-id]').forEach(row => {
       const id = row.dataset.printerId;
       const isDummy = row.dataset.printerType === 'dummy';
+      const isKlipper = row.dataset.printerType === 'klipper';
       $('.printer-save', row)?.addEventListener('click', async e => {
         const body = isDummy ? {
           name: $('.printer-name', row)?.value?.trim() || 'Dummy Printer',
@@ -2001,6 +2053,20 @@
           dummy_bed_current: Number($('.printer-dummy-bed-current', row)?.value || 59),
           dummy_bed_target: Number($('.printer-dummy-bed-target', row)?.value || 60),
           dummy_chamber_current: Number($('.printer-dummy-chamber-current', row)?.value || 34),
+        } : (isKlipper ? {
+          name: $('.printer-name', row)?.value?.trim() || 'Klipper Printer',
+          type: 'klipper',
+          printer_type: 'klipper',
+          host: $('.printer-host', row)?.value?.trim() || '',
+          moonraker_port: Number($('.printer-port', row)?.value || 7125),
+          port: Number($('.printer-port', row)?.value || 7125),
+          enabled: !!$('.printer-enabled', row)?.checked,
+          allow_commands: !!$('.printer-commands', row)?.checked,
+          allow_pause: !!$('.printer-pause', row)?.checked,
+          allow_resume: !!$('.printer-resume', row)?.checked,
+          allow_cancel: !!$('.printer-cancel', row)?.checked,
+          camera_url: $('.printer-camera-url', row)?.value?.trim() || '',
+          snapshot_url: $('.printer-snapshot-url', row)?.value?.trim() || '',
         } : {
           name: $('.printer-name', row)?.value?.trim() || 'Centauri Carbon 2',
           host: $('.printer-host', row)?.value?.trim() || '',
@@ -2009,9 +2075,11 @@
           enabled: !!$('.printer-enabled', row)?.checked,
           allow_commands: !!$('.printer-commands', row)?.checked,
           allow_dangerous_commands: !!$('.printer-danger', row)?.checked,
-        };
+        });
         const pin = $('.printer-pin', row)?.value?.trim();
+        const apiKey = $('.printer-api-key', row)?.value?.trim();
         if (pin) body.access_code = pin;
+        if (apiKey) body.api_key = apiKey;
         if (!isDummy && !body.host) return toast('Printer host/IP is required.', 'warn');
         setButtonBusy(e.currentTarget, true, 'Saving...');
         try {
@@ -2453,6 +2521,29 @@
       try { await saveDummyPrinter({ setDefault:false }); }
       catch (err) { toast(err.message, 'error'); }
       finally { setButtonBusy(managerDummy, false); }
+    });
+
+    const managerKlipperTest = $('#managerKlipperTestButton');
+    if (managerKlipperTest) managerKlipperTest.addEventListener('click', async () => {
+      setButtonBusy(managerKlipperTest, true, 'Testing...');
+      setInlineStatus('managerKlipperStatus', 'Testing Moonraker connection...', '');
+      try {
+        const data = await testKlipperPrinter();
+        if (data.ok) {
+          setInlineStatus('managerKlipperStatus', `Moonraker OK${data.state ? ` · ${data.state}` : ''}${data.webcam_found ? ' · webcam found' : ' · no webcam found'}`, data.webcam_found ? 'good' : 'warn');
+        } else {
+          setInlineStatus('managerKlipperStatus', data.error || 'Moonraker test failed.', 'bad');
+        }
+      } catch (err) { setInlineStatus('managerKlipperStatus', err.message, 'bad'); }
+      finally { setButtonBusy(managerKlipperTest, false); }
+    });
+
+    const managerKlipperAdd = $('#managerKlipperAddButton');
+    if (managerKlipperAdd) managerKlipperAdd.addEventListener('click', async () => {
+      setButtonBusy(managerKlipperAdd, true, 'Adding Klipper...');
+      try { await saveKlipperPrinter(); $('#managerKlipperHost').value = ''; setInlineStatus('managerKlipperStatus', 'Klipper printer saved.', 'good'); }
+      catch (err) { toast(err.message, 'error'); setInlineStatus('managerKlipperStatus', err.message, 'bad'); }
+      finally { setButtonBusy(managerKlipperAdd, false); }
     });
 
     const saveTheme = $('#saveThemeButton');

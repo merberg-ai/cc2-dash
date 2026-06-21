@@ -16,6 +16,7 @@ except Exception:  # Pillow is optional at import time; requirements installs it
     Image = ImageFilter = ImageStat = None  # type: ignore[assignment]
 
 from .camera_proxy import camera_proxy_config, camera_relays
+from .klipper import is_klipper_printer, klipper_camera_urls
 from .config import DATA_DIR, PrinterConfig
 from .feedback_learning import apply_feedback_suppression
 from .logger import log
@@ -219,6 +220,18 @@ class VisionMonitor:
         return DATA_DIR / "vision" / printer_id / "latest.jpg"
 
     def _printer_urls(self, pcfg: PrinterConfig) -> list[str]:
+        if is_klipper_printer(pcfg):
+            data = {
+                "host": pcfg.host,
+                "port": pcfg.port,
+                "moonraker_url": getattr(pcfg, "moonraker_url", ""),
+                "camera_url": getattr(pcfg, "camera_url", ""),
+                "snapshot_url": getattr(pcfg, "snapshot_url", ""),
+                "camera_base_url": getattr(pcfg, "camera_base_url", ""),
+                "type": "klipper",
+            }
+            stream, snap = klipper_camera_urls(data)
+            return [u for u in [stream, snap] if u]
         return [f"http://{pcfg.host}:8080/", f"http://{pcfg.host}:8080/?action=stream"]
 
     def _grab_frame(self, pcfg: PrinterConfig, timeout: float = 8.0, max_bytes: int = 5_000_000, app_cfg: dict[str, Any] | None = None, printer_id: str | None = None) -> bytes:

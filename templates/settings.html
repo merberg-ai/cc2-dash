@@ -551,6 +551,35 @@
         <input id="managerManualPin" class="input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Printer PIN / access code" />
         <button id="managerManualAddButton" class="button primary full"><span class="button-label">Add / Save Printer</span></button>
 
+
+        <div class="dummy-printer-add-box klipper-printer-add-box">
+          <h3>Klipper / Moonraker printer</h3>
+          <p class="muted">Manual add only. Use this for Klipper/Mainsail/Fluidd systems on any Moonraker port. Carbon 2 scanning is unchanged.</p>
+          <label class="field-label" for="managerKlipperName">Display name</label>
+          <input id="managerKlipperName" class="input" value="Klipper Printer" />
+          <div class="grid-2 gap">
+            <label class="inline-field"><span class="field-label">Moonraker host/IP</span><input id="managerKlipperHost" class="input" placeholder="192.168.1.60" /></label>
+            <label class="inline-field"><span class="field-label">Moonraker port</span><input id="managerKlipperPort" class="input" type="number" min="1" max="65535" value="7125" /></label>
+          </div>
+          <label class="field-label" for="managerKlipperApiKey">Moonraker API key / token <span class="muted">optional</span></label>
+          <input id="managerKlipperApiKey" class="input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="optional" />
+          <label class="field-label" for="managerKlipperCameraUrl">Camera stream URL <span class="muted">optional, overrides Moonraker webcam list</span></label>
+          <input id="managerKlipperCameraUrl" class="input" placeholder="http://printer.local/webcam/?action=stream" />
+          <label class="field-label" for="managerKlipperSnapshotUrl">Camera snapshot URL <span class="muted">optional</span></label>
+          <input id="managerKlipperSnapshotUrl" class="input" placeholder="http://printer.local/webcam/?action=snapshot" />
+          <div class="printer-toggle-row">
+            <label><input id="managerKlipperCommands" class="toggle" type="checkbox"> allow commands</label>
+            <label><input id="managerKlipperPause" class="toggle" type="checkbox" checked> pause</label>
+            <label><input id="managerKlipperResume" class="toggle" type="checkbox" checked> resume</label>
+            <label><input id="managerKlipperCancel" class="toggle" type="checkbox"> cancel</label>
+          </div>
+          <div class="printer-action-row">
+            <button id="managerKlipperTestButton" class="button secondary full"><span class="button-label">Test Moonraker</span></button>
+            <button id="managerKlipperAddButton" class="button primary full"><span class="button-label">Add Klipper Printer</span></button>
+          </div>
+          <div id="managerKlipperStatus" class="inline-status"></div>
+        </div>
+
         {% if dummy_printers_enabled %}
         <div class="dummy-printer-add-box">
           <h3>Dummy / simulator printer</h3>

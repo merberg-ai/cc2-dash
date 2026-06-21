@@ -7,6 +7,7 @@ from cc2_dash.config import PrinterConfig, load_config, printer_dict_to_config
 from cc2_dash.cc2.client import Cc2Client
 from cc2_dash.logger import log
 from cc2_dash.dummy import dummy_snapshot, is_dummy_printer
+from cc2_dash.klipper import is_klipper_printer, klipper_snapshot
 
 
 class Cc2PrinterRuntime:
@@ -27,7 +28,7 @@ class Cc2PrinterRuntime:
         cfg = load_config()
         for printer_id, data in (cfg.get("printers") or {}).items():
             pcfg = printer_dict_to_config(printer_id, data)
-            if is_dummy_printer(data):
+            if is_dummy_printer(data) or is_klipper_printer(data):
                 continue
             if pcfg.enabled and pcfg.host and pcfg.serial and pcfg.access_code:
                 self.start(printer_id, pcfg)
@@ -43,8 +44,8 @@ class Cc2PrinterRuntime:
         cfg = cfg or self._config_for(printer_id)
         if not cfg:
             return False
-        if is_dummy_printer(cfg):
-            log("debug", f"Not starting MQTT for dummy printer {printer_id}", "cc2")
+        if is_dummy_printer(cfg) or is_klipper_printer(cfg):
+            log("debug", f"Not starting MQTT for non-CC2 printer {printer_id}", "cc2")
             return False
         if not (cfg.host and cfg.serial and cfg.access_code):
             log("warn", f"Not starting {printer_id}: missing host/serial/PIN", "cc2")
@@ -76,7 +77,7 @@ class Cc2PrinterRuntime:
         wanted = {}
         for printer_id, data in (cfg.get("printers") or {}).items():
             pcfg = printer_dict_to_config(printer_id, data)
-            if is_dummy_printer(data):
+            if is_dummy_printer(data) or is_klipper_printer(data):
                 continue
             if pcfg.enabled and pcfg.host and pcfg.serial and pcfg.access_code:
                 wanted[printer_id] = pcfg
@@ -99,6 +100,8 @@ class Cc2PrinterRuntime:
         pdata = (cfg.get("printers") or {}).get(printer_id)
         if pdata and is_dummy_printer(pdata):
             return dummy_snapshot(printer_id, pdata)
+        if pdata and is_klipper_printer(pdata):
+            return klipper_snapshot(printer_id, pdata)
         pcfg = printer_dict_to_config(printer_id, pdata) if pdata else self._config_for(printer_id)
         if not pcfg:
             return None
