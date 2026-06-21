@@ -15,7 +15,7 @@
     {% endif %}
   </style>
 </head>
-<body data-page="{% block page_id %}{% endblock %}" data-printer-id="{{ printer_id or '' }}" data-default-printer-id="{{ default_printer_id or '' }}">
+<body data-page="{% block page_id %}{% endblock %}" data-printer-id="{{ printer_id or '' }}" data-default-printer-id="{{ default_printer_id or '' }}" data-dummy-printers-enabled="{{ 'true' if dummy_printers_enabled else 'false' }}">
   <div id="toastHost" class="toast-host" aria-live="polite"></div>
   <div class="app-shell">
     <header class="topbar fade-in">
@@ -33,7 +33,7 @@
           </span>
         </span>
       </a>
-      {% if configured_printers and configured_printers|length > 0 %}
+      {% if show_printer_switcher %}
       <label class="global-printer-switcher" title="Choose which configured printer this page views">
         <span>Printer</span>
         <select id="globalPrinterSelect" aria-label="Active printer">
@@ -45,6 +45,7 @@
       {% endif %}
       <nav class="topnav">
         <a href="{{ nav_url('/') }}" class="navlink">Dash</a>
+        {% if cfg.features.multi_view_menu_enabled|default(true) %}<a href="{{ nav_url('/multi-view') }}" class="navlink">Multi-View</a>{% endif %}
         {% if cfg.features.portal_menu_enabled|default(true) %}
           {% if printer %}
           <a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open the Elegoo web portal in a new tab">Portal</a>

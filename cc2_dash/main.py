@@ -37,7 +37,9 @@ from .config import (
     APP_ROOT,
     DATA_DIR,
     default_printer,
+    dummy_printers_enabled,
     experimental_feature_locks,
+    is_dummy_printer_data,
     is_feature_locked,
     load_config,
     needs_setup,
@@ -47,6 +49,7 @@ from .config import (
     save_config,
     sorted_actions,
     sorted_cards,
+    visible_printers,
 )
 from .logger import get_logs, log, log_sources
 from .printer_client import PrinterClient
@@ -1968,13 +1971,13 @@ async def shutdown_event() -> None:
 
 
 def _configured_printers() -> dict[str, dict[str, Any]]:
-    return load_config().get("printers", {}) or {}
+    return visible_printers(load_config())
 
 
 def _printer_match(printer: Optional[str], cfg: dict[str, Any] | None = None) -> tuple[str | None, dict[str, Any] | None]:
     """Resolve a printer identifier/name/host/serial without changing defaults."""
     cfg = cfg or load_config()
-    printers = cfg.get("printers") or {}
+    printers = visible_printers(cfg)
     wanted = str(printer or "").strip()
     if not wanted:
         return None, None
@@ -2029,7 +2032,7 @@ def view_context(request: Request) -> dict[str, Any]:
     if pid and printer:
         public_printer = public_printer_dict(printer_dict_to_config(pid, printer), include_secret=False)
     configured_printers = []
-    for configured_pid, pdata in (cfg.get("printers") or {}).items():
+    for configured_pid, pdata in visible_printers(cfg).items():
         row = public_printer_dict(printer_dict_to_config(configured_pid, pdata), include_secret=False)
         row["selected"] = configured_pid == pid
         row["is_default"] = configured_pid == default_pid
@@ -2050,6 +2053,8 @@ def view_context(request: Request) -> dict[str, Any]:
         "printer_id": pid,
         "printer": public_printer,
         "configured_printers": configured_printers,
+        "show_printer_switcher": len(configured_printers) > 1,
+        "dummy_printers_enabled": dummy_printers_enabled(),
         "default_printer_id": default_pid,
         "nav_printer_qs": nav_printer_qs,
         "nav_url": lambda path: _path_with_printer(path, pid),
@@ -2120,6 +2125,14 @@ async def files_page(request: Request):
     if needs_setup(cfg):
         return RedirectResponse("/setup")
     return templates.TemplateResponse("files.html", view_context(request))
+
+
+@app.get("/multi-view", response_class=HTMLResponse)
+async def multi_view_page(request: Request):
+    cfg = load_config()
+    if needs_setup(cfg):
+        return RedirectResponse("/setup")
+    return templates.TemplateResponse("multi_view.html", view_context(request))
 
 
 @app.get("/filaments", response_class=HTMLResponse)
@@ -2500,7 +2513,7 @@ async def api_scan(req: ScanRequest):
 async def api_list_printers():
     cfg = load_config()
     configured = []
-    for printer_id, data in (cfg.get("printers") or {}).items():
+    for printer_id, data in visible_printers(cfg).items():
         configured.append(public_printer_dict(printer_dict_to_config(printer_id, data), include_secret=False))
     return {"configured": configured, "status": runtime.snapshots()}
 
@@ -2549,6 +2562,8 @@ async def api_add_printer(req: AddPrinterRequest):
 
 @app.post("/api/printers/dummy")
 async def api_add_dummy_printer(req: DummyPrinterRequest):
+    if not dummy_printers_enabled():
+        raise HTTPException(status_code=403, detail="Dummy/simulator printers are disabled in this build.")
     cfg = load_config()
     safe_id = req.id or safe_printer_id(req.name or "dummy-printer")
     base_id = safe_id
@@ -2596,6 +2611,8 @@ async def api_update_printer(printer_id: str, patch: PrinterSettingsRequest):
     if printer_id not in (cfg.get("printers") or {}):
         raise HTTPException(404, "Printer not configured")
     data = cfg["printers"][printer_id]
+    if is_dummy_printer_data(data) and not dummy_printers_enabled():
+        raise HTTPException(status_code=403, detail="Dummy/simulator printers are disabled in this build.")
     for key, value in patch.model_dump(exclude_unset=True).items():
         if value is None:
             continue
@@ -2628,7 +2645,7 @@ async def api_delete_printer(printer_id: str):
 @app.post("/api/printers/{printer_id}/default")
 async def api_set_default_printer(printer_id: str):
     cfg = load_config()
-    if printer_id not in (cfg.get("printers") or {}):
+    if printer_id not in visible_printers(cfg):
         raise HTTPException(404, "Printer not configured")
     cfg.setdefault("app", {})["default_printer"] = printer_id
     cfg.setdefault("app", {})["setup_complete"] = True
@@ -2971,7 +2988,7 @@ async def api_status():
 @app.get("/api/status/{printer_id}")
 async def api_status_printer(printer_id: str):
     cfg = load_config()
-    printer = cfg.get("printers", {}).get(printer_id)
+    printer = visible_printers(cfg).get(printer_id)
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not configured")
     if not runtime.get_client(printer_id):
@@ -2986,7 +3003,7 @@ async def api_ai_monitor_status():
     cfg = load_config()
     ai_cfg = cfg.get("portal_ai", {}) or {}
     cached = {}
-    for printer_id in (cfg.get("printers") or {}).keys():
+    for printer_id in visible_printers(cfg).keys():
         cached[printer_id] = portal_ai.cached_result(printer_id)
     return {
         "ok": True,
@@ -3016,6 +3033,69 @@ async def api_ai_set_enabled(req: AIEnabledRequest):
         _AI_AUTO_PAUSE_PENDING.clear()
     log("info", f"Failure Detection {'enabled' if req.enabled else 'disabled'}", "settings")
     return {"ok": True, "enabled": bool(req.enabled), "config": saved.get("portal_ai", {})}
+
+
+@app.get("/api/multi-view/status")
+async def api_multi_view_status():
+    cfg = load_config()
+    rows: list[dict[str, Any]] = []
+    for printer_id, printer in visible_printers(cfg).items():
+        pcfg = printer_dict_to_config(printer_id, printer)
+        if not pcfg.enabled:
+            status = {
+                "printer_id": printer_id,
+                "name": pcfg.name,
+                "host": pcfg.host,
+                "reachable": False,
+                "status_text": "Disabled",
+                "state": "Disabled",
+                "progress": 0,
+                "file": "-",
+                "hotend_current": None,
+                "hotend_target": None,
+                "bed_current": None,
+                "bed_target": None,
+                "chamber_current": None,
+                "camera_snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
+                "dashboard_url": f"/?printer={quote(printer_id)}",
+                "control_url": f"/control?printer={quote(printer_id)}",
+                "files_url": f"/files?printer={quote(printer_id)}",
+                "portal_ai": {"enabled": False, "state": "disabled", "level": "low", "risk": 0, "summary": "Disabled"},
+            }
+        else:
+            try:
+                status = _kiosk_status_for_printer(printer_id, printer)
+            except Exception as exc:
+                log("warning", f"Multi-View status failed: {exc}", "dashboard", printer=printer_id)
+                status = {
+                    "printer_id": printer_id,
+                    "name": pcfg.name,
+                    "host": pcfg.host,
+                    "reachable": False,
+                    "status_text": "Status unavailable",
+                    "state": "Status unavailable",
+                    "progress": 0,
+                    "file": "-",
+                    "camera_snapshot_url": f"/api/printers/{printer_id}/camera/snapshot.jpg",
+                    "dashboard_url": f"/?printer={quote(printer_id)}",
+                    "control_url": f"/control?printer={quote(printer_id)}",
+                    "files_url": f"/files?printer={quote(printer_id)}",
+                    "portal_ai": {"enabled": True, "state": "printer_offline", "level": "watch", "risk": 0, "summary": str(exc)},
+                }
+        status.update({
+            "printer_id": printer_id,
+            "name": status.get("name") or pcfg.name,
+            "host": status.get("host") or pcfg.host,
+            "printer_type": pcfg.type,
+            "dummy": is_dummy_printer_data(printer),
+            "dashboard_url": f"/?printer={quote(printer_id)}",
+            "control_url": f"/control?printer={quote(printer_id)}",
+            "files_url": f"/files?printer={quote(printer_id)}",
+            "kiosk_url": f"/kiosk?printer={quote(printer_id)}",
+            "camera_snapshot_url": status.get("camera_snapshot_url") or f"/api/printers/{printer_id}/camera/snapshot.jpg",
+        })
+        rows.append(status)
+    return {"printers": rows, "count": len(rows), "dummy_printers_enabled": dummy_printers_enabled()}
 
 
 @app.post("/api/printers/{printer_id}/ai/auto-pause/cancel")

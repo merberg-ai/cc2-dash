@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.72-blue)
+![Version](https://img.shields.io/badge/version-1.2.73-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -32,6 +32,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 - [Update from GitHub](#update-from-github)
 - [First-run setup](#first-run-setup)
 - [Using the dashboard](#using-the-dashboard)
+- [Multi-View](#multi-view)
 - [Printer Manager](#printer-manager)
 - [Camera Relay / stream protection](#camera-relay--stream-protection)
 - [Kiosk mode](#kiosk-mode)
@@ -63,6 +64,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.73 multi-view-dashboard
 1.2.72 dummy-printer-simulator
 1.2.71 multi-printer-view-context
 1.2.70 chamber-readout-only
@@ -81,8 +83,8 @@ Major current capabilities:
 
 | Area | Status |
 |---|---|
-| Printer discovery / pairing | Working, verified Centauri discovery filtering, with dummy/simulator printer entries for multi-printer UI testing |
-| Dashboard status | Working, mobile-first, active/idle aware |
+| Printer discovery / pairing | Working, verified Centauri discovery filtering, with optional dummy/simulator printer entries for multi-printer UI testing |
+| Dashboard status | Working, mobile-first, active/idle aware, with active-printer context and Multi-View overview |
 | Stock portal bridge | Working as fallback/reference portal |
 | Camera relay | Working, reduces direct camera connection pileups |
 | Kiosk mode | Working, camera-first fullscreen view |
@@ -132,7 +134,7 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Collapsible dashboard sections.
 - Saved dashboard accordion state per printer.
 - Compact build/version chips in the header.
-- Configurable top navigation visibility for Portal, Upload, Control, Kiosk, AI Training, and Logs. File Manager and Filament Manager are locked off in this public test build.
+- Configurable top navigation visibility for Portal, Multi-View, Upload, Control, Kiosk, AI Training, and Logs. File Manager and Filament Manager are locked off in this public test build.
 - `/health` and `/api/version` diagnostics.
 
 ### Printer discovery and pairing
@@ -432,6 +434,7 @@ Primary pages:
 | Page | Description |
 |---|---|
 | **Dash** | Main printer view with status, camera, quick actions, Portal AI, and connection info. |
+| **Multi-View** | Multi-printer overview with one snapshot/status/progress/temperature/AI card per configured printer. |
 | **Portal** | Stock Elegoo portal bridge/fallback. |
 | **Kiosk** | Camera-first fullscreen display for tablets or spare monitors. |
 | **Upload** | Stage `.gcode` files in cc2-dash, review parsed metadata/thumbnails, then upload or upload-and-print. |
@@ -441,7 +444,7 @@ Primary pages:
 | **Settings** | Printer Manager, themes, menu visibility, quick actions, access, camera relay, AI settings. |
 | **Logs** | Filterable runtime log viewer. |
 
-The **Portal**, **Upload**, **Control**, **Kiosk**, **AI Training**, and **Logs** navigation items can be shown or hidden in:
+The **Portal**, **Multi-View**, **Upload**, **Control**, **Kiosk**, **AI Training**, and **Logs** navigation items can be shown or hidden in:
 
 ```text
 Settings → Menu / Features
@@ -451,7 +454,7 @@ The **Files** and **Filament** rows remain visible in Settings as locked release
 
 ### Active printer switching
 
-The header now includes a compact **Printer** selector whenever more than one printer is configured. This changes the printer being viewed on the current page without changing the saved default printer. Page links preserve the active printer with a URL like:
+The header now includes a compact **Printer** selector whenever more than one visible printer is configured. If only one printer is available, the selector is hidden to keep the header clean. This changes the printer being viewed on the current page without changing the saved default printer. Page links preserve the active printer with a URL like:
 
 ```text
 /?printer=<printer_id>
@@ -460,6 +463,28 @@ The header now includes a compact **Printer** selector whenever more than one pr
 ```
 
 The selected/viewed printer is remembered in the browser for convenience. The saved default printer remains the fallback used when no printer is selected, when a URL has no `printer=` query string, or when a bookmarked printer no longer exists.
+
+---
+
+## Multi-View
+
+Open:
+
+```text
+Multi-View
+```
+
+The Multi-View page is a read-only overview for multiple configured printers. Each card shows:
+
+- current camera snapshot
+- printer state
+- active file
+- progress bar
+- hotend / bed / chamber temperatures
+- cached Failure Detection / AI badge
+- quick links to Dashboard, Control, and Files for that printer
+
+Cards are large tap targets on mobile. Tapping the card opens that printer's full dashboard using `?printer=<printer_id>`. Multi-View uses a fast cached status path for AI badges, so it does not intentionally run expensive Ollama vision checks for every card just because the overview page is open. Background monitoring still owns actual AI checks.
 
 ---
 
@@ -500,7 +525,7 @@ Error
 Offline
 ```
 
-Dummy printers are useful when testing multi-printer UI behavior with only one real CC2. They show up in the header printer switcher, dashboard, control/kiosk camera views, File Manager reads, and AI status badges. The generated camera stream is local to cc2-dash, and command/file operations return no-op dummy responses for UI testing only. No MQTT client is started and no real printer command is sent.
+Dummy printers are useful when testing multi-printer UI behavior with only one real CC2. For public builds or non-testing installs, they can be disabled from `cc2_dash/config.py` by setting `DUMMY_PRINTERS_ENABLED = False`; saved dummy config entries are then hidden/blocked without deleting them. They show up in the header printer switcher, dashboard, control/kiosk camera views, File Manager reads, and AI status badges. The generated camera stream is local to cc2-dash, and command/file operations return no-op dummy responses for UI testing only. No MQTT client is started and no real printer command is sent.
 
 ---
 
@@ -1402,6 +1427,7 @@ cc2-dash/
 │   ├── index.html
 │   ├── kiosk.html
 │   ├── logs.html
+│   ├── multi_view.html
 │   ├── portal.html
 │   ├── settings.html
 │   ├── setup.html
@@ -1416,6 +1442,16 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.73 Multi-View dashboard
+
+- Added a **Multi-View** page showing every visible configured printer as a mobile-friendly snapshot/status card.
+- Each printer card shows camera snapshot, state, active file, progress, hotend/bed/chamber temperatures, and cached Failure Detection/AI badge.
+- Cards link to full Dashboard, Control, and Files views using the selected printer context.
+- Added `/api/multi-view/status` for lightweight multi-printer overview refreshes.
+- Hid the global printer selector when only one visible printer is configured.
+- Added `DUMMY_PRINTERS_ENABLED` in `cc2_dash/config.py` so public builds can hide/block dummy printers without deleting saved dummy entries.
+- Added a Multi-View menu visibility toggle in Settings and updated README docs.
 
 ### v1.2.72 Dummy printer simulator
 

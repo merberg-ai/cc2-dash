@@ -14,13 +14,26 @@
   let roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
   let roiFeedbackModalInitialized = false;
   const SELECTED_PRINTER_STORAGE_KEY = 'cc2dash.selectedPrinterId';
+  const multiViewState = { timer: null, lastLoadedAt: null };
+  const dummyPrintersEnabled = document.body.dataset.dummyPrintersEnabled !== 'false';
+
+  function printerIsDummy(data) {
+    const ptype = String(data?.type || data?.printer_type || '').toLowerCase();
+    return ['dummy', 'sim', 'simulator', 'demo'].includes(ptype);
+  }
+
+  function visibleCfgPrinters() {
+    const printers = cfg?.printers || {};
+    if (dummyPrintersEnabled) return printers;
+    return Object.fromEntries(Object.entries(printers).filter(([, p]) => !printerIsDummy(p)));
+  }
 
   function configuredPrinterIds() {
-    return Object.keys(cfg?.printers || {});
+    return Object.keys(visibleCfgPrinters());
   }
 
   function isConfiguredPrinter(id) {
-    return !!id && Object.prototype.hasOwnProperty.call(cfg?.printers || {}, id);
+    return !!id && Object.prototype.hasOwnProperty.call(visibleCfgPrinters(), id);
   }
 
   function urlPrinterId() {
@@ -1852,7 +1865,7 @@
 
     const printerBox = $('#printerSettings');
     if (printerBox) {
-      const entries = Object.entries(cfg.printers || {});
+      const entries = Object.entries(visibleCfgPrinters());
       printerBox.innerHTML = entries.length ? entries.map(([id,p]) => {
         const isDummy = String(p.type || p.printer_type || '').toLowerCase() === 'dummy';
         const mode = p.dummy_mode || 'printing';
@@ -2408,6 +2421,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.upload_menu_enabled = !!$('#uploadMenuEnabled')?.checked;
+      cfg.features.multi_view_menu_enabled = !!$('#multiViewMenuEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       applyExperimentalFeatureLocksToConfig(cfg);
@@ -2506,6 +2520,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.upload_menu_enabled = !!$('#uploadMenuEnabled')?.checked;
+      cfg.features.multi_view_menu_enabled = !!$('#multiViewMenuEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       applyExperimentalFeatureLocksToConfig(cfg);
@@ -5576,6 +5591,113 @@
   }
 
 
+  function multiViewStatusTone(st) {
+    const text = `${st?.status_text || ''} ${st?.state || ''}`.toLowerCase();
+    if (st?.reachable === false || /offline|unavailable|disabled|disconnect/.test(text)) return 'bad';
+    if (/error|fail|cancel/.test(text)) return 'bad';
+    if (/pause|paused/.test(text)) return 'warn';
+    if (st?.active_print || /print|printing|running|generating/.test(text)) return 'printing';
+    return 'idle';
+  }
+
+  function multiViewStatusLabel(st) {
+    return st?.status_text || st?.state || (st?.reachable === false ? 'Offline' : 'Unknown');
+  }
+
+  function multiViewTempSummary(st) {
+    const hotend = tempLine(st?.hotend_current, st?.hotend_target);
+    const bed = tempLine(st?.bed_current, st?.bed_target);
+    const chamber = tempReadoutOnly(st?.chamber_current);
+    return `Hotend ${hotend} · Bed ${bed} · Chamber ${chamber}`;
+  }
+
+  function renderMultiView(data) {
+    const grid = $('#multiViewGrid');
+    const summary = $('#multiViewSummary');
+    const state = $('#multiViewRefreshState');
+    if (!grid) return;
+    const printers = data?.printers || [];
+    multiViewState.lastLoadedAt = new Date();
+    if (summary) summary.textContent = printers.length ? `${printers.length} configured printer${printers.length === 1 ? '' : 's'} shown.` : 'No visible printers are configured.';
+    if (state) state.textContent = `Updated ${multiViewState.lastLoadedAt.toLocaleTimeString()}`;
+    if (!printers.length) {
+      grid.innerHTML = '<div class="multi-view-empty"><strong>No printers to show</strong><span>Add a printer in Settings → Printer Manager.</span></div>';
+      return;
+    }
+    const now = Date.now();
+    grid.innerHTML = printers.map(st => {
+      const pid = st.printer_id || st.id || '';
+      const progress = Math.max(0, Math.min(100, Number(st.progress || 0)));
+      const tone = multiViewStatusTone(st);
+      const ai = st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Offline', level: st.reachable ? 'low' : 'watch', risk: 0 };
+      const aiState = summarizeAIHeaderStatus(ai, ai.vision || ai.vision_ai || st.vision_ai || {});
+      const snapshot = `${st.camera_snapshot_url || `/api/printers/${encodeURIComponent(pid)}/camera/snapshot.jpg`}${String(st.camera_snapshot_url || '').includes('?') ? '&' : '?'}v=${now}`;
+      const dashUrl = st.dashboard_url || `/?printer=${encodeURIComponent(pid)}`;
+      const controlUrl = st.control_url || `/control?printer=${encodeURIComponent(pid)}`;
+      const filesUrl = st.files_url || `/files?printer=${encodeURIComponent(pid)}`;
+      const file = st.file && st.file !== '-' ? st.file : 'No active file';
+      const statusLabel = multiViewStatusLabel(st);
+      return `
+        <article class="multi-printer-card ${tone} ${st.dummy ? 'dummy' : ''}" data-open-url="${esc(dashUrl)}" tabindex="0" role="button" aria-label="Open ${esc(st.name || pid)} dashboard">
+          <div class="multi-printer-shot-wrap">
+            <img class="multi-printer-shot" src="${esc(snapshot)}" alt="${esc(st.name || pid)} snapshot" loading="lazy" decoding="async" onerror="this.classList.add('broken')" />
+            <span class="multi-printer-status-pill ${tone}">${esc(statusLabel)}</span>
+            ${st.dummy ? '<span class="multi-printer-dummy-pill">Dummy</span>' : ''}
+          </div>
+          <div class="multi-printer-body">
+            <div class="multi-printer-title-row">
+              <div>
+                <h3>${esc(st.name || pid || 'Printer')}</h3>
+                <p>${esc(st.host || pid || '')}</p>
+              </div>
+              <span class="ai-mini-badge ${aiState.tone}">${esc(aiState.label)}</span>
+            </div>
+            <div class="multi-printer-file" title="${esc(file)}">${esc(file)}</div>
+            <div class="multi-printer-progress-row">
+              <div class="mini-progress"><span style="width:${progress.toFixed(1)}%"></span></div>
+              <strong>${progress.toFixed(1)}%</strong>
+            </div>
+            <div class="multi-printer-temps">${esc(multiViewTempSummary(st))}</div>
+            <div class="multi-printer-actions">
+              <a class="button primary tiny" href="${esc(dashUrl)}">Open</a>
+              <a class="button secondary tiny" href="${esc(controlUrl)}">Control</a>
+              <a class="button secondary tiny" href="${esc(filesUrl)}">Files</a>
+            </div>
+          </div>
+        </article>`;
+    }).join('');
+    $$('.multi-printer-card').forEach(card => {
+      const open = () => { const url = card.dataset.openUrl; if (url) window.location.href = url; };
+      card.addEventListener('click', e => { if (e.target.closest('a,button,input,select,textarea')) return; open(); });
+      card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+  }
+
+  async function loadMultiView(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    const state = $('#multiViewRefreshState');
+    if (state) state.textContent = 'Refreshing...';
+    try {
+      const data = await api('/api/multi-view/status');
+      renderMultiView(data);
+    } catch (err) {
+      const grid = $('#multiViewGrid');
+      if (grid) grid.innerHTML = `<div class="multi-view-empty bad"><strong>Multi-View refresh failed</strong><span>${esc(err.message)}</span></div>`;
+      if (state) state.textContent = 'Refresh failed';
+      toast(err.message, 'error', 8000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function initMultiView() {
+    $('#multiViewRefreshButton')?.addEventListener('click', e => loadMultiView(e.currentTarget));
+    loadMultiView();
+    const seconds = Math.max(3, Number(cfg?.multi_view?.refresh_interval_seconds || cfg?.dashboard?.refresh_interval_seconds || 5));
+    multiViewState.timer = setInterval(() => loadMultiView(), seconds * 1000);
+  }
+
+
   function initUpload() {
     const form = $('#stageUploadForm');
     form?.addEventListener('submit', stageUploadGcode);
@@ -5653,6 +5775,7 @@
   if (page === 'settings') initSettings();
   if (page === 'ai-training') initAiTraining();
   if (page === 'logs') initLogs();
+  if (page === 'multi-view') initMultiView();
   if (page === 'upload') initUpload();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();

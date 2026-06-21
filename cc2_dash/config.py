@@ -21,6 +21,12 @@ CONFIG_PATH = Path(os.environ.get("CC2_CONFIG", DATA_DIR / "config.json"))
 # this release branch.
 COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS = False
 
+# Development/test-only dummy printers. Set this to False before public builds
+# if you want simulator printers hidden/blocked without deleting existing saved
+# config entries. Real printers continue to work normally.
+DUMMY_PRINTERS_ENABLED = True
+DUMMY_PRINTER_TYPES = {"dummy", "sim", "simulator", "demo"}
+
 EXPERIMENTAL_FEATURE_LOCKS: dict[str, dict[str, str]] = {
     "file_manager_enabled": {
         "label": "File Manager",
@@ -43,6 +49,29 @@ def experimental_feature_locks() -> dict[str, dict[str, str]]:
 
 def is_feature_locked(feature_key: str) -> bool:
     return bool(COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS and feature_key in EXPERIMENTAL_FEATURE_LOCKS)
+
+
+def dummy_printers_enabled() -> bool:
+    return bool(DUMMY_PRINTERS_ENABLED)
+
+
+def is_dummy_printer_data(data: dict[str, Any] | None) -> bool:
+    if not isinstance(data, dict):
+        return False
+    ptype = str(data.get("type") or data.get("printer_type") or "").strip().lower()
+    return ptype in DUMMY_PRINTER_TYPES
+
+
+def visible_printers(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return configured printers visible to normal UI/API selection.
+
+    When DUMMY_PRINTERS_ENABLED is False, saved dummy entries remain on disk
+    but are hidden from selectors, startup/default resolution, and multi-view.
+    """
+    printers = cfg.get("printers") or {}
+    if DUMMY_PRINTERS_ENABLED:
+        return printers
+    return {pid: pdata for pid, pdata in printers.items() if not is_dummy_printer_data(pdata)}
 
 
 def sanitize_experimental_features(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -165,6 +194,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "kiosk_enabled": True,
         "ai_training_menu_enabled": True,
         "logs_menu_enabled": True,
+        "multi_view_menu_enabled": True,
     },
     "kiosk": {
         "refresh_interval_seconds": 3,
@@ -254,6 +284,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "temperature_grace_seconds": 180,
         "filament_sensor_grace_seconds": 60,
         "require_multiple_bad_checks": 3
+    },
+    "multi_view": {
+        "refresh_interval_seconds": 5,
+        "snapshot_refresh_seconds": 15,
     },
     "dashboard": {
         "refresh_interval_seconds": 3,
@@ -370,6 +404,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         features.setdefault("upload_menu_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
+        features.setdefault("multi_view_menu_enabled", True)
         features.setdefault("control_page_enabled", True)
         if old_version < 2:
             features["file_manager_enabled"] = False
@@ -420,6 +455,7 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         features.setdefault("kiosk_enabled", True)
         features.setdefault("ai_training_menu_enabled", True)
         features.setdefault("logs_menu_enabled", True)
+        features.setdefault("multi_view_menu_enabled", True)
         features.setdefault("control_page_enabled", True)
         kiosk = cfg.setdefault("kiosk", {})
         kiosk.setdefault("refresh_interval_seconds", 3)
@@ -431,6 +467,9 @@ def migrate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         kiosk.setdefault("show_ai_status", True)
         kiosk.setdefault("show_time_left", True)
         kiosk.setdefault("show_print_status", True)
+        multi_view = cfg.setdefault("multi_view", {})
+        multi_view.setdefault("refresh_interval_seconds", 5)
+        multi_view.setdefault("snapshot_refresh_seconds", 15)
     except Exception:
         pass
     try:
@@ -512,7 +551,7 @@ def save_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 def needs_setup(cfg: dict[str, Any] | None = None) -> bool:
     cfg = cfg or load_config()
-    printers = cfg.get("printers") or {}
+    printers = visible_printers(cfg)
     if not cfg.get("app", {}).get("setup_complete") or not printers:
         return True
     # Older cc2-dash builds could save only host/URL. The CC2 MQTT bridge
@@ -534,7 +573,7 @@ def sorted_actions(cfg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
 
 def default_printer(cfg: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
-    printers = cfg.get("printers", {}) or {}
+    printers = visible_printers(cfg)
     wanted = cfg.get("app", {}).get("default_printer")
     if wanted and wanted in printers:
         return wanted, printers[wanted]
