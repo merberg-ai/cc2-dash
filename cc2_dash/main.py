@@ -1343,6 +1343,10 @@ class ActionRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ControlJobRequest(BaseModel):
+    action: str
+
+
 class CommandRequest(BaseModel):
     method: int
     params: dict[str, Any] = Field(default_factory=dict)
@@ -2406,6 +2410,8 @@ async def portal(request: Request, printer: Optional[str] = None):
     pcfg = _portal_target(printer)
     if not pcfg:
         return RedirectResponse("/setup")
+    if str(getattr(pcfg, "type", "")).lower() == "klipper":
+        return RedirectResponse(pcfg.moonraker_url or f"http://{pcfg.host}:{pcfg.port or 7125}")
     root_url = f"http://{pcfg.host}/"
     octo_url = f"/portal-octo?printer={pcfg.id}"
     fullscreen_url = f"/portal-fullscreen?printer={pcfg.id}"
@@ -2437,6 +2443,8 @@ async def portal_octo(printer: Optional[str] = None):
     pcfg = _portal_target(printer)
     if not pcfg:
         return HTMLResponse("""<!doctype html><html><body style="background:#111827;color:#e5e7eb;font-family:system-ui;padding:32px"><h1>No printer configured</h1><p>Add/scan your printer first.</p><p><a style="color:#93c5fd" href="/setup">Back to setup</a></p></body></html>""")
+    if str(getattr(pcfg, "type", "")).lower() == "klipper":
+        return RedirectResponse(pcfg.moonraker_url or f"http://{pcfg.host}:{pcfg.port or 7125}")
     app_url = (
         f"/elegoo/octo_portal.html"
         f"?id={pcfg.id}&ip={pcfg.host}&print_ip={pcfg.host}&sn={pcfg.serial}"
@@ -2456,6 +2464,8 @@ async def portal_fullscreen(printer: Optional[str] = None):
     pcfg = _portal_target(printer)
     if not pcfg:
         return HTMLResponse("""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>CC2 setup</title></head><body style="margin:0;background:#05070b;color:#e5e7eb;font-family:system-ui;display:grid;place-items:center;min-height:100vh;padding:20px;text-align:center"><div><h1>No printer configured</h1><p>Run setup first.</p><p><a style="color:#7dd3fc" href="/setup">Open setup</a></p></div></body></html>""")
+    if str(getattr(pcfg, "type", "")).lower() == "klipper":
+        return RedirectResponse(pcfg.moonraker_url or f"http://{pcfg.host}:{pcfg.port or 7125}")
     app_url = (
         f"/elegoo/octo_portal.html"
         f"?id={pcfg.id}&ip={pcfg.host}&print_ip={pcfg.host}&sn={pcfg.serial}"
@@ -3199,14 +3209,23 @@ def _status_from_snapshot(printer_id: str, printer: dict[str, Any], snap: Option
         "portal_chrome_url": f"/portal?printer={printer_id}",
         "kiosk_url": f"/kiosk?printer={printer_id}",
         "direct_portal_url": f"http://{pcfg.host}/",
+        "device_portal_url": f"/portal-fullscreen?printer={printer_id}",
+        "device_portal_label": "Go To Elegoo Web Portal",
+        "portal_nav_label": "Portal",
         "raw": snap,
     }
     if is_klipper_printer(printer):
         stream_url, snapshot_url = klipper_camera_urls(printer)
+        device_portal_url = str(printer.get("device_portal_url") or printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}")
         status.update({
             "printer_type": "klipper",
             "klipper": True,
-            "direct_portal_url": str(printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}"),
+            "portal_url": device_portal_url,
+            "portal_chrome_url": device_portal_url,
+            "direct_portal_url": device_portal_url,
+            "device_portal_url": device_portal_url,
+            "device_portal_label": "Open Device Portal",
+            "portal_nav_label": "Device",
             "direct_camera_url": stream_url,
             "direct_snapshot_url": snapshot_url,
         })
@@ -3274,10 +3293,13 @@ def _kiosk_status_for_printer(printer_id: str, printer: dict[str, Any]) -> dict[
         "camera_status_url": f"/api/printers/{printer_id}/camera/status",
         "direct_camera_url": klipper_camera_urls(printer)[0] if is_klipper_printer(printer) else f"http://{pcfg.host}:8080/",
         "camera_relay": {"ok": True, "enabled": True, "running": True, "klipper": True} if is_klipper_printer(printer) else camera_relays.get(printer_id, pcfg).status(),
-        "portal_url": f"/portal-fullscreen?printer={printer_id}",
-        "portal_chrome_url": f"/portal?printer={printer_id}",
+        "portal_url": (str(printer.get("device_portal_url") or printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}") if is_klipper_printer(printer) else f"/portal-fullscreen?printer={printer_id}"),
+        "portal_chrome_url": (str(printer.get("device_portal_url") or printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}") if is_klipper_printer(printer) else f"/portal?printer={printer_id}"),
         "kiosk_url": f"/kiosk?printer={printer_id}",
-        "direct_portal_url": str(printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}") if is_klipper_printer(printer) else f"http://{pcfg.host}/",
+        "direct_portal_url": str(printer.get("device_portal_url") or printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}") if is_klipper_printer(printer) else f"http://{pcfg.host}/",
+        "device_portal_url": str(printer.get("device_portal_url") or printer.get("moonraker_url") or f"http://{pcfg.host}:{pcfg.port or 7125}") if is_klipper_printer(printer) else f"/portal-fullscreen?printer={printer_id}",
+        "device_portal_label": "Open Device Portal" if is_klipper_printer(printer) else "Go To Elegoo Web Portal",
+        "portal_nav_label": "Device" if is_klipper_printer(printer) else "Portal",
     })
     return _attach_cached_ai_for_kiosk(printer_id, status, cfg)
 
@@ -5089,19 +5111,24 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
     temperatures = _control_temperatures(n, raw, base_status)
     active_print = bool(base_status.get("active_print")) if connected else False
     phase = base_status.get("print_phase") if isinstance(base_status.get("print_phase"), dict) else _print_phase_from_status(base_status, snap)
-    controls_locked = bool(active_print or not connected)
-    if active_print:
+    is_klipper = is_klipper_printer(pdata)
+    controls_locked = bool((active_print and not is_klipper) or not connected)
+    if active_print and not is_klipper:
         controls_locked_reason = "Control page commands are locked while a print job is active."
     elif not connected:
         controls_locked_reason = f"Control page commands are locked because the printer is {base_status.get('status_text') or health.get('label') or 'offline'}."
+    elif is_klipper:
+        controls_locked_reason = "Klipper/Moonraker exposes print-job controls only in this phase."
     else:
         controls_locked_reason = ""
-    camera_relay = camera_relays.get(printer_id, printer_dict_to_config(printer_id, pdata)).status()
+    camera_relay = ({"ok": True, "enabled": True, "running": True, "klipper": True, "message": "Klipper camera is proxied from configured Moonraker/webcam URLs."} if is_klipper else camera_relays.get(printer_id, printer_dict_to_config(printer_id, pdata)).status())
     return {
         "ok": True,
         "printer_id": printer_id,
         "name": pdata.get("name") or printer_id,
         "host": pdata.get("host"),
+        "printer_type": "klipper" if is_klipper else ("dummy" if is_dummy_printer(pdata) else "cc2"),
+        "klipper": bool(is_klipper),
         "connected": connected,
         "connection_state": health.get("connection_state"),
         "connection_reason": health.get("reason"),
@@ -5117,6 +5144,16 @@ def _control_status_payload(printer_id: str) -> dict[str, Any]:
         "controls_locked_reason": controls_locked_reason,
         "allow_commands": bool(snap.get("allow_commands", pdata.get("allow_commands", True))),
         "allow_dangerous_commands": bool(snap.get("allow_dangerous_commands", pdata.get("allow_dangerous_commands", False))),
+        "allow_pause": bool(pdata.get("allow_pause", True)),
+        "allow_resume": bool(pdata.get("allow_resume", True)),
+        "allow_cancel": bool(pdata.get("allow_cancel", False)),
+        "supports_job_commands": True,
+        "supports_motion": not is_klipper,
+        "supports_home": not is_klipper,
+        "supports_fan_commands": not is_klipper,
+        "supports_temperature_commands": not is_klipper,
+        "supports_speed_commands": not is_klipper,
+        "supports_light": not is_klipper,
         "position": _control_position(n),
         "speed_percent": speed_pct,
         "speed_label": _speed_label(None, None, speed_pct),
@@ -5147,6 +5184,21 @@ def _raise_if_control_locked(printer_id: str) -> dict[str, Any]:
 @app.get("/api/printers/{printer_id}/control/status")
 async def api_control_status(printer_id: str):
     return await asyncio.to_thread(_control_status_payload, printer_id)
+
+
+@app.post("/api/printers/{printer_id}/control/job")
+async def api_control_job(printer_id: str, body: ControlJobRequest):
+    action = str(body.action or "").strip().lower().replace("_", "-")
+    if action not in {"pause", "resume", "cancel"}:
+        raise HTTPException(400, "Job action must be pause, resume, or cancel.")
+    status = await asyncio.to_thread(_control_status_payload, printer_id)
+    if not status.get("connected") or status.get("offline") or status.get("stale"):
+        raise HTTPException(409, status.get("controls_locked_reason") or "Printer is not online enough for job commands.")
+    method = PAUSE_PRINT if action == "pause" else (RESUME_PRINT if action == "resume" else STOP_PRINT)
+    result = await asyncio.to_thread(_send_command, printer_id, method, {}, True, 60.0)
+    label = "Cancel" if action == "cancel" else action.title()
+    log("warning" if action == "cancel" else "info", f"Control job {action} requested", "command", printer=printer_id)
+    return {"ok": True, "message": f"{label} command sent", "action": action, "result": result.get("result", result)}
 
 
 @app.post("/api/printers/{printer_id}/control/fan")
@@ -5263,13 +5315,17 @@ async def api_action(action_id: str, req: ActionRequest | None = None):
     elif action_id == "cancel_print":
         method, params, timeout = STOP_PRINT, {}, 60.0
     elif action_id == "restart_camera":
+        pdata = (cfg.get("printers") or {}).get(pid) or {}
+        if is_klipper_printer(pdata):
+            log("info", "Klipper camera refresh requested; stream is proxied from configured Moonraker/webcam URL", "camera", printer=pid)
+            return {"ok": True, "message": "Klipper camera stream refreshed", "klipper": True}
         # Wake/enable the webcam, then restart only the cc2-dash relay.
         # Do not create an extra direct browser-style camera stream here.
         try:
             await asyncio.to_thread(_send_command, pid, ENABLE_WEBCAM, webcam_params(True), False, 5.0)
         except Exception:
             pass
-        pcfg = printer_dict_to_config(pid, (cfg.get("printers") or {}).get(pid) or {})
+        pcfg = printer_dict_to_config(pid, pdata)
         relay = camera_relays.get(pid, pcfg)
         await asyncio.to_thread(relay.restart, _camera_cfg())
         log("info", "Camera relay restart requested", "camera", printer=pid)

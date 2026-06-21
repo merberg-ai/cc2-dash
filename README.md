@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.75-blue)
+![Version](https://img.shields.io/badge/version-1.2.76-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -64,7 +64,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
-1.2.75 klipper-basic-manual-add
+1.2.76 klipper-device-portal-controls
 1.2.73 multi-view-dashboard
 1.2.72 dummy-printer-simulator
 1.2.71 multi-printer-view-context
@@ -502,16 +502,18 @@ Settings → Printer Manager → Klipper / Moonraker printer
 
 Enter the Moonraker host/IP and port. The port does not need to be the default `7125`; use whatever your Moonraker instance actually listens on. Optional fields let you provide a Moonraker API key/token and manual camera stream/snapshot URLs. If camera URLs are omitted, cc2-dash attempts to read Moonraker's configured webcam list.
 
-The first Klipper phase supports:
+The current basic Klipper phase supports:
 
 - Dashboard, Kiosk, and Multi-View status cards.
 - Camera snapshot/stream through the cc2-dash camera endpoints.
 - Hotend, bed, and chamber/temperature-sensor display when Moonraker reports those objects.
 - Progress/current file from Klipper `print_stats` / `virtual_sdcard`.
 - Pause, resume, and cancel through Moonraker only when explicitly enabled per printer.
+- A type-aware **Open Device Portal** link that opens the configured Moonraker/device URL directly instead of the embedded Elegoo portal.
+- A Klipper-safe Control page panel that exposes print-job controls only and disables Carbon 2-only motion/fan/heater/light controls.
 - AI monitoring using the same normalized status/camera path as CC2 printers.
 
-Out of scope for this first Klipper pass: Klipper file manager, upload/print, macros, fans, movement, bed mesh, console, power devices, and emergency stop. Those should be added as Klipper-native features later instead of being mixed into the Centauri Carbon command path.
+Out of scope for this Klipper basic phase: Klipper file manager, upload/print, macros, fans, movement, bed mesh, console, power devices, and emergency stop. Those should be added as Klipper-native features later instead of being mixed into the Centauri Carbon command path.
 
 ## Printer Manager
 
@@ -1493,6 +1495,14 @@ cc2-dash/
 ---
 
 ## Release notes
+
+### v1.2.76 Klipper device portal controls
+
+- Made portal links type-aware for Klipper/Moonraker printers. The Dashboard button now says **Open Device Portal** and opens the configured Moonraker/device URL directly in a new tab/window instead of using the Elegoo portal wording.
+- Updated the top navigation portal label for Klipper printers to **Device** while keeping Carbon 2 printers on the stock Portal flow.
+- Added a Klipper-safe Control page job panel with pause, resume, and cancel buttons routed through Moonraker and still gated by each printer's command permission toggles.
+- Disabled/hardened Carbon 2-only controls on the Control page when the selected printer is Klipper, so fan, heater, light, movement, homing, and speed controls do not send unsupported CC2 commands.
+- Kept Carbon 2 scan/discovery, MQTT runtime, stock portal, and existing controls untouched.
 
 ### v1.2.75 Klipper / Moonraker basic manual add
 

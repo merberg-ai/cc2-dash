@@ -325,6 +325,19 @@
     }
   }
 
+  function updateDashboardActionsForPrinter(st = {}) {
+    const isKlipper = !!st.klipper || String(st.printer_type || '').toLowerCase() === 'klipper';
+    const cc2Only = new Set(['set_speed_preset']);
+    $$('.action-button').forEach(btn => {
+      const action = btn.dataset.action || '';
+      const disabled = isKlipper && cc2Only.has(action);
+      btn.disabled = disabled;
+      btn.title = disabled ? 'This quick action is Carbon 2-only in the current Klipper phase.' : '';
+      const select = btn.closest('.speed-action-row')?.querySelector('.speed-preset-select');
+      if (select) select.disabled = disabled;
+    });
+  }
+
   async function setDashboardLightFromToggle(toggle) {
     const printerId = document.body.dataset.printerId;
     const on = !!toggle.checked;
@@ -968,13 +981,23 @@
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
       setText('lastUpdate', new Date().toLocaleTimeString());
-      if (st.portal_url) setText('portalState', st.portal_url);
+      const portalDisplayUrl = st.device_portal_url || st.direct_portal_url || st.portal_url || '';
+      if (portalDisplayUrl) setText('portalState', portalDisplayUrl);
+      const portalStateLabel = $('#portalStateLabel');
+      if (portalStateLabel) portalStateLabel.textContent = st.portal_nav_label || (st.klipper ? 'Device' : 'Portal');
       if (st.camera_url) setText('cameraState', st.camera_url);
       renderCameraRelay(st.camera_relay || st.cameraRelay || {});
-      updateDashboardLightToggle(!!st.light_on, !st.reachable);
+      updateDashboardLightToggle(!!st.light_on, !st.reachable || !!st.klipper);
+      updateDashboardActionsForPrinter(st);
 
       const portalButton = $('#portalButton');
-      if (portalButton && st.portal_url) portalButton.href = st.portal_url;
+      if (portalButton) {
+        const href = st.device_portal_url || st.direct_portal_url || st.portal_url;
+        if (href) portalButton.href = href;
+        const label = $('#portalButtonLabel', portalButton) || $('#portalButtonLabel');
+        if (label) label.textContent = st.device_portal_label || (st.klipper ? 'Open Device Portal' : 'Go To Elegoo Web Portal');
+        portalButton.title = st.klipper ? 'Open the configured Klipper/Moonraker device page in a new tab' : 'Open the Elegoo web portal in a new tab';
+      }
 
       const statusEl = $('#statusText');
       if (statusEl) {
@@ -5371,6 +5394,11 @@
     },
     allowCommands: false,
     allowDangerous: false,
+    allowPause: false,
+    allowResume: false,
+    allowCancel: false,
+    printerType: 'cc2',
+    supports: { job: true, motion: true, home: true, fan: true, temperature: true, speed: true, light: true },
     activePrint: false,
     controlsLocked: false,
     controlsLockedReason: '',
@@ -5464,21 +5492,44 @@
   }
 
   function updateControlCommandLocks() {
+    const isKlipper = controlState.printerType === 'klipper';
     const locked = !!(controlState.activePrint || controlState.controlsLocked);
-    const canCommand = !!controlState.allowCommands && !locked;
-    const canMove = !!controlState.allowDangerous && !locked;
-    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], [data-control-temp-input], [data-control-temp-set], [data-control-temp-preset], #controlLightToggle').forEach(el => {
-      el.disabled = !canCommand;
-    });
-    $$('[data-control-move], [data-control-home]').forEach(el => {
-      el.disabled = !canMove;
+    const baseCommand = !!controlState.allowCommands && !controlState.controlsLocked;
+    const canCommand = baseCommand && !locked;
+    const canMove = !!controlState.allowDangerous && !locked && !!controlState.supports.motion;
+    $$('[data-control-step]').forEach(el => { el.disabled = !controlState.supports.motion; });
+    $$('[data-control-speed]').forEach(el => { el.disabled = !canCommand || !controlState.supports.speed; });
+    $$('[data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input]').forEach(el => { el.disabled = !canCommand || !controlState.supports.fan; });
+    $$('[data-control-temp-input], [data-control-temp-set], [data-control-temp-preset]').forEach(el => { el.disabled = !canCommand || !controlState.supports.temperature; });
+    const light = $('#controlLightToggle');
+    if (light) light.disabled = !canCommand || !controlState.supports.light;
+    $$('[data-control-move], [data-control-home]').forEach(el => { el.disabled = !canMove; });
+    $$('[data-control-job]').forEach(btn => {
+      const action = String(btn.dataset.controlJob || '').toLowerCase();
+      let allowed = !!controlState.allowCommands && !controlState.controlsLocked;
+      if (action === 'pause') allowed = allowed && !!controlState.allowPause;
+      if (action === 'resume') allowed = allowed && !!controlState.allowResume;
+      if (action === 'cancel') allowed = allowed && !!controlState.allowCancel;
+      btn.disabled = !allowed;
     });
     const panel = $('#stockControlPanel');
-    if (panel) panel.dataset.printLocked = locked ? 'true' : 'false';
+    if (panel) {
+      panel.dataset.printLocked = locked ? 'true' : 'false';
+      panel.dataset.unsupported = isKlipper ? 'true' : 'false';
+    }
+    const klipperPanel = $('#klipperJobPanel');
+    if (klipperPanel) klipperPanel.classList.toggle('hidden', !isKlipper);
+    const foot = $('#controlSafetyFootnote');
+    if (foot) foot.classList.toggle('hidden', isKlipper);
+    const intro = $('#controlIntroText');
+    if (intro) intro.textContent = isKlipper
+      ? 'Klipper/Moonraker basic control is limited to print-job actions for now. Carbon 2 motion/fan/light/heater controls stay disabled for this printer type.'
+      : 'Uses stock ELEGOO control payloads for Carbon 2 printers. Fan/speed/light need commands enabled; movement and homing also need dangerous commands enabled.';
     const note = $('#controlPrintLockNote');
     if (note) {
-      note.classList.toggle('hidden', !locked);
-      if (locked) note.textContent = controlState.controlsLockedReason || 'Control page commands are locked until the printer is online and idle.';
+      const show = isKlipper ? !!controlState.controlsLocked : locked;
+      note.classList.toggle('hidden', !show);
+      if (show) note.textContent = controlState.controlsLockedReason || 'Control page commands are locked until the printer is online and idle.';
     }
   }
 
@@ -5570,6 +5621,19 @@
     if (!data) return;
     controlState.allowCommands = !!data.allow_commands;
     controlState.allowDangerous = !!data.allow_dangerous_commands;
+    controlState.allowPause = !!data.allow_pause;
+    controlState.allowResume = !!data.allow_resume;
+    controlState.allowCancel = !!data.allow_cancel;
+    controlState.printerType = data.klipper ? 'klipper' : (data.printer_type || 'cc2');
+    controlState.supports = {
+      job: data.supports_job_commands !== false,
+      motion: data.supports_motion !== false,
+      home: data.supports_home !== false,
+      fan: data.supports_fan_commands !== false,
+      temperature: data.supports_temperature_commands !== false,
+      speed: data.supports_speed_commands !== false,
+      light: data.supports_light !== false,
+    };
     controlState.activePrint = !!data.active_print;
     controlState.controlsLocked = !!data.controls_locked || !!data.offline || !!data.stale || String(data.connection_state || '').toLowerCase() !== 'online';
     controlState.controlsLockedReason = data.controls_locked_reason || '';
@@ -5598,13 +5662,26 @@
     setControlTempUi('chamber', data.temperatures?.chamber || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
+    const jobState = $('#klipperJobState');
+    if (jobState) jobState.textContent = data.status_text || data.state || '-';
+    const jobPerm = $('#klipperJobPermissionNote');
+    if (jobPerm) {
+      const bits = [];
+      bits.push(data.allow_commands ? 'commands enabled' : 'commands disabled');
+      bits.push(data.allow_pause ? 'pause allowed' : 'pause blocked');
+      bits.push(data.allow_resume ? 'resume allowed' : 'resume blocked');
+      bits.push(data.allow_cancel ? 'cancel allowed' : 'cancel blocked');
+      jobPerm.textContent = bits.join(' · ');
+      jobPerm.className = `mini-note ${data.allow_commands ? 'good-text' : 'warn-text'}`;
+    }
     updateControlCommandLocks();
     const connected = !!data.connected;
-    const safety = controlState.allowDangerous ? 'motion unlocked' : 'motion locked';
+    const isKlipper = controlState.printerType === 'klipper';
+    const safety = isKlipper ? 'Moonraker job controls only' : (controlState.allowDangerous ? 'motion unlocked' : 'motion locked');
     const commandStatus = controlState.allowCommands ? 'commands enabled' : 'commands disabled';
     const lockedReason = data.controls_locked_reason || (controlState.activePrint ? 'controls locked during active print' : (!connected ? 'controls locked while printer is offline' : ''));
-    const lockedText = (controlState.activePrint || controlState.controlsLocked) ? ` · ${esc(lockedReason)}` : '';
-    const tone = !connected ? 'bad' : ((controlState.activePrint || controlState.controlsLocked || !controlState.allowCommands || !controlState.allowDangerous) ? 'warn' : 'good');
+    const lockedText = (!isKlipper && (controlState.activePrint || controlState.controlsLocked)) || (isKlipper && controlState.controlsLocked) ? ` · ${esc(lockedReason)}` : '';
+    const tone = !connected ? 'bad' : ((controlState.controlsLocked || !controlState.allowCommands || (!isKlipper && (controlState.activePrint || !controlState.allowDangerous))) ? 'warn' : 'good');
     const age = Number(data.last_message_age_sec);
     const ageText = Number.isFinite(age) ? ` · telemetry ${age.toFixed(age < 10 ? 1 : 0)}s old` : '';
     const connLabel = data.connection_state && data.connection_state !== 'online' ? niceStatusLabel(data.connection_state) : (connected ? 'connected' : 'offline');
@@ -5670,6 +5747,13 @@
     await controlCommand('/control/home', { axis: label }, button, `Homing ${label}`);
   }
 
+  async function controlJob(action, button = null) {
+    const act = String(action || '').toLowerCase();
+    if (!['pause', 'resume', 'cancel'].includes(act)) return;
+    if (act === 'cancel' && !confirm('Cancel the current print? This cannot be undone.')) return;
+    await controlCommand('/control/job', { action: act }, button, `${act} command sent`);
+  }
+
   async function controlSetSpeed(percent, button = null) {
     const value = controlClamp(percent, 1, 300);
     updateControlSpeedUi(value);
@@ -5709,6 +5793,7 @@
     $$('[data-control-step]').forEach(btn => btn.addEventListener('click', () => updateControlStepUi(btn.dataset.controlStep)));
     $$('[data-control-move]').forEach(btn => btn.addEventListener('click', () => controlMove(btn.dataset.controlMove, btn.dataset.controlDir, btn).catch(() => {})));
     $$('[data-control-home]').forEach(btn => btn.addEventListener('click', () => controlHome(btn.dataset.controlHome, btn).catch(() => {})));
+    $$('[data-control-job]').forEach(btn => btn.addEventListener('click', () => controlJob(btn.dataset.controlJob, btn).catch(() => {})));
     $$('[data-control-speed]').forEach(btn => btn.addEventListener('click', () => controlSetSpeed(btn.dataset.controlSpeed, btn).catch(() => {})));
     $$('[data-control-fan-bump]').forEach(btn => btn.addEventListener('click', () => {
       const fan = btn.dataset.controlFanBump;

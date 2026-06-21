@@ -158,20 +158,33 @@ def public_printer_dict(cfg: PrinterConfig, include_secret: bool = False) -> dic
     data["portal_chrome_url"] = f"/portal?printer={cfg.id}"
     data["kiosk_url"] = f"/kiosk?printer={cfg.id}"
     data["camera_url"] = f"/api/printers/{cfg.id}/camera/stream"
+    data["device_portal_label"] = "Open Device Portal"
+    data["portal_nav_label"] = "Portal"
     if cfg.type == "klipper":
         data["klipper"] = True
-        data["portal_url"] = f"/?printer={cfg.id}"
-        data["portal_chrome_url"] = f"/?printer={cfg.id}"
-        data["direct_portal_url"] = str(data.get("moonraker_url") or f"http://{cfg.host}:{cfg.port or 7125}")
+        device_url = str(data.get("moonraker_url") or f"http://{cfg.host}:{cfg.port or 7125}")
+        # Klipper/Moonraker systems do not use the embedded Elegoo portal.
+        # Open the configured Moonraker/device URL directly in a new tab.
+        data["portal_url"] = device_url
+        data["portal_chrome_url"] = device_url
+        data["direct_portal_url"] = device_url
+        data["device_portal_url"] = device_url
+        data["portal_nav_label"] = "Device"
+        data["device_portal_label"] = "Open Device Portal"
         data["direct_camera_url"] = str(getattr(cfg, "camera_url", "") or "")
     elif cfg.type == "dummy":
         data["dummy"] = True
         data["portal_url"] = f"/?printer={cfg.id}"
         data["portal_chrome_url"] = f"/?printer={cfg.id}"
         data["direct_portal_url"] = ""
+        data["device_portal_url"] = ""
+        data["portal_nav_label"] = "Dash"
+        data["device_portal_label"] = "Open Dashboard"
         data["direct_camera_url"] = ""
     else:
         data["direct_portal_url"] = f"http://{cfg.host}/"
+        data["device_portal_url"] = f"/portal-fullscreen?printer={cfg.id}"
+        data["device_portal_label"] = "Go To Elegoo Web Portal"
         data["direct_camera_url"] = f"http://{cfg.host}:8080/"
     if not include_secret:
         data.pop("access_code", None)

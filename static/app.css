@@ -2872,3 +2872,38 @@ body.modal-open { overflow:hidden; }
   .global-ai-alert-actions { display:grid; grid-template-columns:1fr 1fr; }
   .global-ai-alert-actions .button { width:100%; }
 }
+
+/* v1.2.76: Klipper/Moonraker basic-control polish */
+.klipper-job-panel {
+  display:flex;
+  flex-direction:column;
+  gap:.75rem;
+  border:1px solid color-mix(in srgb, var(--cc2-primary) 42%, var(--cc2-border));
+  border-radius:1rem;
+  padding:.9rem;
+  background:linear-gradient(180deg, color-mix(in srgb, var(--cc2-primary) 9%, var(--cc2-card-soft)), color-mix(in srgb, var(--cc2-card) 90%, black 10%));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.025);
+}
+.klipper-job-actions {
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:.65rem;
+}
+.stock-control-panel[data-unsupported="true"] {
+  opacity:.54;
+  filter:saturate(.55);
+  border-style:dashed;
+}
+.stock-control-panel[data-unsupported="true"]::before {
+  content:"Carbon 2 motion/fan/heater/light controls are not available for Klipper printers in this phase.";
+  grid-column:1 / -1;
+  display:block;
+  color:var(--cc2-muted);
+  font-size:.82rem;
+  line-height:1.35;
+  padding:.25rem .1rem .45rem;
+}
+@media (max-width: 640px) {
+  .klipper-job-actions { grid-template-columns:1fr; }
+  .klipper-job-actions .button { width:100%; }
+}
