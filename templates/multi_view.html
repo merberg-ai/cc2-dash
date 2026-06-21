@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block page_id %}multi-view{% endblock %}
+{% block content %}
+<section class="page-header card fade-in">
+  <div>
+    <p class="eyebrow">Multi-printer command center</p>
+    <h1>Multi-View</h1>
+    <p>Watch every configured printer at a glance. Tap a card to open the full dashboard for that printer.</p>
+  </div>
+  <div class="header-actions">
+    <button id="multiViewRefreshButton" class="button secondary"><span class="button-label">Refresh</span></button>
+  </div>
+</section>
+
+<section class="card fade-in multi-view-panel">
+  <div class="section-heading-row">
+    <div>
+      <h2>Configured printers</h2>
+      <p class="muted" id="multiViewSummary">Loading printer status...</p>
+    </div>
+    <span class="pill" id="multiViewRefreshState">Auto-refresh</span>
+  </div>
+  <div id="multiViewGrid" class="multi-view-grid">
+    <div class="multi-view-empty"><span class="spinner"></span><span>Loading printers...</span></div>
+  </div>
+</section>
+{% endblock %}

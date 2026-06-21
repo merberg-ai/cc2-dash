@@ -677,6 +677,7 @@ class VisionMonitor:
             f"File: {context.get('file')}\n"
             f"Hotend: {context.get('hotend_current')}/{context.get('hotend_target')} C\n"
             f"Bed: {context.get('bed_current')}/{context.get('bed_target')} C\n"
+            f"Chamber: {context.get('chamber_current')} C (read-only sensor)\n"
             f"Speed setting: {context.get('speed_setting') or '-'}\n"
             "Look for visual print problems only: spaghetti/stringing, detached part, blob on nozzle, failed first layer, severe darkness/camera blockage. "
             "If the image is too dark to judge, return visual_state camera_bad. "

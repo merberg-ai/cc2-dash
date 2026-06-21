@@ -115,6 +115,15 @@
           <label><input id="uploadMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.upload_menu_enabled|default(true) %}checked{% endif %}> show</label>
         </div>
       </div>
+      <div class="setting-row">
+        <div>
+          <strong>Multi-View menu option</strong>
+          <small>Shows or hides the multi-printer overview page with snapshots, quick status, progress, temperatures, and AI badges.</small>
+        </div>
+        <div class="setting-controls">
+          <label><input id="multiViewMenuEnabled" class="toggle" type="checkbox" {% if cfg.features.multi_view_menu_enabled|default(true) %}checked{% endif %}> show</label>
+        </div>
+      </div>
       <div class="setting-row {% if experimental_feature_locks.get('file_manager_enabled') %}locked-feature-row{% endif %}">
         <div>
           <strong>File Manager menu option</strong>
@@ -288,8 +297,28 @@
         <div class="setting-controls"><label><input id="aiBackgroundMonitorEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.background_monitor_enabled|default(true) %}checked{% endif %}> enabled</label></div>
       </div>
       <div class="setting-row">
-        <div><strong>Background check interval</strong><small>Seconds between watchdog checks. Lower is more responsive; higher is quieter.</small></div>
+        <div><strong>Background check interval</strong><small>Seconds between watchdog checks per printer. Lower is more responsive; higher is quieter.</small></div>
         <div class="setting-controls"><input id="aiCheckIntervalSeconds" class="input" type="number" min="5" max="600" step="5" value="{{ cfg.portal_ai.check_interval_seconds|default(30) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Multi-printer AI scheduler</strong><small>Staggers background checks across configured printers so cameras/Ollama are not hit all at once.</small></div>
+        <div class="setting-controls"><label><input id="aiMultiPrinterSchedulerEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.multi_printer_scheduler_enabled|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Max AI checks per tick</strong><small>Keep this at 1 for Pi/Ollama stability. Higher values may check more printers at once.</small></div>
+        <div class="setting-controls"><input id="aiMultiPrinterMaxChecks" class="input" type="number" min="1" max="8" step="1" value="{{ cfg.portal_ai.multi_printer_max_concurrent_vision_checks|default(1) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Printer check stagger</strong><small>Seconds to wait between due printer checks when more than one printer needs AI attention.</small></div>
+        <div class="setting-controls"><input id="aiMultiPrinterStaggerSeconds" class="input" type="number" min="0" max="120" step="1" value="{{ cfg.portal_ai.multi_printer_stagger_seconds|default(10) }}"></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Prioritize viewed printer</strong><small>Lets the printer currently open in the browser get checked first when several printers are due.</small></div>
+        <div class="setting-controls"><label><input id="aiMultiPrinterPrioritizeViewed" class="toggle" type="checkbox" {% if cfg.portal_ai.multi_printer_prioritize_viewed_printer|default(true) %}checked{% endif %}> enabled</label></div>
+      </div>
+      <div class="setting-row">
+        <div><strong>Global AI warning banner</strong><small>Shows warnings from another printer even when you are viewing a different page/printer.</small></div>
+        <div class="setting-controls compact-inline"><label><input id="aiGlobalAlertsEnabled" class="toggle" type="checkbox" {% if cfg.portal_ai.global_alerts_enabled|default(true) %}checked{% endif %}> enabled</label><select id="aiGlobalAlertMinLevel" class="input"><option value="watch" {% if (cfg.portal_ai.global_alert_min_level|default('high')) == 'watch' %}selected{% endif %}>watch+</option><option value="medium" {% if (cfg.portal_ai.global_alert_min_level|default('high')) == 'medium' %}selected{% endif %}>medium+</option><option value="high" {% if (cfg.portal_ai.global_alert_min_level|default('high')) == 'high' %}selected{% endif %}>high only</option></select></div>
       </div>
       <div class="setting-row">
         <div><strong>Log state/risk changes only</strong><small>Prevents the watchdog from spamming the log every check.</small></div>
@@ -521,6 +550,40 @@
         <label class="field-label" for="managerManualPin">Printer PIN / access code</label>
         <input id="managerManualPin" class="input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Printer PIN / access code" />
         <button id="managerManualAddButton" class="button primary full"><span class="button-label">Add / Save Printer</span></button>
+
+        {% if dummy_printers_enabled %}
+        <div class="dummy-printer-add-box">
+          <h3>Dummy / simulator printer</h3>
+          <p class="muted">Add a safe fake printer for testing multi-printer UI, status cards, camera previews, and AI badges. No real printer commands are sent.</p>
+          <label class="field-label" for="managerDummyName">Dummy display name</label>
+          <input id="managerDummyName" class="input" value="Dummy Printer" />
+          <div class="grid-2 gap">
+            <label class="inline-field"><span class="field-label">Scenario</span><select id="managerDummyMode" class="input">
+              <option value="printing">Printing</option>
+              <option value="idle">Idle</option>
+              <option value="paused">Paused</option>
+              <option value="timelapse_generating">Time-lapse generating</option>
+              <option value="error">Error</option>
+              <option value="offline">Offline</option>
+            </select></label>
+            <label class="inline-field"><span class="field-label">Progress %</span><input id="managerDummyProgress" class="input" type="number" min="0" max="100" step="1" value="42" /></label>
+          </div>
+          <label class="field-label" for="managerDummyAiState">AI badge scenario</label>
+          <select id="managerDummyAiState" class="input">
+            <option value="looks_good">Looks good</option>
+            <option value="watch">Watch</option>
+            <option value="warning">Something looks fishy</option>
+            <option value="failure">Possible failure detected</option>
+            <option value="disabled">AI disabled</option>
+          </select>
+          <button id="managerDummyAddButton" class="button secondary full"><span class="button-label">Add Dummy Printer</span></button>
+        </div>
+        {% else %}
+        <div class="dummy-printer-add-box disabled">
+          <h3>Dummy / simulator printer</h3>
+          <p class="muted">Dummy printers are disabled in this build. Existing saved dummy entries stay in config but are hidden from normal printer selection.</p>
+        </div>
+        {% endif %}
       </section>
     </div>
 

@@ -11,6 +11,7 @@ import requests
 from . import __version__
 from .config import PrinterConfig, printer_dict_to_config
 from .logger import log
+from .dummy import is_dummy_printer
 
 BOUNDARY = "cc2dashframe"
 import base64
@@ -348,6 +349,11 @@ class CameraRelayManager:
         with self._lock:
             keep = set(printers.keys())
             for printer_id, pdata in printers.items():
+                if is_dummy_printer(pdata):
+                    existing = self._relays.get(printer_id)
+                    if existing:
+                        existing.stop()
+                    continue
                 pcfg = printer_dict_to_config(printer_id, pdata)
                 relay = self.get(printer_id, pcfg)
                 relay._last_config = c

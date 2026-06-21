@@ -1,6 +1,6 @@
 # cc2-dash
 
-![Version](https://img.shields.io/badge/version-1.2.67-blue)
+![Version](https://img.shields.io/badge/version-1.2.74-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2F%20Linux-green)
 ![Use](https://img.shields.io/badge/use-private%20hobbyist%20LAN-orange)
@@ -32,6 +32,7 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 - [Update from GitHub](#update-from-github)
 - [First-run setup](#first-run-setup)
 - [Using the dashboard](#using-the-dashboard)
+- [Multi-View](#multi-view)
 - [Printer Manager](#printer-manager)
 - [Camera Relay / stream protection](#camera-relay--stream-protection)
 - [Kiosk mode](#kiosk-mode)
@@ -63,6 +64,13 @@ It is designed for a Raspberry Pi-style board sitting on your trusted home netwo
 Current documented version:
 
 ```text
+1.2.74 multi-printer-ai-scheduler
+1.2.73 multi-view-dashboard
+1.2.72 dummy-printer-simulator
+1.2.71 multi-printer-view-context
+1.2.70 chamber-readout-only
+1.2.69 chamber-temperature-status
+1.2.68 ai-training-backup-restore
 1.2.67 file-manager-info-modal
 1.2.66 file-manager-search-sort
 1.2.64 file-manager-multiselect
@@ -76,20 +84,20 @@ Major current capabilities:
 
 | Area | Status |
 |---|---|
-| Printer discovery / pairing | Working, verified Centauri discovery filtering |
-| Dashboard status | Working, mobile-first, active/idle aware |
+| Printer discovery / pairing | Working, verified Centauri discovery filtering, with optional dummy/simulator printer entries for multi-printer UI testing |
+| Dashboard status | Working, mobile-first, active/idle aware, with active-printer context, global warning banner, and Multi-View overview |
 | Stock portal bridge | Working as fallback/reference portal |
 | Camera relay | Working, reduces direct camera connection pileups |
 | Kiosk mode | Working, camera-first fullscreen view |
 | Failure Detection telemetry checks | Working, with optional guarded auto-pause off by default |
 | Ollama vision checks | Working, active-print-only by default |
-| AI feedback dataset | Working, includes fresh-frame capture, missed-failure ROI annotation/crops, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review/export tools |
+| AI feedback dataset | Working, includes fresh-frame capture, missed-failure ROI annotation/crops, optional reason chips, JSONL audit log, SQLite mirror/import, outcome interpretation, AI Training review tools, lightweight dataset export, and full backup/restore ZIP import/export |
 | False-alarm suppression | Working for similar low/severity warnings on the same active print |
 | Persistent AI learning | Working foundation plus Settings UI visibility and optional safe auto-adjustment of live vision thresholds |
 | Upload page | Working, stages local `.gcode` files in cc2-dash, extracts metadata/thumbnails where possible, then uploads or uploads-and-prints |
 | File Manager | Experimental code retained, disabled and locked off for this public test build; dev branch includes async timelapse export, confirmed generated/download-ready status before download, friendly timelapse composing status labels, themed export controls, mobile-friendly multi-select deletion, search/filter/sort controls, themed mobile-friendly info modals with thumbnail previews, and stock-shaped local printer-file delete payloads |
 | Filament Manager / CANVAS | Experimental code retained, disabled and locked off for this public test build |
-| Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, and bed/extruder temperature controls |
+| Control page | Enabled, stock-portal-style controls with offline/active-print lockouts, command permissions, fans, speed, light, jog/home, bed/extruder temperature controls, and read-only chamber temperature readout |
 | Themes | Built-in theme library with preview cards |
 | Windows support | Not tested; may work manually, but scripts are Linux/systemd focused |
 
@@ -127,7 +135,7 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Collapsible dashboard sections.
 - Saved dashboard accordion state per printer.
 - Compact build/version chips in the header.
-- Configurable top navigation visibility for Portal, Upload, Control, Kiosk, AI Training, and Logs. File Manager and Filament Manager are locked off in this public test build.
+- Configurable top navigation visibility for Portal, Multi-View, Upload, Control, Kiosk, AI Training, and Logs. File Manager and Filament Manager are locked off in this public test build.
 - `/health` and `/api/version` diagnostics.
 
 ### Printer discovery and pairing
@@ -137,7 +145,8 @@ Windows has **not** been tested. The backend is Python/FastAPI, so it might run 
 - Manual printer add when discovery is blocked.
 - Alphanumeric printer PIN/access-code fields.
 - No prefilled default PIN.
-- Printer serial/SN, access code, MQTT host/port, and command permissions stored per printer.
+- Printer serial/SN, access code, MQTT host/port, type, and command permissions stored per printer.
+- Dummy/simulator printers can be added from Settings for testing multi-printer switching, camera/status rendering, and AI badge behavior without owning a second printer.
 
 ### Dashboard controls
 
@@ -426,22 +435,57 @@ Primary pages:
 | Page | Description |
 |---|---|
 | **Dash** | Main printer view with status, camera, quick actions, Portal AI, and connection info. |
+| **Multi-View** | Multi-printer overview with one snapshot/status/progress/temperature/AI card per configured printer. |
 | **Portal** | Stock Elegoo portal bridge/fallback. |
 | **Kiosk** | Camera-first fullscreen display for tablets or spare monitors. |
 | **Upload** | Stage `.gcode` files in cc2-dash, review parsed metadata/thumbnails, then upload or upload-and-print. |
-| **Control** | Stock-portal-style jog/home, light, fans, speed, and bed/extruder temperature controls with safety lockouts. |
+| **Control** | Stock-portal-style jog/home, light, fans, speed, bed/extruder temperature controls, and read-only chamber temperature readout with safety lockouts. |
 | **Files** | Experimental file/history/timelapse helper page. Locked off in this public test build. |
 | **Filament** | Experimental CANVAS/MMS filament manager. Locked off in this public test build. |
 | **Settings** | Printer Manager, themes, menu visibility, quick actions, access, camera relay, AI settings. |
 | **Logs** | Filterable runtime log viewer. |
 
-The **Portal**, **Upload**, **Control**, **Kiosk**, **AI Training**, and **Logs** navigation items can be shown or hidden in:
+The **Portal**, **Multi-View**, **Upload**, **Control**, **Kiosk**, **AI Training**, and **Logs** navigation items can be shown or hidden in:
 
 ```text
 Settings → Menu / Features
 ```
 
 The **Files** and **Filament** rows remain visible in Settings as locked release-gated features while `COMMUNITY_RELEASE_EXPERIMENTAL_LOCKS` is enabled.
+
+### Active printer switching
+
+The header now includes a compact **Printer** selector whenever more than one visible printer is configured. If only one printer is available, the selector is hidden to keep the header clean. This changes the printer being viewed on the current page without changing the saved default printer. Page links preserve the active printer with a URL like:
+
+```text
+/?printer=<printer_id>
+/files?printer=<printer_id>
+/control?printer=<printer_id>
+```
+
+The selected/viewed printer is remembered in the browser for convenience. The saved default printer remains the fallback used when no printer is selected, when a URL has no `printer=` query string, or when a bookmarked printer no longer exists.
+
+---
+
+## Multi-View
+
+Open:
+
+```text
+Multi-View
+```
+
+The Multi-View page is a read-only overview for multiple configured printers. Each card shows:
+
+- current camera snapshot
+- printer state
+- active file
+- progress bar
+- hotend / bed / chamber temperatures
+- cached Failure Detection / AI badge
+- quick links to Dashboard, Control, and Files for that printer
+
+Cards are large tap targets on mobile. Tapping the card opens that printer's full dashboard using `?printer=<printer_id>`. Multi-View uses a fast cached status path for AI badges, so it does not intentionally run expensive Ollama vision checks for every card just because the overview page is open. Background monitoring still owns actual AI checks.
 
 ---
 
@@ -463,8 +507,26 @@ Available actions:
 - Enable/disable normal commands.
 - Enable/disable dangerous commands.
 - Remove old printer entries.
+- Add a **Dummy / simulator printer** for safe UI testing. Dummy printers provide fake status, temperatures, progress, a generated camera stream, sample files/history/timelapse rows, and selectable AI badge states. They never connect to MQTT and never send real printer commands.
 
 Command permissions are intentionally separate from pairing. You can monitor a printer while keeping control buttons locked down.
+
+The default printer is now treated as a startup/fallback printer only. Opening a page with `?printer=<printer_id>` or choosing a printer from the header switcher changes the currently viewed printer without rewriting the default printer setting. This is the first phase of the multi-printer UI foundation.
+
+### Dummy / simulator printers
+
+Settings → Printer Manager includes an **Add Dummy Printer** tool. This creates a safe fake printer entry with configurable scenarios:
+
+```text
+Printing
+Idle
+Paused
+Time-lapse generating
+Error
+Offline
+```
+
+Dummy printers are useful when testing multi-printer UI behavior with only one real CC2. For public builds or non-testing installs, they can be disabled from `cc2_dash/config.py` by setting `DUMMY_PRINTERS_ENABLED = False`; saved dummy config entries are then hidden/blocked without deleting them. They show up in the header printer switcher, dashboard, control/kiosk camera views, File Manager reads, and AI status badges. The generated camera stream is local to cc2-dash, and command/file operations return no-op dummy responses for UI testing only. No MQTT client is started and no real printer command is sent.
 
 ---
 
@@ -539,6 +601,24 @@ Current behavior:
 - Tracks stale status, printer error states, pause/error/fail states, stuck progress, temp sanity, filament status hints, and camera/vision issues.
 - Uses Ollama vision only when enabled and when an active print is detected.
 - Does not cancel jobs automatically. Optional high-risk auto-pause is available only when explicitly enabled.
+
+Multi-printer watchdog behavior:
+
+- The background watchdog keeps separate cached AI/vision state per `printer_id`.
+- Auto-pause countdowns, cancellations, cooldowns, and sent-pause timestamps are isolated per printer.
+- The scheduler staggers due printer checks so several active printers do not all hit camera/Ollama at the same instant.
+- The currently viewed printer can be softly prioritized, but the saved default printer is not changed.
+- Global AI warning banners can surface high-risk warnings from another printer while you are viewing a different printer/page.
+
+New multi-printer settings under `Settings → Portal AI`:
+
+| Control | Purpose |
+|---|---|
+| **Multi-printer AI scheduler** | Enables staggered due-time scheduling across configured printers. |
+| **Max AI checks per tick** | Number of due printers to process in one scheduler tick. Keep at `1` for Pi/Ollama stability. |
+| **Printer check stagger** | Seconds between due printer checks when more than one printer needs attention. |
+| **Prioritize viewed printer** | Softly checks the printer currently open in the browser before other equally due printers. |
+| **Global AI warning banner** | Shows high-risk/cross-printer warnings without triggering new camera/model checks. |
 
 Common checks:
 
@@ -704,9 +784,27 @@ Current AI Training tools include:
 - Review captured feedback frame thumbnails when available.
 - Edit/relabel a sample's feedback label, interpreted outcome, and reason note.
 - Delete bad SQLite training samples while keeping the JSONL audit log and captured frame files intact.
-- Export a ZIP dataset containing public sample metadata, raw JSONL rows, and optionally captured frame files.
+- Export a lightweight ZIP dataset containing public sample metadata, raw JSONL rows, and optionally captured frame files.
+- Export a full restore-ready learning backup ZIP containing the SQLite learner database, JSONL audit log, profiles/events metadata, and feedback frame/ROI crop files.
+- Preview an uploaded learning backup before importing it.
+- Merge a backup into the current learner, skipping obvious duplicate SQLite samples.
+- Replace the current learning library from a backup after explicit confirmation. Replace mode creates a local pre-import backup ZIP under `data/ai_import_backups/` before overwriting the current learner.
 
-The page does **not** train an Ollama model, upload data, or send commands to the printer. It only reviews and cleans local feedback/training records used by cc2-dash's lightweight heuristic learner.
+Import modes:
+
+| Mode | Behavior | Best use |
+|---|---|---|
+| Merge | Adds imported samples/frames to the current learner and rebuilds profiles. Existing matching samples are skipped where possible. | Combining old and current learning data |
+| Replace | Restores the uploaded backup as the active learning library. This overwrites the current SQLite learner, JSONL audit log, and feedback frame library after creating a local pre-import backup. | Fresh install restore or full rollback |
+
+The full backup export endpoint is:
+
+```text
+GET  /api/ai/learning/backup/export
+POST /api/ai/learning/backup/import
+```
+
+The page does **not** train an Ollama model, upload data, or send commands to the printer. It only reviews, imports, exports, and cleans local feedback/training records used by cc2-dash's lightweight heuristic learner.
 
 
 ## Upload page
@@ -849,6 +947,7 @@ Current control features:
 - Fan UI displays 0–100%, while outgoing method `1030` values are converted to the stock portal's 0–255 PWM-style scale.
 - Light toggle using the same stock-style `power` payload as the dashboard light control.
 - Current/target extruder and bed temperature display.
+- Chamber temperature readout when firmware telemetry provides it.
 - Set extruder target temperature, bed target temperature, and turn either heater off.
 - Compact themed temperature inputs populated from the current target/set values.
 - Live status refresh that avoids overlapping refreshes and avoids overwriting fan/temp inputs while you are typing.
@@ -879,6 +978,7 @@ Temperature limits in the UI/backend:
 |---|---:|
 | Extruder | `0–350°C` |
 | Bed | `0–110°C` |
+| Chamber | Read-only telemetry |
 
 Safety behavior:
 
@@ -1015,7 +1115,7 @@ Current command mapping summary:
 | Control page jog/home | `1026`, `1027` gated by dangerous-command permission |
 | Control page fans/speed/light/temp | `1030`, `1031`, `1029`, `1028` gated by command permission |
 | Control page fan value scaling | UI percent is converted to 0–255 stock portal fan values |
-| Control page temperature | `1028` with `{extruder}` or `{heater_bed}` |
+| Control page temperature | `1028` with `{extruder}` or `{heater_bed}`; chamber is read-only telemetry |
 | Light toggle | `1029` |
 | Upload staged G-code | Stage locally, then HTTP upload to printer; upload-and-print can request print start after transfer |
 | Pause print | `1021` |
@@ -1082,6 +1182,14 @@ Configure this during setup or later in Settings. Keep it restricted to trusted 
 ---
 
 ## Useful API endpoints
+
+Multi-printer / AI monitoring:
+
+```text
+GET  /api/multi-view/status
+GET  /api/ai/monitor
+GET  /api/ai/global-alerts
+```
 
 General:
 
@@ -1346,6 +1454,7 @@ cc2-dash/
 │   ├── index.html
 │   ├── kiosk.html
 │   ├── logs.html
+│   ├── multi_view.html
 │   ├── portal.html
 │   ├── settings.html
 │   ├── setup.html
@@ -1361,6 +1470,67 @@ cc2-dash/
 
 ## Release notes
 
+### v1.2.74 Multi-printer AI scheduler
+
+- Reworked the background Failure Detection watchdog into a multi-printer scheduler with per-printer due times.
+- Added staggered background checks so multiple printers do not all hit camera/Ollama on the same tick.
+- Added Settings → Portal AI controls for multi-printer scheduler enablement, max checks per tick, stagger seconds, viewed-printer priority, and the global AI warning banner.
+- Kept auto-pause state isolated by `printer_id`, including countdowns, cancellations, cooldowns, and sent-pause tracking.
+- Auto-pause countdowns can now pull a printer forward in the scheduler so due warnings are rechecked near their deadline.
+- Added `/api/ai/global-alerts` for lightweight cached cross-printer warning polling.
+- Added a themed global warning banner that can point you to another printer with a high-risk AI/auto-pause warning.
+- Expanded `/api/ai/monitor` with per-printer scheduler state and recently viewed-printer hints for diagnostics.
+
+### v1.2.73 Multi-View dashboard
+
+- Added a **Multi-View** page showing every visible configured printer as a mobile-friendly snapshot/status card.
+- Each printer card shows camera snapshot, state, active file, progress, hotend/bed/chamber temperatures, and cached Failure Detection/AI badge.
+- Cards link to full Dashboard, Control, and Files views using the selected printer context.
+- Added `/api/multi-view/status` for lightweight multi-printer overview refreshes.
+- Hid the global printer selector when only one visible printer is configured.
+- Added `DUMMY_PRINTERS_ENABLED` in `cc2_dash/config.py` so public builds can hide/block dummy printers without deleting saved dummy entries.
+- Added a Multi-View menu visibility toggle in Settings and updated README docs.
+
+### v1.2.72 Dummy printer simulator
+
+- Added a safe **Dummy / simulator printer** type for testing multi-printer UI flows without needing a second physical CC2.
+- Settings → Printer Manager can now add dummy printers and edit scenario, progress, temperature, and AI badge states.
+- Dummy printers appear in the global header printer switcher and render through the normal Dashboard/Kiosk/Control status paths.
+- Added generated local dummy camera snapshot/MJPEG stream, fake telemetry, sample File Manager rows, sample history/timelapse rows, and no-op command responses for UI testing.
+- Dummy printers never start an MQTT client and never send real printer commands.
+
+### v1.2.71 Multi-printer view context foundation
+
+- Added a global header **Printer** selector that appears when configured printers exist.
+- Split the idea of the saved default printer from the currently viewed printer. The default printer remains a fallback, while pages can view a specific printer using `?printer=<printer_id>`.
+- Updated main navigation and footer links to preserve the selected printer across Dash, Upload, Files, Filament, Control, Settings, AI Training, and Logs.
+- Dashboard refresh and quick actions now target the selected/viewed printer instead of silently falling back to the saved default.
+- Remembered the last viewed printer in browser localStorage so mobile browsers return to the same printer unless a URL explicitly chooses another one.
+- Added a light printer `type`/`printer_type` config field for future dummy/simulator printer work without changing existing CC2 behavior.
+
+
+### v1.2.70 Chamber readout-only polish
+
+- Changed dashboard chamber temperature display from `current / off` to a single read-only temperature value.
+- Kept Hotend and Bed as `current / target` because those are controllable heaters, while Chamber is telemetry-only on the CC2 firmware.
+- Updated the vision context wording so chamber temperature is treated as a read-only sensor rather than a controllable target/setpoint.
+
+### v1.2.69 Chamber temperature status
+
+- Added chamber temperature normalization from CC2 telemetry aliases such as `ztemperature_sensor.temperature` and `chamber.temperature`.
+- Dashboard Print Status now shows **Chamber** beside Hotend and Bed when telemetry is available.
+- Control page temperature section now includes a read-only Chamber card, matching the stock portal's chamber temperature visibility without exposing unsupported chamber heater controls.
+- Status/API payloads now include `chamber_current` and optional `chamber_target` when firmware ever exposes it, and the vision prompt context includes chamber temperature for better print-environment awareness.
+
+### v1.2.68 AI Training backup and restore
+
+- Added a full AI Training backup export separate from the existing lightweight dataset export.
+- Backup ZIPs include a manifest, SQLite learner database, JSONL audit log, public/raw sample exports, learning profiles/events metadata, and feedback frame/ROI crop files when selected.
+- Added AI Training import UI with mobile-friendly backup file picker, Preview Import, Merge, and Replace flows.
+- Import preview shows backup schema, sample/profile/event counts, frame count, included data types, and warnings before anything is changed.
+- Merge mode imports JSONL sample rows and frame files into the existing learner while skipping obvious duplicates.
+- Replace mode requires explicit confirmation, creates a local pre-import backup under `data/ai_import_backups/`, then restores the uploaded backup as the active learning library.
+- Profiles are rebuilt after import so restored samples can immediately contribute to the lightweight heuristic learner.
 
 ### v1.2.67 File Manager themed info modal
 

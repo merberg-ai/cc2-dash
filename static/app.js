@@ -13,6 +13,79 @@
   let autoPauseModalState = { token: null, timer: null, cancelled: false };
   let roiFeedbackState = { frame: null, box: null, drawing: false, start: null };
   let roiFeedbackModalInitialized = false;
+  const SELECTED_PRINTER_STORAGE_KEY = 'cc2dash.selectedPrinterId';
+  const multiViewState = { timer: null, lastLoadedAt: null };
+  const globalAiAlertState = { timer: null, dismissedSignature: '', lastSignature: '' };
+  const dummyPrintersEnabled = document.body.dataset.dummyPrintersEnabled !== 'false';
+
+  function printerIsDummy(data) {
+    const ptype = String(data?.type || data?.printer_type || '').toLowerCase();
+    return ['dummy', 'sim', 'simulator', 'demo'].includes(ptype);
+  }
+
+  function visibleCfgPrinters() {
+    const printers = cfg?.printers || {};
+    if (dummyPrintersEnabled) return printers;
+    return Object.fromEntries(Object.entries(printers).filter(([, p]) => !printerIsDummy(p)));
+  }
+
+  function configuredPrinterIds() {
+    return Object.keys(visibleCfgPrinters());
+  }
+
+  function isConfiguredPrinter(id) {
+    return !!id && Object.prototype.hasOwnProperty.call(visibleCfgPrinters(), id);
+  }
+
+  function urlPrinterId() {
+    try { return new URL(window.location.href).searchParams.get('printer') || ''; } catch { return ''; }
+  }
+
+  function bodyPrinterId() {
+    return document.body.dataset.printerId || '';
+  }
+
+  function rememberSelectedPrinter(id) {
+    if (!isConfiguredPrinter(id)) return;
+    try { window.localStorage.setItem(SELECTED_PRINTER_STORAGE_KEY, id); } catch {}
+  }
+
+  function rememberedSelectedPrinter() {
+    try {
+      const value = window.localStorage.getItem(SELECTED_PRINTER_STORAGE_KEY) || '';
+      return isConfiguredPrinter(value) ? value : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function setUrlPrinterAndNavigate(id) {
+    if (!isConfiguredPrinter(id)) return;
+    rememberSelectedPrinter(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set('printer', id);
+    window.location.assign(url.toString());
+  }
+
+  function initGlobalPrinterSwitcher() {
+    const select = $('#globalPrinterSelect');
+    const current = bodyPrinterId();
+    if (select && current && select.value !== current) select.value = current;
+
+    const explicit = urlPrinterId();
+    const remembered = rememberedSelectedPrinter();
+    const pageCanRedirect = !['setup'].includes(page || '');
+    if (!explicit && remembered && current && remembered !== current && pageCanRedirect) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('printer', remembered);
+      window.location.replace(url.toString());
+      return true;
+    }
+
+    if (current) rememberSelectedPrinter(current);
+    select?.addEventListener('change', () => setUrlPrinterAndNavigate(select.value));
+    return false;
+  }
 
   function featureLocked(key) {
     return !!(experimentalFeatureLocks && Object.prototype.hasOwnProperty.call(experimentalFeatureLocks, key));
@@ -55,6 +128,69 @@
     }, timeout);
   }
 
+
+  function hideGlobalAiAlert() {
+    const banner = $('#globalAiAlertBanner');
+    if (banner) banner.classList.add('hidden');
+  }
+
+  function renderGlobalAiAlert(data) {
+    const banner = $('#globalAiAlertBanner');
+    if (!banner) return;
+    const alerts = data?.alerts || [];
+    const signature = data?.signature || '';
+    globalAiAlertState.lastSignature = signature;
+    if (!alerts.length || !data?.enabled || (signature && signature === globalAiAlertState.dismissedSignature)) {
+      hideGlobalAiAlert();
+      return;
+    }
+    const top = alerts[0] || {};
+    const count = alerts.length;
+    const name = top.name || top.printer_id || 'Printer';
+    const risk = Number(top.risk || 0);
+    const level = String(top.level || 'warning').toUpperCase();
+    const pending = !!top.pending_auto_pause;
+    const title = pending ? `Auto-pause warning on ${name}` : `AI warning on ${name}`;
+    const text = `${level} · ${risk}% · ${top.summary || 'Failure Detection needs attention.'}${count > 1 ? ` · ${count} printers reporting warnings` : ''}`;
+    const titleEl = $('#globalAiAlertTitle');
+    const textEl = $('#globalAiAlertText');
+    const openEl = $('#globalAiAlertOpen');
+    if (titleEl) titleEl.textContent = title;
+    if (textEl) textEl.textContent = text;
+    if (openEl) openEl.href = top.dashboard_url || `/?printer=${encodeURIComponent(top.printer_id || '')}`;
+    banner.classList.remove('hidden', 'warn', 'bad');
+    banner.classList.add((pending || risk >= 80 || String(top.level || '').toLowerCase() === 'high') ? 'bad' : 'warn');
+  }
+
+  async function pollGlobalAiAlerts() {
+    if (page === 'setup' || cfg?.portal_ai?.global_alerts_enabled === false) return;
+    if (configuredPrinterIds().length <= 1) {
+      hideGlobalAiAlert();
+      return;
+    }
+    try {
+      const data = await api('/api/ai/global-alerts');
+      renderGlobalAiAlert(data);
+    } catch {
+      // Keep global alert polling silent; the normal dashboard/logs surface API issues.
+    }
+  }
+
+  function initGlobalAiAlerts() {
+    const dismiss = $('#globalAiAlertDismiss');
+    dismiss?.addEventListener('click', () => {
+      globalAiAlertState.dismissedSignature = globalAiAlertState.lastSignature || '';
+      hideGlobalAiAlert();
+    });
+    if (page === 'setup' || cfg?.portal_ai?.global_alerts_enabled === false || configuredPrinterIds().length <= 1) {
+      hideGlobalAiAlert();
+      return;
+    }
+    pollGlobalAiAlerts();
+    const seconds = Math.max(8, Math.min(60, Number(cfg?.portal_ai?.global_alert_poll_seconds || 15)));
+    globalAiAlertState.timer = setInterval(pollGlobalAiAlerts, seconds * 1000);
+  }
+
   async function api(path, options = {}) {
     const resp = await fetch(path, {
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -89,6 +225,12 @@
     const c = current === null || current === undefined ? '-' : Number(current).toFixed(1);
     const t = target === null || target === undefined || Number(target) <= 0 ? 'off' : Number(target).toFixed(1);
     return `${c} / ${t}`;
+  }
+
+  function tempReadoutOnly(current) {
+    if (current === null || current === undefined || current === '') return '-';
+    const n = Number(current);
+    return Number.isFinite(n) ? n.toFixed(1) : '-';
   }
 
   function niceStatusLabel(value, fallback = 'Unknown') {
@@ -772,7 +914,8 @@
 
   async function refreshDashboard() {
     try {
-      const st = await api('/api/status');
+      const id = activePrinterId();
+      const st = await api(id ? `/api/status/${encodeURIComponent(id)}` : '/api/status');
       const progress = Math.max(0, Math.min(100, Number(st.progress || 0)));
       const progressBar = $('#progressBar');
       const progressText = $('#progressText');
@@ -816,6 +959,7 @@
       renderGcodeThumbnail(st);
       setText('hotendTemp', tempLine(st.hotend_current, st.hotend_target));
       setText('bedTemp', tempLine(st.bed_current, st.bed_target));
+      setText('chamberTemp', tempReadoutOnly(st.chamber_current));
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
       setText('lastUpdate', new Date().toLocaleTimeString());
@@ -1315,7 +1459,7 @@
         if (requires && !confirm(btn.dataset.confirm || 'Are you sure?')) return;
         setButtonBusy(btn, true, btn.dataset.spinnerText || 'Sending...');
         try {
-          const body = {};
+          const body = { printer_id: activePrinterId() };
           if (action === 'set_speed_preset') {
             const select = btn.closest('.speed-action-row')?.querySelector('.speed-preset-select');
             body.params = { mode: Number(select?.value ?? 1) };
@@ -1439,6 +1583,24 @@
       toast('Printer saved.', 'success');
       renderSettings();
     }
+    return data;
+  }
+
+  async function saveDummyPrinter(options = {}) {
+    const name = $('#managerDummyName')?.value?.trim() || 'Dummy Printer';
+    const body = {
+      name,
+      dummy_mode: $('#managerDummyMode')?.value || 'printing',
+      dummy_progress: Number($('#managerDummyProgress')?.value || 42),
+      dummy_ai_state: $('#managerDummyAiState')?.value || 'looks_good',
+      enabled: true,
+      set_default: !!options.setDefault,
+    };
+    const data = await api('/api/printers/dummy', { method:'POST', body:JSON.stringify(body) });
+    cfg = data.config || cfg;
+    refreshConfigEditor();
+    renderSettings();
+    toast(`Dummy printer "${name}" added.`, 'success');
     return data;
   }
 
@@ -1767,32 +1929,51 @@
 
     const printerBox = $('#printerSettings');
     if (printerBox) {
-      const entries = Object.entries(cfg.printers || {});
-      printerBox.innerHTML = entries.length ? entries.map(([id,p]) => `
-        <div class="printer-config-card" data-printer-id="${esc(id)}">
+      const entries = Object.entries(visibleCfgPrinters());
+      printerBox.innerHTML = entries.length ? entries.map(([id,p]) => {
+        const isDummy = String(p.type || p.printer_type || '').toLowerCase() === 'dummy';
+        const mode = p.dummy_mode || 'printing';
+        const aiState = p.dummy_ai_state || 'looks_good';
+        const meta = isDummy ? `Dummy simulator • ${esc(mode.replaceAll('_', ' '))}` : `${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}`;
+        return `
+        <div class="printer-config-card ${isDummy ? 'dummy-printer-card' : ''}" data-printer-id="${esc(id)}" data-printer-type="${isDummy ? 'dummy' : 'cc2'}">
           <div class="printer-config-head">
-            <div><strong>${esc(p.name || id)}</strong><small>${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}</small></div>
-            <span class="pill">${cfg.app.default_printer === id ? 'Default' : esc(id)}</span>
+            <div><strong>${esc(p.name || id)}</strong><small>${meta}</small></div>
+            <span class="pill ${isDummy ? 'dummy-pill' : ''}">${isDummy ? 'Dummy' : (cfg.app.default_printer === id ? 'Default' : esc(id))}</span>
           </div>
           <div class="grid-2 gap printer-edit-grid">
             <label class="inline-field"><span class="field-label">Display name</span><input class="input printer-name" value="${esc(p.name || '')}" /></label>
-            <label class="inline-field"><span class="field-label">Host / IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
-            <label class="inline-field"><span class="field-label">Serial / SN</span><input class="input printer-serial" value="${esc(p.serial || '')}" /></label>
-            <label class="inline-field"><span class="field-label">PIN / access code</span><input class="input printer-pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
-            <label class="inline-field"><span class="field-label">MQTT port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.port || 1883)}" /></label>
+            ${isDummy ? `
+              <label class="inline-field"><span class="field-label">Scenario</span><select class="input printer-dummy-mode">
+                ${['printing','idle','paused','timelapse_generating','error','offline'].map(v => `<option value="${v}" ${mode === v ? 'selected' : ''}>${esc(v.replaceAll('_', ' '))}</option>`).join('')}
+              </select></label>
+              <label class="inline-field"><span class="field-label">Progress %</span><input class="input printer-dummy-progress" type="number" min="0" max="100" step="1" value="${esc(p.dummy_progress ?? 42)}" /></label>
+              <label class="inline-field"><span class="field-label">AI scenario</span><select class="input printer-dummy-ai">
+                ${[['looks_good','Looks good'],['watch','Watch'],['warning','Something looks fishy'],['failure','Possible failure detected'],['disabled','AI disabled']].map(([v,l]) => `<option value="${v}" ${aiState === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+              </select></label>
+              <label class="inline-field"><span class="field-label">Hotend current</span><input class="input printer-dummy-hotend-current" type="number" step="1" value="${esc(p.dummy_hotend_current ?? 215)}" /></label>
+              <label class="inline-field"><span class="field-label">Hotend target</span><input class="input printer-dummy-hotend-target" type="number" step="1" value="${esc(p.dummy_hotend_target ?? 220)}" /></label>
+              <label class="inline-field"><span class="field-label">Bed current</span><input class="input printer-dummy-bed-current" type="number" step="1" value="${esc(p.dummy_bed_current ?? 59)}" /></label>
+              <label class="inline-field"><span class="field-label">Bed target</span><input class="input printer-dummy-bed-target" type="number" step="1" value="${esc(p.dummy_bed_target ?? 60)}" /></label>
+              <label class="inline-field"><span class="field-label">Chamber</span><input class="input printer-dummy-chamber-current" type="number" step="1" value="${esc(p.dummy_chamber_current ?? 34)}" /></label>
+            ` : `
+              <label class="inline-field"><span class="field-label">Host / IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
+              <label class="inline-field"><span class="field-label">Serial / SN</span><input class="input printer-serial" value="${esc(p.serial || '')}" /></label>
+              <label class="inline-field"><span class="field-label">PIN / access code</span><input class="input printer-pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
+              <label class="inline-field"><span class="field-label">MQTT port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.port || 1883)}" /></label>
+            `}
           </div>
           <div class="printer-toggle-row">
             <label><input class="toggle printer-enabled" type="checkbox" ${p.enabled !== false ? 'checked' : ''}> enabled</label>
-            <label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label>
-            <label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>
+            ${isDummy ? '<span class="mini-note">Simulator only. No real commands are sent.</span>' : `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label><label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>`}
           </div>
           <div class="printer-action-row">
             <button class="button primary tiny printer-save"><span class="button-label">Save</span></button>
             <button class="button secondary tiny printer-default" ${cfg.app.default_printer === id ? 'disabled' : ''}><span class="button-label">Make Default</span></button>
             <button class="button danger tiny printer-delete"><span class="button-label">Remove</span></button>
           </div>
-        </div>
-      `).join('') : '<div class="result-item"><strong>No printers configured</strong><span>Scan or manually add one above.</span></div>';
+        </div>`;
+      }).join('') : '<div class="result-item"><strong>No printers configured</strong><span>Scan, manually add one, or add a dummy simulator above.</span></div>';
       bindPrinterManagerRows();
     }
   }
@@ -1800,8 +1981,27 @@
   function bindPrinterManagerRows() {
     $$('#printerSettings [data-printer-id]').forEach(row => {
       const id = row.dataset.printerId;
+      const isDummy = row.dataset.printerType === 'dummy';
       $('.printer-save', row)?.addEventListener('click', async e => {
-        const body = {
+        const body = isDummy ? {
+          name: $('.printer-name', row)?.value?.trim() || 'Dummy Printer',
+          type: 'dummy',
+          printer_type: 'dummy',
+          host: 'dummy.local',
+          serial: `DUMMY-${id}`,
+          port: 0,
+          enabled: !!$('.printer-enabled', row)?.checked,
+          allow_commands: false,
+          allow_dangerous_commands: false,
+          dummy_mode: $('.printer-dummy-mode', row)?.value || 'printing',
+          dummy_progress: Number($('.printer-dummy-progress', row)?.value || 42),
+          dummy_ai_state: $('.printer-dummy-ai', row)?.value || 'looks_good',
+          dummy_hotend_current: Number($('.printer-dummy-hotend-current', row)?.value || 215),
+          dummy_hotend_target: Number($('.printer-dummy-hotend-target', row)?.value || 220),
+          dummy_bed_current: Number($('.printer-dummy-bed-current', row)?.value || 59),
+          dummy_bed_target: Number($('.printer-dummy-bed-target', row)?.value || 60),
+          dummy_chamber_current: Number($('.printer-dummy-chamber-current', row)?.value || 34),
+        } : {
           name: $('.printer-name', row)?.value?.trim() || 'Centauri Carbon 2',
           host: $('.printer-host', row)?.value?.trim() || '',
           serial: $('.printer-serial', row)?.value?.trim() || '',
@@ -1812,7 +2012,7 @@
         };
         const pin = $('.printer-pin', row)?.value?.trim();
         if (pin) body.access_code = pin;
-        if (!body.host) return toast('Printer host/IP is required.', 'warn');
+        if (!isDummy && !body.host) return toast('Printer host/IP is required.', 'warn');
         setButtonBusy(e.currentTarget, true, 'Saving...');
         try {
           const data = await api(`/api/printers/${encodeURIComponent(id)}`, { method:'PATCH', body:JSON.stringify(body) });
@@ -2247,6 +2447,14 @@
       finally { setButtonBusy(managerManual, false); }
     });
 
+    const managerDummy = $('#managerDummyAddButton');
+    if (managerDummy) managerDummy.addEventListener('click', async () => {
+      setButtonBusy(managerDummy, true, 'Adding dummy...');
+      try { await saveDummyPrinter({ setDefault:false }); }
+      catch (err) { toast(err.message, 'error'); }
+      finally { setButtonBusy(managerDummy, false); }
+    });
+
     const saveTheme = $('#saveThemeButton');
     if (saveTheme) saveTheme.addEventListener('click', async () => {
       cfg.app.theme = $('#themeSelect').value;
@@ -2277,6 +2485,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.upload_menu_enabled = !!$('#uploadMenuEnabled')?.checked;
+      cfg.features.multi_view_menu_enabled = !!$('#multiViewMenuEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       applyExperimentalFeatureLocksToConfig(cfg);
@@ -2375,6 +2584,7 @@
       cfg.features.portal_menu_enabled = !!$('#portalMenuEnabled')?.checked;
       cfg.features.file_manager_enabled = !!$('#fileManagerEnabled')?.checked;
       cfg.features.upload_menu_enabled = !!$('#uploadMenuEnabled')?.checked;
+      cfg.features.multi_view_menu_enabled = !!$('#multiViewMenuEnabled')?.checked;
       cfg.features.filament_manager_enabled = !!$('#filamentManagerEnabled')?.checked;
       cfg.features.control_page_enabled = !!$('#controlPageEnabled')?.checked;
       applyExperimentalFeatureLocksToConfig(cfg);
@@ -2405,6 +2615,12 @@
       cfg.portal_ai.enabled = !!$('#portalAIEnabled')?.checked;
       cfg.portal_ai.background_monitor_enabled = !!$('#aiBackgroundMonitorEnabled')?.checked;
       cfg.portal_ai.check_interval_seconds = Number($('#aiCheckIntervalSeconds')?.value || 30);
+      cfg.portal_ai.multi_printer_scheduler_enabled = !!$('#aiMultiPrinterSchedulerEnabled')?.checked;
+      cfg.portal_ai.multi_printer_max_concurrent_vision_checks = Number($('#aiMultiPrinterMaxChecks')?.value || 1);
+      cfg.portal_ai.multi_printer_stagger_seconds = Number($('#aiMultiPrinterStaggerSeconds')?.value || 10);
+      cfg.portal_ai.multi_printer_prioritize_viewed_printer = !!$('#aiMultiPrinterPrioritizeViewed')?.checked;
+      cfg.portal_ai.global_alerts_enabled = !!$('#aiGlobalAlertsEnabled')?.checked;
+      cfg.portal_ai.global_alert_min_level = $('#aiGlobalAlertMinLevel')?.value || 'high';
       cfg.portal_ai.background_log_changes = !!$('#aiBackgroundLogChanges')?.checked;
       cfg.portal_ai.background_min_log_level = $('#aiBackgroundMinLogLevel')?.value || 'watch';
       cfg.portal_ai.telemetry_rules_enabled = !!$('#aiTelemetryRules')?.checked;
@@ -2605,6 +2821,12 @@
       cfg.portal_ai.enabled = !!$('#portalAIEnabled')?.checked;
       cfg.portal_ai.background_monitor_enabled = !!$('#aiBackgroundMonitorEnabled')?.checked;
       cfg.portal_ai.check_interval_seconds = Number($('#aiCheckIntervalSeconds')?.value || 30);
+      cfg.portal_ai.multi_printer_scheduler_enabled = !!$('#aiMultiPrinterSchedulerEnabled')?.checked;
+      cfg.portal_ai.multi_printer_max_concurrent_vision_checks = Number($('#aiMultiPrinterMaxChecks')?.value || 1);
+      cfg.portal_ai.multi_printer_stagger_seconds = Number($('#aiMultiPrinterStaggerSeconds')?.value || 10);
+      cfg.portal_ai.multi_printer_prioritize_viewed_printer = !!$('#aiMultiPrinterPrioritizeViewed')?.checked;
+      cfg.portal_ai.global_alerts_enabled = !!$('#aiGlobalAlertsEnabled')?.checked;
+      cfg.portal_ai.global_alert_min_level = $('#aiGlobalAlertMinLevel')?.value || 'high';
       cfg.portal_ai.background_log_changes = !!$('#aiBackgroundLogChanges')?.checked;
       cfg.portal_ai.background_min_log_level = $('#aiBackgroundMinLogLevel')?.value || 'watch';
       cfg.portal_ai.telemetry_rules_enabled = !!$('#aiTelemetryRules')?.checked;
@@ -2813,7 +3035,13 @@
   }
 
   function activePrinterId() {
-    return document.body.dataset.printerId || cfg?.app?.default_printer || Object.keys(cfg?.printers || {})[0] || '';
+    const bodyId = bodyPrinterId();
+    if (bodyId) return bodyId;
+    const fromUrl = urlPrinterId();
+    if (isConfiguredPrinter(fromUrl)) return fromUrl;
+    const remembered = rememberedSelectedPrinter();
+    if (remembered) return remembered;
+    return cfg?.app?.default_printer || configuredPrinterIds()[0] || '';
   }
 
   async function printerApi(path, options = {}) {
@@ -4711,7 +4939,7 @@
 
 
 
-  const aiTrainingState = { samples: [], selectedId: null, lastData: null };
+  const aiTrainingState = { samples: [], selectedId: null, lastData: null, importPreview: null };
 
   function syncAiTrainingPrinterOptions(printerIds = []) {
     const select = $('#aiTrainingPrinter');
@@ -4889,9 +5117,149 @@
     window.location.href = `/api/ai/learning/export?${params.toString()}`;
   }
 
+  function exportAiTrainingBackup() {
+    const params = new URLSearchParams();
+    params.set('include_frames', $('#aiTrainingBackupFrames')?.checked ? 'true' : 'false');
+    params.set('include_sqlite', $('#aiTrainingBackupSqlite')?.checked ? 'true' : 'false');
+    params.set('include_jsonl', $('#aiTrainingBackupJsonl')?.checked ? 'true' : 'false');
+    window.location.href = `/api/ai/learning/backup/export?${params.toString()}`;
+  }
+
+  function aiTrainingImportFile() {
+    const input = $('#aiTrainingImportFile');
+    return input && input.files && input.files.length ? input.files[0] : null;
+  }
+
+  function buildAiTrainingImportForm({ previewOnly = true, confirmOverwrite = false } = {}) {
+    const file = aiTrainingImportFile();
+    if (!file) throw new Error('Choose a backup ZIP first.');
+    const fd = new FormData();
+    fd.append('file', file, file.name || 'cc2-dash-ai-learning-backup.zip');
+    fd.append('mode', $('#aiTrainingImportMode')?.value || 'merge');
+    fd.append('preview_only', previewOnly ? 'true' : 'false');
+    fd.append('confirm_overwrite', confirmOverwrite ? 'true' : 'false');
+    fd.append('rebuild_profiles', 'true');
+    return fd;
+  }
+
+  async function postAiTrainingImportForm(formData) {
+    const resp = await fetch('/api/ai/learning/backup/import', { method: 'POST', body: formData });
+    const text = await resp.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!resp.ok) {
+      const msg = data.detail || data.error || data.message || `HTTP ${resp.status}`;
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    return data;
+  }
+
+  function renderAiTrainingImportPreview(data, applied = false) {
+    const box = $('#aiTrainingImportPreview');
+    const apply = $('#aiTrainingImportApplyButton');
+    if (!box) return;
+    const backup = data?.backup || data?.preview || data || {};
+    if (!backup.ok && backup.error) {
+      box.className = 'ai-training-import-preview bad';
+      box.innerHTML = `<strong>Import preview failed</strong><p>${esc(backup.error)}</p>`;
+      if (apply) apply.disabled = true;
+      return;
+    }
+    const mode = data?.mode || $('#aiTrainingImportMode')?.value || 'merge';
+    const warnings = Array.isArray(backup.warnings) ? backup.warnings : [];
+    const preBackup = data?.preimport_backup;
+    const sampleLine = `${backup.sample_count ?? 0} samples · ${backup.profile_count ?? 0} profiles · ${backup.event_count ?? 0} events · ${backup.frame_file_count ?? 0} frame files`;
+    const capability = [backup.has_sqlite ? 'SQLite DB' : '', backup.has_jsonl_audit ? 'JSONL audit' : '', backup.has_sqlite ? 'replace-ready' : (backup.supports_merge ? 'merge-only' : '')].filter(Boolean).join(' · ');
+    box.className = `ai-training-import-preview ${applied ? 'good' : (mode === 'replace' ? 'warn' : '')}`.trim();
+    box.innerHTML = `
+      <div class="ai-training-import-head">
+        <strong>${applied ? 'Import complete' : 'Backup preview'}</strong>
+        <span>${esc(String(backup.schema || 'unknown schema'))}</span>
+      </div>
+      <div class="ai-training-import-stats">
+        <span>${esc(sampleLine)}</span>
+        <span>${esc(capability || 'metadata only')}</span>
+        <span>${esc(bytesHuman(backup.zip_bytes || 0))}</span>
+      </div>
+      ${mode === 'replace' && !applied ? '<p class="ai-training-import-warning"><b>Replace mode:</b> this will overwrite the current AI learning DB, audit log, and feedback frame library. A local pre-import backup will be created first.</p>' : ''}
+      ${applied && data?.mode ? `<p><b>Mode:</b> ${esc(data.mode)}${preBackup?.path ? ` · pre-import backup saved at <code>${esc(preBackup.path)}</code>` : ''}</p>` : ''}
+      ${data?.samples ? `<p><b>Samples:</b> ${esc(data.samples.inserted || 0)} inserted, ${esc(data.samples.duplicates || 0)} duplicates skipped, ${esc(data.samples.errors || 0)} errors.</p>` : ''}
+      ${data?.frames ? `<p><b>Frames:</b> ${esc(data.frames.restored || 0)} restored, ${esc(data.frames.skipped || 0)} skipped.</p>` : ''}
+      ${warnings.length && !applied ? `<ul>${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    `;
+    if (apply) apply.disabled = applied ? true : !(backup.supports_replace || backup.supports_merge || backup.has_sqlite);
+  }
+
+  async function previewAiTrainingImport(button = null) {
+    setButtonBusy(button, true, 'Previewing...');
+    try {
+      const data = await postAiTrainingImportForm(buildAiTrainingImportForm({ previewOnly: true }));
+      aiTrainingState.importPreview = data;
+      renderAiTrainingImportPreview(data, false);
+      toast('Backup preview loaded. Review before importing.', 'success');
+    } catch (err) {
+      aiTrainingState.importPreview = null;
+      renderAiTrainingImportPreview({ backup: { ok: false, error: err.message } }, false);
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  async function applyAiTrainingImport(button = null) {
+    const mode = $('#aiTrainingImportMode')?.value || 'merge';
+    if (!aiTrainingImportFile()) return toast('Choose a backup ZIP first.', 'warn');
+    if (!aiTrainingState.importPreview) return toast('Preview the backup before importing.', 'warn');
+    let confirmOverwrite = false;
+    if (mode === 'replace') {
+      const ok = confirm('Replace the current AI learning library? This overwrites the SQLite learner, JSONL audit log, and feedback frame library. cc2-dash will create a local pre-import backup first.');
+      if (!ok) return;
+      confirmOverwrite = true;
+    } else if (!confirm('Merge this backup into the current AI learning library? Existing matching samples should be skipped.')) {
+      return;
+    }
+    setButtonBusy(button, true, 'Importing...');
+    try {
+      const data = await postAiTrainingImportForm(buildAiTrainingImportForm({ previewOnly: false, confirmOverwrite }));
+      aiTrainingState.importPreview = null;
+      renderAiTrainingImportPreview(data, true);
+      toast('AI learning backup imported.', 'success', 7000);
+      await refreshAiTrainingSamples();
+    } catch (err) {
+      renderAiTrainingImportPreview({ backup: { ok: false, error: err.message } }, false);
+      toast(err.message, 'error', 9000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
   function initAiTraining() {
     $('#aiTrainingRefreshButton')?.addEventListener('click', e => refreshAiTrainingSamples(e.currentTarget));
     $('#aiTrainingExportButton')?.addEventListener('click', exportAiTrainingDataset);
+    $('#aiTrainingBackupExportButton')?.addEventListener('click', exportAiTrainingBackup);
+    $('#aiTrainingBackupExportButtonInline')?.addEventListener('click', exportAiTrainingBackup);
+    $('#aiTrainingImportPreviewButton')?.addEventListener('click', e => previewAiTrainingImport(e.currentTarget));
+    $('#aiTrainingImportApplyButton')?.addEventListener('click', e => applyAiTrainingImport(e.currentTarget));
+    $('#aiTrainingImportFile')?.addEventListener('change', () => {
+      aiTrainingState.importPreview = null;
+      const apply = $('#aiTrainingImportApplyButton');
+      if (apply) apply.disabled = true;
+      const box = $('#aiTrainingImportPreview');
+      if (box) {
+        box.className = 'ai-training-import-preview empty';
+        box.textContent = 'Preview the selected backup before importing.';
+      }
+    });
+    $('#aiTrainingImportMode')?.addEventListener('change', () => {
+      aiTrainingState.importPreview = null;
+      const apply = $('#aiTrainingImportApplyButton');
+      if (apply) apply.disabled = true;
+      const box = $('#aiTrainingImportPreview');
+      if (box) {
+        box.className = 'ai-training-import-preview empty';
+        box.textContent = 'Preview again after changing import mode.';
+      }
+    });
     $('#aiTrainingSaveReviewButton')?.addEventListener('click', e => saveAiTrainingReview(e.currentTarget));
     $('#aiTrainingDeleteSampleButton')?.addEventListener('click', e => deleteAiTrainingSample(e.currentTarget));
     ['aiTrainingPrinter','aiTrainingOutcome','aiTrainingLabel','aiTrainingLimit'].forEach(id => $('#' + id)?.addEventListener('change', () => refreshAiTrainingSamples().catch(()=>{})));
@@ -4908,6 +5276,7 @@
     temperatures: {
       extruder: { current: null, target: null, max: 350 },
       bed: { current: null, target: null, max: 110 },
+      chamber: { current: null, target: null, max: 100 },
     },
     allowCommands: false,
     allowDangerous: false,
@@ -5071,7 +5440,7 @@
     if (!controlState.temperatures[key]) controlState.temperatures[key] = {};
     const current = tempData.current ?? controlState.temperatures[key].current ?? null;
     const target = tempData.target ?? controlState.temperatures[key].target ?? null;
-    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : 350));
+    const max = Number(tempData.max ?? controlState.temperatures[key].max ?? (key === 'bed' ? 110 : (key === 'chamber' ? 100 : 350)));
     controlState.temperatures[key] = { current, target, max };
 
     const input = $(`[data-control-temp-input="${key}"]`);
@@ -5084,9 +5453,9 @@
       if (!quiet && input !== document.activeElement) input.value = controlTempInputDisplayValue(current, target, max);
     }
 
-    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout' };
+    const readoutIds = { extruder: 'controlTempExtruderReadout', bed: 'controlTempBedReadout', chamber: 'controlTempChamberReadout' };
     const readout = readoutIds[key] ? $(`#${readoutIds[key]}`) : null;
-    if (readout) readout.textContent = `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
+    if (readout) readout.textContent = key === 'chamber' ? controlFormatTemp(current, '') : `${controlFormatTemp(current, '')} / ${controlFormatTemp(target)}`;
 
     const card = $(`[data-control-temp-card="${key}"]`);
     if (card) card.dataset.heating = Number(target || 0) > 0 ? 'true' : 'false';
@@ -5135,6 +5504,7 @@
     setControlFanUi('case', data.fans?.case ?? 0);
     setControlTempUi('extruder', data.temperatures?.extruder || {});
     setControlTempUi('bed', data.temperatures?.bed || {});
+    setControlTempUi('chamber', data.temperatures?.chamber || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
     updateControlCommandLocks();
@@ -5297,6 +5667,113 @@
   }
 
 
+  function multiViewStatusTone(st) {
+    const text = `${st?.status_text || ''} ${st?.state || ''}`.toLowerCase();
+    if (st?.reachable === false || /offline|unavailable|disabled|disconnect/.test(text)) return 'bad';
+    if (/error|fail|cancel/.test(text)) return 'bad';
+    if (/pause|paused/.test(text)) return 'warn';
+    if (st?.active_print || /print|printing|running|generating/.test(text)) return 'printing';
+    return 'idle';
+  }
+
+  function multiViewStatusLabel(st) {
+    return st?.status_text || st?.state || (st?.reachable === false ? 'Offline' : 'Unknown');
+  }
+
+  function multiViewTempSummary(st) {
+    const hotend = tempLine(st?.hotend_current, st?.hotend_target);
+    const bed = tempLine(st?.bed_current, st?.bed_target);
+    const chamber = tempReadoutOnly(st?.chamber_current);
+    return `Hotend ${hotend} · Bed ${bed} · Chamber ${chamber}`;
+  }
+
+  function renderMultiView(data) {
+    const grid = $('#multiViewGrid');
+    const summary = $('#multiViewSummary');
+    const state = $('#multiViewRefreshState');
+    if (!grid) return;
+    const printers = data?.printers || [];
+    multiViewState.lastLoadedAt = new Date();
+    if (summary) summary.textContent = printers.length ? `${printers.length} configured printer${printers.length === 1 ? '' : 's'} shown.` : 'No visible printers are configured.';
+    if (state) state.textContent = `Updated ${multiViewState.lastLoadedAt.toLocaleTimeString()}`;
+    if (!printers.length) {
+      grid.innerHTML = '<div class="multi-view-empty"><strong>No printers to show</strong><span>Add a printer in Settings → Printer Manager.</span></div>';
+      return;
+    }
+    const now = Date.now();
+    grid.innerHTML = printers.map(st => {
+      const pid = st.printer_id || st.id || '';
+      const progress = Math.max(0, Math.min(100, Number(st.progress || 0)));
+      const tone = multiViewStatusTone(st);
+      const ai = st.portal_ai || { summary: st.reachable ? 'Standing By' : 'Offline', level: st.reachable ? 'low' : 'watch', risk: 0 };
+      const aiState = summarizeAIHeaderStatus(ai, ai.vision || ai.vision_ai || st.vision_ai || {});
+      const snapshot = `${st.camera_snapshot_url || `/api/printers/${encodeURIComponent(pid)}/camera/snapshot.jpg`}${String(st.camera_snapshot_url || '').includes('?') ? '&' : '?'}v=${now}`;
+      const dashUrl = st.dashboard_url || `/?printer=${encodeURIComponent(pid)}`;
+      const controlUrl = st.control_url || `/control?printer=${encodeURIComponent(pid)}`;
+      const filesUrl = st.files_url || `/files?printer=${encodeURIComponent(pid)}`;
+      const file = st.file && st.file !== '-' ? st.file : 'No active file';
+      const statusLabel = multiViewStatusLabel(st);
+      return `
+        <article class="multi-printer-card ${tone} ${st.dummy ? 'dummy' : ''}" data-open-url="${esc(dashUrl)}" tabindex="0" role="button" aria-label="Open ${esc(st.name || pid)} dashboard">
+          <div class="multi-printer-shot-wrap">
+            <img class="multi-printer-shot" src="${esc(snapshot)}" alt="${esc(st.name || pid)} snapshot" loading="lazy" decoding="async" onerror="this.classList.add('broken')" />
+            <span class="multi-printer-status-pill ${tone}">${esc(statusLabel)}</span>
+            ${st.dummy ? '<span class="multi-printer-dummy-pill">Dummy</span>' : ''}
+          </div>
+          <div class="multi-printer-body">
+            <div class="multi-printer-title-row">
+              <div>
+                <h3>${esc(st.name || pid || 'Printer')}</h3>
+                <p>${esc(st.host || pid || '')}</p>
+              </div>
+              <span class="ai-mini-badge ${aiState.tone}">${esc(aiState.label)}</span>
+            </div>
+            <div class="multi-printer-file" title="${esc(file)}">${esc(file)}</div>
+            <div class="multi-printer-progress-row">
+              <div class="mini-progress"><span style="width:${progress.toFixed(1)}%"></span></div>
+              <strong>${progress.toFixed(1)}%</strong>
+            </div>
+            <div class="multi-printer-temps">${esc(multiViewTempSummary(st))}</div>
+            <div class="multi-printer-actions">
+              <a class="button primary tiny" href="${esc(dashUrl)}">Open</a>
+              <a class="button secondary tiny" href="${esc(controlUrl)}">Control</a>
+              <a class="button secondary tiny" href="${esc(filesUrl)}">Files</a>
+            </div>
+          </div>
+        </article>`;
+    }).join('');
+    $$('.multi-printer-card').forEach(card => {
+      const open = () => { const url = card.dataset.openUrl; if (url) window.location.href = url; };
+      card.addEventListener('click', e => { if (e.target.closest('a,button,input,select,textarea')) return; open(); });
+      card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+  }
+
+  async function loadMultiView(button = null) {
+    setButtonBusy(button, true, 'Refreshing...');
+    const state = $('#multiViewRefreshState');
+    if (state) state.textContent = 'Refreshing...';
+    try {
+      const data = await api('/api/multi-view/status');
+      renderMultiView(data);
+    } catch (err) {
+      const grid = $('#multiViewGrid');
+      if (grid) grid.innerHTML = `<div class="multi-view-empty bad"><strong>Multi-View refresh failed</strong><span>${esc(err.message)}</span></div>`;
+      if (state) state.textContent = 'Refresh failed';
+      toast(err.message, 'error', 8000);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  }
+
+  function initMultiView() {
+    $('#multiViewRefreshButton')?.addEventListener('click', e => loadMultiView(e.currentTarget));
+    loadMultiView();
+    const seconds = Math.max(3, Number(cfg?.multi_view?.refresh_interval_seconds || cfg?.dashboard?.refresh_interval_seconds || 5));
+    multiViewState.timer = setInterval(() => loadMultiView(), seconds * 1000);
+  }
+
+
   function initUpload() {
     const form = $('#stageUploadForm');
     form?.addEventListener('submit', stageUploadGcode);
@@ -5366,12 +5843,16 @@
     loadFilaments(false);
   }
 
+  if (initGlobalPrinterSwitcher()) return;
+  initGlobalAiAlerts();
+
   if (page === 'dashboard') initDashboard();
   if (page === 'kiosk') initKiosk();
   if (page === 'setup') initSetup();
   if (page === 'settings') initSettings();
   if (page === 'ai-training') initAiTraining();
   if (page === 'logs') initLogs();
+  if (page === 'multi-view') initMultiView();
   if (page === 'upload') initUpload();
   if (page === 'files') initFiles();
   if (page === 'filaments') initFilaments();
