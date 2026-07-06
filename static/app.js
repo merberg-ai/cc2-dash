@@ -23,6 +23,11 @@
     return ['dummy', 'sim', 'simulator', 'demo'].includes(ptype);
   }
 
+  function printerIsKlipper(data) {
+    const ptype = String(data?.type || data?.printer_type || '').toLowerCase();
+    return ['klipper', 'moonraker'].includes(ptype);
+  }
+
   function visibleCfgPrinters() {
     const printers = cfg?.printers || {};
     if (dummyPrintersEnabled) return printers;
@@ -318,6 +323,19 @@
       icon.classList.toggle('on', on);
       icon.classList.toggle('off', !on);
     }
+  }
+
+  function updateDashboardActionsForPrinter(st = {}) {
+    const isKlipper = !!st.klipper || String(st.printer_type || '').toLowerCase() === 'klipper';
+    const cc2Only = new Set(['set_speed_preset']);
+    $$('.action-button').forEach(btn => {
+      const action = btn.dataset.action || '';
+      const disabled = isKlipper && cc2Only.has(action);
+      btn.disabled = disabled;
+      btn.title = disabled ? 'This quick action is Carbon 2-only in the current Klipper phase.' : '';
+      const select = btn.closest('.speed-action-row')?.querySelector('.speed-preset-select');
+      if (select) select.disabled = disabled;
+    });
   }
 
   async function setDashboardLightFromToggle(toggle) {
@@ -963,13 +981,23 @@
       setText('fileName', st.file || '-');
       setText('printerHost', st.host || '-');
       setText('lastUpdate', new Date().toLocaleTimeString());
-      if (st.portal_url) setText('portalState', st.portal_url);
+      const portalDisplayUrl = st.device_portal_url || st.direct_portal_url || st.portal_url || '';
+      if (portalDisplayUrl) setText('portalState', portalDisplayUrl);
+      const portalStateLabel = $('#portalStateLabel');
+      if (portalStateLabel) portalStateLabel.textContent = st.portal_nav_label || (st.klipper ? 'Device' : 'Portal');
       if (st.camera_url) setText('cameraState', st.camera_url);
       renderCameraRelay(st.camera_relay || st.cameraRelay || {});
-      updateDashboardLightToggle(!!st.light_on, !st.reachable);
+      updateDashboardLightToggle(!!st.light_on, !st.reachable || !!st.klipper);
+      updateDashboardActionsForPrinter(st);
 
       const portalButton = $('#portalButton');
-      if (portalButton && st.portal_url) portalButton.href = st.portal_url;
+      if (portalButton) {
+        const href = st.device_portal_url || st.direct_portal_url || st.portal_url;
+        if (href) portalButton.href = href;
+        const label = $('#portalButtonLabel', portalButton) || $('#portalButtonLabel');
+        if (label) label.textContent = st.device_portal_label || (st.klipper ? 'Open Device Portal' : 'Go To Elegoo Web Portal');
+        portalButton.title = st.klipper ? 'Open the configured Klipper/Moonraker device page in a new tab' : 'Open the Elegoo web portal in a new tab';
+      }
 
       const statusEl = $('#statusText');
       if (statusEl) {
@@ -1604,6 +1632,44 @@
     return data;
   }
 
+
+  function collectKlipperManagerBody() {
+    const host = $('#managerKlipperHost')?.value?.trim() || '';
+    const port = Number($('#managerKlipperPort')?.value || 7125);
+    return {
+      name: $('#managerKlipperName')?.value?.trim() || 'Klipper Printer',
+      host,
+      moonraker_port: port,
+      moonraker_https: false,
+      api_key: $('#managerKlipperApiKey')?.value?.trim() || '',
+      camera_url: $('#managerKlipperCameraUrl')?.value?.trim() || '',
+      snapshot_url: $('#managerKlipperSnapshotUrl')?.value?.trim() || '',
+      enabled: true,
+      allow_commands: !!$('#managerKlipperCommands')?.checked,
+      allow_pause: !!$('#managerKlipperPause')?.checked,
+      allow_resume: !!$('#managerKlipperResume')?.checked,
+      allow_cancel: !!$('#managerKlipperCancel')?.checked,
+      set_default: false,
+    };
+  }
+
+  async function saveKlipperPrinter() {
+    const body = collectKlipperManagerBody();
+    if (!body.host) throw new Error('Moonraker host/IP is required.');
+    const data = await api('/api/printers/klipper', { method:'POST', body:JSON.stringify(body) });
+    cfg = data.config || cfg;
+    refreshConfigEditor();
+    renderSettings();
+    toast(`Klipper printer "${body.name}" added.`, 'success');
+    return data;
+  }
+
+  async function testKlipperPrinter() {
+    const body = collectKlipperManagerBody();
+    if (!body.host) throw new Error('Moonraker host/IP is required.');
+    return await api('/api/printers/klipper/test', { method:'POST', body:JSON.stringify(body) });
+  }
+
   function renderScanResults(candidates, targetId = 'scanResults', options = {}) {
     const box = $('#' + targetId);
     if (!box) return;
@@ -1931,15 +1997,17 @@
     if (printerBox) {
       const entries = Object.entries(visibleCfgPrinters());
       printerBox.innerHTML = entries.length ? entries.map(([id,p]) => {
-        const isDummy = String(p.type || p.printer_type || '').toLowerCase() === 'dummy';
+        const isDummy = printerIsDummy(p);
+        const isKlipper = printerIsKlipper(p);
         const mode = p.dummy_mode || 'printing';
         const aiState = p.dummy_ai_state || 'looks_good';
-        const meta = isDummy ? `Dummy simulator • ${esc(mode.replaceAll('_', ' '))}` : `${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}`;
+        const typeLabel = isDummy ? 'Dummy' : (isKlipper ? 'Klipper' : (cfg.app.default_printer === id ? 'Default' : esc(id)));
+        const meta = isDummy ? `Dummy simulator • ${esc(mode.replaceAll('_', ' '))}` : (isKlipper ? `${esc(p.moonraker_url || `${p.host || ''}:${p.moonraker_port || p.port || 7125}`)} • Moonraker` : `${esc(p.host || '')} • SN: ${esc(p.serial || 'unknown')}`);
         return `
-        <div class="printer-config-card ${isDummy ? 'dummy-printer-card' : ''}" data-printer-id="${esc(id)}" data-printer-type="${isDummy ? 'dummy' : 'cc2'}">
+        <div class="printer-config-card ${isDummy ? 'dummy-printer-card' : (isKlipper ? 'klipper-printer-card' : '')}" data-printer-id="${esc(id)}" data-printer-type="${isDummy ? 'dummy' : (isKlipper ? 'klipper' : 'cc2')}">
           <div class="printer-config-head">
             <div><strong>${esc(p.name || id)}</strong><small>${meta}</small></div>
-            <span class="pill ${isDummy ? 'dummy-pill' : ''}">${isDummy ? 'Dummy' : (cfg.app.default_printer === id ? 'Default' : esc(id))}</span>
+            <span class="pill ${isDummy ? 'dummy-pill' : (isKlipper ? 'klipper-pill' : '')}">${typeLabel}</span>
           </div>
           <div class="grid-2 gap printer-edit-grid">
             <label class="inline-field"><span class="field-label">Display name</span><input class="input printer-name" value="${esc(p.name || '')}" /></label>
@@ -1956,16 +2024,22 @@
               <label class="inline-field"><span class="field-label">Bed current</span><input class="input printer-dummy-bed-current" type="number" step="1" value="${esc(p.dummy_bed_current ?? 59)}" /></label>
               <label class="inline-field"><span class="field-label">Bed target</span><input class="input printer-dummy-bed-target" type="number" step="1" value="${esc(p.dummy_bed_target ?? 60)}" /></label>
               <label class="inline-field"><span class="field-label">Chamber</span><input class="input printer-dummy-chamber-current" type="number" step="1" value="${esc(p.dummy_chamber_current ?? 34)}" /></label>
+            ` : (isKlipper ? `
+              <label class="inline-field"><span class="field-label">Moonraker host/IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
+              <label class="inline-field"><span class="field-label">Moonraker port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.moonraker_port || p.port || 7125)}" /></label>
+              <label class="inline-field"><span class="field-label">API key/token</span><input class="input printer-api-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
+              <label class="inline-field"><span class="field-label">Camera stream URL</span><input class="input printer-camera-url" value="${esc(p.camera_url || '')}" /></label>
+              <label class="inline-field"><span class="field-label">Snapshot URL</span><input class="input printer-snapshot-url" value="${esc(p.snapshot_url || '')}" /></label>
             ` : `
               <label class="inline-field"><span class="field-label">Host / IP</span><input class="input printer-host" value="${esc(p.host || '')}" /></label>
               <label class="inline-field"><span class="field-label">Serial / SN</span><input class="input printer-serial" value="${esc(p.serial || '')}" /></label>
               <label class="inline-field"><span class="field-label">PIN / access code</span><input class="input printer-pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="leave blank to keep saved" /></label>
               <label class="inline-field"><span class="field-label">MQTT port</span><input class="input printer-port" type="number" min="1" max="65535" value="${esc(p.port || 1883)}" /></label>
-            `}
+            `)}
           </div>
           <div class="printer-toggle-row">
             <label><input class="toggle printer-enabled" type="checkbox" ${p.enabled !== false ? 'checked' : ''}> enabled</label>
-            ${isDummy ? '<span class="mini-note">Simulator only. No real commands are sent.</span>' : `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label><label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>`}
+            ${isDummy ? '<span class="mini-note">Simulator only. No real commands are sent.</span>' : (isKlipper ? `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands ? 'checked' : ''}> commands</label><label><input class="toggle printer-pause" type="checkbox" ${p.allow_pause !== false ? 'checked' : ''}> pause</label><label><input class="toggle printer-resume" type="checkbox" ${p.allow_resume !== false ? 'checked' : ''}> resume</label><label><input class="toggle printer-cancel" type="checkbox" ${p.allow_cancel ? 'checked' : ''}> cancel</label>` : `<label><input class="toggle printer-commands" type="checkbox" ${p.allow_commands !== false ? 'checked' : ''}> commands</label><label><input class="toggle printer-danger" type="checkbox" ${p.allow_dangerous_commands ? 'checked' : ''}> dangerous</label>`)}
           </div>
           <div class="printer-action-row">
             <button class="button primary tiny printer-save"><span class="button-label">Save</span></button>
@@ -1982,6 +2056,7 @@
     $$('#printerSettings [data-printer-id]').forEach(row => {
       const id = row.dataset.printerId;
       const isDummy = row.dataset.printerType === 'dummy';
+      const isKlipper = row.dataset.printerType === 'klipper';
       $('.printer-save', row)?.addEventListener('click', async e => {
         const body = isDummy ? {
           name: $('.printer-name', row)?.value?.trim() || 'Dummy Printer',
@@ -2001,6 +2076,20 @@
           dummy_bed_current: Number($('.printer-dummy-bed-current', row)?.value || 59),
           dummy_bed_target: Number($('.printer-dummy-bed-target', row)?.value || 60),
           dummy_chamber_current: Number($('.printer-dummy-chamber-current', row)?.value || 34),
+        } : (isKlipper ? {
+          name: $('.printer-name', row)?.value?.trim() || 'Klipper Printer',
+          type: 'klipper',
+          printer_type: 'klipper',
+          host: $('.printer-host', row)?.value?.trim() || '',
+          moonraker_port: Number($('.printer-port', row)?.value || 7125),
+          port: Number($('.printer-port', row)?.value || 7125),
+          enabled: !!$('.printer-enabled', row)?.checked,
+          allow_commands: !!$('.printer-commands', row)?.checked,
+          allow_pause: !!$('.printer-pause', row)?.checked,
+          allow_resume: !!$('.printer-resume', row)?.checked,
+          allow_cancel: !!$('.printer-cancel', row)?.checked,
+          camera_url: $('.printer-camera-url', row)?.value?.trim() || '',
+          snapshot_url: $('.printer-snapshot-url', row)?.value?.trim() || '',
         } : {
           name: $('.printer-name', row)?.value?.trim() || 'Centauri Carbon 2',
           host: $('.printer-host', row)?.value?.trim() || '',
@@ -2009,9 +2098,11 @@
           enabled: !!$('.printer-enabled', row)?.checked,
           allow_commands: !!$('.printer-commands', row)?.checked,
           allow_dangerous_commands: !!$('.printer-danger', row)?.checked,
-        };
+        });
         const pin = $('.printer-pin', row)?.value?.trim();
+        const apiKey = $('.printer-api-key', row)?.value?.trim();
         if (pin) body.access_code = pin;
+        if (apiKey) body.api_key = apiKey;
         if (!isDummy && !body.host) return toast('Printer host/IP is required.', 'warn');
         setButtonBusy(e.currentTarget, true, 'Saving...');
         try {
@@ -2453,6 +2544,29 @@
       try { await saveDummyPrinter({ setDefault:false }); }
       catch (err) { toast(err.message, 'error'); }
       finally { setButtonBusy(managerDummy, false); }
+    });
+
+    const managerKlipperTest = $('#managerKlipperTestButton');
+    if (managerKlipperTest) managerKlipperTest.addEventListener('click', async () => {
+      setButtonBusy(managerKlipperTest, true, 'Testing...');
+      setInlineStatus('managerKlipperStatus', 'Testing Moonraker connection...', '');
+      try {
+        const data = await testKlipperPrinter();
+        if (data.ok) {
+          setInlineStatus('managerKlipperStatus', `Moonraker OK${data.state ? ` · ${data.state}` : ''}${data.webcam_found ? ' · webcam found' : ' · no webcam found'}`, data.webcam_found ? 'good' : 'warn');
+        } else {
+          setInlineStatus('managerKlipperStatus', data.error || 'Moonraker test failed.', 'bad');
+        }
+      } catch (err) { setInlineStatus('managerKlipperStatus', err.message, 'bad'); }
+      finally { setButtonBusy(managerKlipperTest, false); }
+    });
+
+    const managerKlipperAdd = $('#managerKlipperAddButton');
+    if (managerKlipperAdd) managerKlipperAdd.addEventListener('click', async () => {
+      setButtonBusy(managerKlipperAdd, true, 'Adding Klipper...');
+      try { await saveKlipperPrinter(); $('#managerKlipperHost').value = ''; setInlineStatus('managerKlipperStatus', 'Klipper printer saved.', 'good'); }
+      catch (err) { toast(err.message, 'error'); setInlineStatus('managerKlipperStatus', err.message, 'bad'); }
+      finally { setButtonBusy(managerKlipperAdd, false); }
     });
 
     const saveTheme = $('#saveThemeButton');
@@ -5280,6 +5394,11 @@
     },
     allowCommands: false,
     allowDangerous: false,
+    allowPause: false,
+    allowResume: false,
+    allowCancel: false,
+    printerType: 'cc2',
+    supports: { job: true, motion: true, home: true, fan: true, temperature: true, speed: true, light: true },
     activePrint: false,
     controlsLocked: false,
     controlsLockedReason: '',
@@ -5373,21 +5492,44 @@
   }
 
   function updateControlCommandLocks() {
+    const isKlipper = controlState.printerType === 'klipper';
     const locked = !!(controlState.activePrint || controlState.controlsLocked);
-    const canCommand = !!controlState.allowCommands && !locked;
-    const canMove = !!controlState.allowDangerous && !locked;
-    $$('[data-control-step], [data-control-speed], [data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input], [data-control-temp-input], [data-control-temp-set], [data-control-temp-preset], #controlLightToggle').forEach(el => {
-      el.disabled = !canCommand;
-    });
-    $$('[data-control-move], [data-control-home]').forEach(el => {
-      el.disabled = !canMove;
+    const baseCommand = !!controlState.allowCommands && !controlState.controlsLocked;
+    const canCommand = baseCommand && !locked;
+    const canMove = !!controlState.allowDangerous && !locked && !!controlState.supports.motion;
+    $$('[data-control-step]').forEach(el => { el.disabled = !controlState.supports.motion; });
+    $$('[data-control-speed]').forEach(el => { el.disabled = !canCommand || !controlState.supports.speed; });
+    $$('[data-control-fan-bump], [data-control-fan-toggle], [data-control-fan-input]').forEach(el => { el.disabled = !canCommand || !controlState.supports.fan; });
+    $$('[data-control-temp-input], [data-control-temp-set], [data-control-temp-preset]').forEach(el => { el.disabled = !canCommand || !controlState.supports.temperature; });
+    const light = $('#controlLightToggle');
+    if (light) light.disabled = !canCommand || !controlState.supports.light;
+    $$('[data-control-move], [data-control-home]').forEach(el => { el.disabled = !canMove; });
+    $$('[data-control-job]').forEach(btn => {
+      const action = String(btn.dataset.controlJob || '').toLowerCase();
+      let allowed = !!controlState.allowCommands && !controlState.controlsLocked;
+      if (action === 'pause') allowed = allowed && !!controlState.allowPause;
+      if (action === 'resume') allowed = allowed && !!controlState.allowResume;
+      if (action === 'cancel') allowed = allowed && !!controlState.allowCancel;
+      btn.disabled = !allowed;
     });
     const panel = $('#stockControlPanel');
-    if (panel) panel.dataset.printLocked = locked ? 'true' : 'false';
+    if (panel) {
+      panel.dataset.printLocked = locked ? 'true' : 'false';
+      panel.dataset.unsupported = isKlipper ? 'true' : 'false';
+    }
+    const klipperPanel = $('#klipperJobPanel');
+    if (klipperPanel) klipperPanel.classList.toggle('hidden', !isKlipper);
+    const foot = $('#controlSafetyFootnote');
+    if (foot) foot.classList.toggle('hidden', isKlipper);
+    const intro = $('#controlIntroText');
+    if (intro) intro.textContent = isKlipper
+      ? 'Klipper/Moonraker basic control is limited to print-job actions for now. Carbon 2 motion/fan/light/heater controls stay disabled for this printer type.'
+      : 'Uses stock ELEGOO control payloads for Carbon 2 printers. Fan/speed/light need commands enabled; movement and homing also need dangerous commands enabled.';
     const note = $('#controlPrintLockNote');
     if (note) {
-      note.classList.toggle('hidden', !locked);
-      if (locked) note.textContent = controlState.controlsLockedReason || 'Control page commands are locked until the printer is online and idle.';
+      const show = isKlipper ? !!controlState.controlsLocked : locked;
+      note.classList.toggle('hidden', !show);
+      if (show) note.textContent = controlState.controlsLockedReason || 'Control page commands are locked until the printer is online and idle.';
     }
   }
 
@@ -5479,6 +5621,19 @@
     if (!data) return;
     controlState.allowCommands = !!data.allow_commands;
     controlState.allowDangerous = !!data.allow_dangerous_commands;
+    controlState.allowPause = !!data.allow_pause;
+    controlState.allowResume = !!data.allow_resume;
+    controlState.allowCancel = !!data.allow_cancel;
+    controlState.printerType = data.klipper ? 'klipper' : (data.printer_type || 'cc2');
+    controlState.supports = {
+      job: data.supports_job_commands !== false,
+      motion: data.supports_motion !== false,
+      home: data.supports_home !== false,
+      fan: data.supports_fan_commands !== false,
+      temperature: data.supports_temperature_commands !== false,
+      speed: data.supports_speed_commands !== false,
+      light: data.supports_light !== false,
+    };
     controlState.activePrint = !!data.active_print;
     controlState.controlsLocked = !!data.controls_locked || !!data.offline || !!data.stale || String(data.connection_state || '').toLowerCase() !== 'online';
     controlState.controlsLockedReason = data.controls_locked_reason || '';
@@ -5507,13 +5662,26 @@
     setControlTempUi('chamber', data.temperatures?.chamber || {});
     const light = $('#controlLightToggle');
     if (light) light.checked = !!data.light_on;
+    const jobState = $('#klipperJobState');
+    if (jobState) jobState.textContent = data.status_text || data.state || '-';
+    const jobPerm = $('#klipperJobPermissionNote');
+    if (jobPerm) {
+      const bits = [];
+      bits.push(data.allow_commands ? 'commands enabled' : 'commands disabled');
+      bits.push(data.allow_pause ? 'pause allowed' : 'pause blocked');
+      bits.push(data.allow_resume ? 'resume allowed' : 'resume blocked');
+      bits.push(data.allow_cancel ? 'cancel allowed' : 'cancel blocked');
+      jobPerm.textContent = bits.join(' · ');
+      jobPerm.className = `mini-note ${data.allow_commands ? 'good-text' : 'warn-text'}`;
+    }
     updateControlCommandLocks();
     const connected = !!data.connected;
-    const safety = controlState.allowDangerous ? 'motion unlocked' : 'motion locked';
+    const isKlipper = controlState.printerType === 'klipper';
+    const safety = isKlipper ? 'Moonraker job controls only' : (controlState.allowDangerous ? 'motion unlocked' : 'motion locked');
     const commandStatus = controlState.allowCommands ? 'commands enabled' : 'commands disabled';
     const lockedReason = data.controls_locked_reason || (controlState.activePrint ? 'controls locked during active print' : (!connected ? 'controls locked while printer is offline' : ''));
-    const lockedText = (controlState.activePrint || controlState.controlsLocked) ? ` · ${esc(lockedReason)}` : '';
-    const tone = !connected ? 'bad' : ((controlState.activePrint || controlState.controlsLocked || !controlState.allowCommands || !controlState.allowDangerous) ? 'warn' : 'good');
+    const lockedText = (!isKlipper && (controlState.activePrint || controlState.controlsLocked)) || (isKlipper && controlState.controlsLocked) ? ` · ${esc(lockedReason)}` : '';
+    const tone = !connected ? 'bad' : ((controlState.controlsLocked || !controlState.allowCommands || (!isKlipper && (controlState.activePrint || !controlState.allowDangerous))) ? 'warn' : 'good');
     const age = Number(data.last_message_age_sec);
     const ageText = Number.isFinite(age) ? ` · telemetry ${age.toFixed(age < 10 ? 1 : 0)}s old` : '';
     const connLabel = data.connection_state && data.connection_state !== 'online' ? niceStatusLabel(data.connection_state) : (connected ? 'connected' : 'offline');
@@ -5579,6 +5747,13 @@
     await controlCommand('/control/home', { axis: label }, button, `Homing ${label}`);
   }
 
+  async function controlJob(action, button = null) {
+    const act = String(action || '').toLowerCase();
+    if (!['pause', 'resume', 'cancel'].includes(act)) return;
+    if (act === 'cancel' && !confirm('Cancel the current print? This cannot be undone.')) return;
+    await controlCommand('/control/job', { action: act }, button, `${act} command sent`);
+  }
+
   async function controlSetSpeed(percent, button = null) {
     const value = controlClamp(percent, 1, 300);
     updateControlSpeedUi(value);
@@ -5618,6 +5793,7 @@
     $$('[data-control-step]').forEach(btn => btn.addEventListener('click', () => updateControlStepUi(btn.dataset.controlStep)));
     $$('[data-control-move]').forEach(btn => btn.addEventListener('click', () => controlMove(btn.dataset.controlMove, btn.dataset.controlDir, btn).catch(() => {})));
     $$('[data-control-home]').forEach(btn => btn.addEventListener('click', () => controlHome(btn.dataset.controlHome, btn).catch(() => {})));
+    $$('[data-control-job]').forEach(btn => btn.addEventListener('click', () => controlJob(btn.dataset.controlJob, btn).catch(() => {})));
     $$('[data-control-speed]').forEach(btn => btn.addEventListener('click', () => controlSetSpeed(btn.dataset.controlSpeed, btn).catch(() => {})));
     $$('[data-control-fan-bump]').forEach(btn => btn.addEventListener('click', () => {
       const fan = btn.dataset.controlFanBump;

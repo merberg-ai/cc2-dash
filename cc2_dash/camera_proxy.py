@@ -12,6 +12,7 @@ from . import __version__
 from .config import PrinterConfig, printer_dict_to_config
 from .logger import log
 from .dummy import is_dummy_printer
+from .klipper import is_klipper_printer, klipper_camera_urls
 
 BOUNDARY = "cc2dashframe"
 import base64
@@ -91,6 +92,18 @@ class CameraRelay:
             self.restart(self._last_config or {})
 
     def urls(self) -> list[str]:
+        if is_klipper_printer(self.pcfg):
+            data = {
+                "host": self.pcfg.host,
+                "port": self.pcfg.port,
+                "moonraker_url": getattr(self.pcfg, "moonraker_url", ""),
+                "camera_url": getattr(self.pcfg, "camera_url", ""),
+                "snapshot_url": getattr(self.pcfg, "snapshot_url", ""),
+                "camera_base_url": getattr(self.pcfg, "camera_base_url", ""),
+                "type": "klipper",
+            }
+            stream, snap = klipper_camera_urls(data)
+            return [u for u in [stream, snap] if u]
         return [f"http://{self.pcfg.host}:8080/", f"http://{self.pcfg.host}:8080/?action=stream"]
 
     def start(self, cfg: dict[str, Any] | None = None) -> None:

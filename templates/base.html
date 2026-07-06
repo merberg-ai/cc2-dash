@@ -48,7 +48,7 @@
         {% if cfg.features.multi_view_menu_enabled|default(true) %}<a href="{{ nav_url('/multi-view') }}" class="navlink">Multi-View</a>{% endif %}
         {% if cfg.features.portal_menu_enabled|default(true) %}
           {% if printer %}
-          <a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer" title="Open the Elegoo web portal in a new tab">Portal</a>
+          <a href="{{ printer.portal_url }}" class="navlink" target="_blank" rel="noreferrer" title="{{ 'Open the device portal in a new tab' if printer.klipper else 'Open the Elegoo web portal in a new tab' }}">{{ printer.portal_nav_label|default('Portal') }}</a>
           {% else %}
           <a href="/setup" class="navlink">Portal</a>
           {% endif %}

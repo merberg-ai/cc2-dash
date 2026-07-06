@@ -36,7 +36,7 @@
     <div class="card-title-row file-title-row">
       <div>
         <h2>Printer Controls</h2>
-        <p>Uses stock ELEGOO control payloads. Fan/speed/light need commands enabled; movement and homing also need dangerous commands enabled.</p>
+        <p id="controlIntroText">Uses stock ELEGOO control payloads for Carbon 2 printers. Klipper/Moonraker printers expose safe print-job controls only.</p>
       </div>
       <button class="button secondary tiny" id="refreshControlButton" type="button"><span class="button-label">Refresh</span></button>
     </div>
@@ -44,6 +44,20 @@
     <div id="controlLoadStatus" class="scan-status hidden"><span class="spinner"></span><span>Loading control status...</span></div>
     <div id="controlStatusNote" class="mini-note">Loading printer control status...</div>
     <div id="controlPrintLockNote" class="mini-note warn-text hidden">Control page commands are locked while a print job is active.</div>
+
+    <section id="klipperJobPanel" class="klipper-job-panel hidden" aria-label="Klipper print job controls">
+      <div class="control-section-title">
+        <strong>Klipper / Moonraker Job Controls</strong>
+        <span id="klipperJobState">-</span>
+      </div>
+      <p class="mini-note">Only pause, resume, and cancel are exposed for Klipper in this phase. Fan, movement, heater, macro, and file controls stay untouched for Carbon 2 safety.</p>
+      <div class="klipper-job-actions">
+        <button class="button primary" type="button" data-control-job="pause"><span class="button-label">Pause</span></button>
+        <button class="button secondary" type="button" data-control-job="resume"><span class="button-label">Resume</span></button>
+        <button class="button danger" type="button" data-control-job="cancel"><span class="button-label">Cancel</span></button>
+      </div>
+      <div id="klipperJobPermissionNote" class="mini-note"></div>
+    </section>
 
     <section id="stockControlPanel" class="stock-control-panel" aria-label="Printer motion and control panel">
       <div class="control-motion-cluster">
@@ -202,7 +216,7 @@
       </div>
     </section>
 
-    <div class="mini-note warn-text">Motion and homing are intentionally safety-gated. Enable both <strong>allow commands</strong> and <strong>allow dangerous commands</strong> for this printer before using jog/home controls.</div>
+    <div id="controlSafetyFootnote" class="mini-note warn-text">Motion and homing are intentionally safety-gated. Enable both <strong>allow commands</strong> and <strong>allow dangerous commands</strong> for this printer before using jog/home controls.</div>
   </article>
 </section>
 {% endblock %}

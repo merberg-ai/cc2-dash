@@ -3,13 +3,17 @@
 {% block content %}
 <section class="settings-stack fade-in">
   <article class="card hero-card">
-    <h1>Elegoo Web Portal</h1>
-    <p>This opens the printer’s stock portal. If iframe embedding is blocked by the printer, use the big button below.</p>
-    <a class="button primary full" href="{{ printer.portal_url if printer else '#' }}" target="_blank" rel="noreferrer">Open Stock Portal</a>
+    <h1>{{ 'Device Portal' if printer and printer.klipper else 'Elegoo Web Portal' }}</h1>
+    <p>{% if printer and printer.klipper %}This opens the configured Moonraker/device page for this Klipper printer in a new tab.{% else %}This opens the printer’s stock portal. If iframe embedding is blocked by the printer, use the big button below.{% endif %}</p>
+    <a class="button primary full" href="{{ printer.portal_url if printer else '#' }}" target="_blank" rel="noreferrer">{{ printer.device_portal_label|default('Open Device Portal') if printer else 'Open Device Portal' }}</a>
   </article>
-  {% if printer %}
+  {% if printer and not printer.klipper %}
   <article class="card portal-frame-card">
     <iframe class="portal-frame" src="{{ printer.portal_url }}" title="Elegoo Web Portal"></iframe>
+  </article>
+  {% elif printer and printer.klipper %}
+  <article class="card portal-frame-card">
+    <div class="mini-note">Klipper/Moonraker pages are opened directly. Embedding is skipped so Mainsail/Fluidd/Moonraker auth and browser security rules can behave normally.</div>
   </article>
   {% endif %}
 </section>

@@ -85,7 +85,7 @@
           </button>
         </div>
 
-        <a class="button primary full" id="portalButton" href="{{ printer.portal_url if printer else '/setup' }}" target="_blank" rel="noreferrer">Go To Elegoo Web Portal</a>
+        <a class="button primary full" id="portalButton" href="{{ printer.portal_url if printer else '/setup' }}" target="_blank" rel="noreferrer"><span id="portalButtonLabel">{{ printer.device_portal_label|default('Open Device Portal') if printer else 'Open Device Portal' }}</span></a>
       </div>
     </details>
 
@@ -188,7 +188,7 @@
       <div class="dashboard-panel-body">
         <div class="info-list">
           <div><span>Printer IP</span><strong id="printerHost">{{ printer.host if printer else '-' }}</strong></div>
-          <div><span>Portal</span><strong id="portalState">{{ printer.portal_url if printer else '-' }}</strong></div>
+          <div><span id="portalStateLabel">{{ printer.portal_nav_label|default('Portal') if printer else 'Portal' }}</span><strong id="portalState">{{ printer.portal_url if printer else '-' }}</strong></div>
           <div><span>Camera</span><strong id="cameraState">{{ printer.camera_url if printer else '-' }}</strong></div>
         </div>
       </div>
